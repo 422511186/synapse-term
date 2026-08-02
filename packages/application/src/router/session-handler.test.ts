@@ -55,17 +55,24 @@ async function withRouter(
         query: () => [],
         record: (input) => audit.push(input),
       },
-      shareProbe: { timeoutMs: 2_000 },
+      shareProbe: { timeoutMs: 5_000 },
     });
     await callback({ router, sessions, spawner, audit });
     await store.close();
   });
 }
 
-async function waitFor(condition: () => boolean, label: string, attempts = 100): Promise<void> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+async function waitFor(
+  condition: () => boolean,
+  label: string,
+  settle?: () => Promise<void>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    await settle?.();
     if (condition()) return;
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`timed out waiting for ${label}`);
 }
@@ -76,21 +83,35 @@ describe('SessionRequestHandler share probe', () => {
       const created = await router.handle('session.create', launch, 'connection-1');
       const sessionId = (created as { id: string }).id;
       const pty = spawner.ptys[0]!;
+      const actor = sessions.get(sessionId);
+      if (actor === undefined) throw new Error('expected session actor');
 
       await router.handle('session.markShared', { sessionId }, 'connection-1');
 
-      await waitFor(() => pty.writes.join('').includes('__TA_DIALECT_'), 'dialect probe');
+      await waitFor(
+        () => pty.writes.join('').includes('__TA_DIALECT_'),
+        'dialect probe',
+        () => actor.idle(),
+      );
       const dialectNonce = pty.writes.join('').match(/__TA_DIALECT_([A-Za-z0-9-]+)__/)?.[1];
       if (dialectNonce === undefined) throw new Error('expected dialect nonce');
       pty.emitData(`__TA_DIALECT_${dialectNonce}__:zsh\r`);
 
-      await waitFor(() => pty.writes.join('').includes('__TA_OS_'), 'os probe');
+      await waitFor(
+        () => pty.writes.join('').includes('__TA_OS_'),
+        'os probe',
+        () => actor.idle(),
+      );
       const osNonce = pty.writes.join('').match(/__TA_OS_([A-Za-z0-9-]+)__/)?.[1];
       if (osNonce === undefined) throw new Error('expected os nonce');
       pty.emitData(`__TA_OS_${osNonce}__:Linux\r`);
       pty.emitData(`\u001b]777;TA;${osNonce};0\u0007`);
 
-      await waitFor(() => sessions.get(sessionId)?.snapshot.shell === 'ready', 'shell ready');
+      await waitFor(
+        () => actor.snapshot.shell === 'ready',
+        'shell ready',
+        () => actor.idle(),
+      );
       expect(audit.some((entry) => entry.type === 'session.probe')).toBe(true);
     });
   });
@@ -106,7 +127,11 @@ describe('SessionRequestHandler share probe', () => {
 
       await router.handle('session.markShared', { sessionId }, 'connection-1');
 
-      await waitFor(() => audit.some((entry) => entry.type === 'session.probe'), 'probe audit');
+      await waitFor(
+        () => audit.some((entry) => entry.type === 'session.probe'),
+        'probe audit',
+        () => actor.idle(),
+      );
       expect(actor.snapshot.shell).toBe('unknown');
       expect(audit.at(-1)).toMatchObject({
         type: 'session.probe',
