@@ -941,6 +941,15 @@ export function createMockDesktopApi(): DesktopApi {
             attempt,
             reason: 'url_scheme_mismatch: wrong version number',
           };
+        } else if (searchParam('modelTestUnavailable') === '1') {
+          // E2E：模拟校验失败（请求成功但模型不可用）
+          model.status = 'unavailable';
+          model.validation = {
+            status: 'unavailable',
+            checkedAt: new Date().toISOString(),
+            attempt,
+            reason: 'model_not_found: 模型不存在',
+          };
         } else {
           model.status = 'available';
           model.validation = {
@@ -955,6 +964,11 @@ export function createMockDesktopApi(): DesktopApi {
       },
       setEnabled: async (modelConfigurationId, enabled) => {
         const model = requireMockModel(models, modelConfigurationId);
+        if (searchParam('modelEnableError') === '1') {
+          // E2E：模拟启用失败，用于验证乐观更新回滚
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 150));
+          throw new Error('启用失败（模拟）');
+        }
         model.enabled = enabled;
         if (!enabled) model.isDefault = false;
         model.revision += 1;
@@ -1118,6 +1132,7 @@ export function createMockDesktopApi(): DesktopApi {
       return {
         status: async () => toStatus(),
         setEnabled: async (next) => {
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 400));
           enabled = next;
           if (!next) {
             running = false;

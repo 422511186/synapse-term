@@ -133,7 +133,10 @@ test('reuses runtime prompt history and can cancel an active turn', async ({ pag
   await expect(
     page.getByText('df -h && systemctl --failed --no-pager', { exact: true }),
   ).toBeVisible();
-  await page.getByRole('button', { name: '取消当前 Agent 任务', exact: true }).click();
+  await page
+    .locator('.running-status-bar')
+    .getByRole('button', { name: '取消当前 Agent 任务', exact: true })
+    .click();
   await expect(page.getByText('已取消', { exact: true }).first()).toBeVisible();
 
   await page.getByRole('button', { name: '提示词历史', exact: true }).click();
@@ -379,7 +382,6 @@ test('sends the current Agent goal with Control+Enter in the desktop browser wor
 test('clears the active Agent conversation from the settings menu', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
-  page.on('dialog', (dialog) => void dialog.accept());
 
   const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
   await composer.fill('conversation that should be cleared');
@@ -391,6 +393,9 @@ test('clears the active Agent conversation from the settings menu', async ({ pag
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('menuitem', { name: '清空当前 Agent 会话', exact: true }).click();
+  const confirm = page.getByRole('alertdialog', { name: '操作确认' });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole('button', { name: '清空会话', exact: true }).click();
 
   await expect(page.getByText('conversation that should be cleared', { exact: true })).toHaveCount(
     0,
@@ -408,12 +413,14 @@ test('clears the active Agent conversation from the settings menu', async ({ pag
 test('exposes an explicit Core shutdown action that ends current sessions', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
-  page.on('dialog', (dialog) => void dialog.accept());
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const shutdown = page.getByRole('menuitem', { name: '退出 Core', exact: true });
   await expect(shutdown).toBeVisible();
   await shutdown.click();
+  const confirm = page.getByRole('alertdialog', { name: '操作确认' });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole('button', { name: '退出 Core', exact: true }).click();
 
   await expect(
     page.getByText('Core 已关闭，请重新启动应用以继续使用。', { exact: true }),

@@ -89,9 +89,9 @@ button:not(:disabled) {
 
 .session-tab {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 23px;
+  grid-template-columns: minmax(0, 1fr) 23px 23px;
   flex: 0 0 182px;
-  min-width: 132px;
+  min-width: 155px;
   max-width: 224px;
   height: 34px;
   overflow: hidden;
