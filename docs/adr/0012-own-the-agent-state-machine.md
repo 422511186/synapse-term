@@ -1,3 +1,3 @@
-# Own the Agent State Machine
+# 自持 Agent 状态机
 
-The Core will implement its own small Agent Task state machine for model turns, tool calls, approval waits, Session Lease transitions, cancellation, and completion. Provider SDKs remain protocol clients inside adapters, while general agent frameworks and provider-specific agent runtimes are excluded so terminal safety and lifecycle semantics stay under one application-owned control model.
+Core 自行实现一个小型 Agent 任务状态机，覆盖模型轮次、工具调用、审批等待、会话租约转换、取消与完成。Provider SDK 始终只是适配器内的协议客户端，通用 Agent 框架和 Provider 特定 Agent 运行时被排除在外，使终端安全与生命周期语义保持在单一应用自有控制模型下。

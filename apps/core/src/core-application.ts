@@ -1,35 +1,35 @@
 import { randomBytes } from 'node:crypto';
 import { userInfo } from 'node:os';
 
-import { createProviderAdapter } from './provider-adapters.js';
-import { AgentCoordinator } from './agent-coordinator.js';
-import { AgentTaskScheduler } from './agent-task-scheduler.js';
-import { AuditService } from './audit-service.js';
-import { CoreIpcServer } from './core-ipc-server.js';
-import { CoreLifecycle, type CorePipeServer, type CoreTimer } from './core-lifecycle.js';
-import { getCoreDataPaths } from './core-paths.js';
-import type { PolicyEngine } from './policy-engine.js';
-import { createDefaultPolicyEngine } from './policy-engine.js';
-import { ProviderProfileService } from './provider-profile-service.js';
-import { ModelValidator } from './provider-validator.js';
-import { ModelCatalogService } from './model-catalog-service.js';
-import { ProviderModelDiscoveryService } from './provider-model-discovery.js';
-import { CoreRepositories } from './repositories.js';
-import { RetentionManager } from './retention.js';
-import { SessionManager } from './session-manager.js';
-import { SessionRecovery } from './session-recovery.js';
-import { CredentialSecretStore } from './secret-store.js';
-import { SqliteStore } from './sqlite-store.js';
-import { OutputJournal } from './output-journal.js';
-import { NodePtySpawner, type PtySpawner } from './pty-adapter.js';
-import { CoreRequestRouter } from './core-request-router.js';
-import { CORE_MIGRATIONS } from './core-schema.js';
-import { FileAuthTokenStore, ensureCoreDataLayout } from './data-security.js';
-import { UpgradeStateFile } from './upgrade-state.js';
-import { HomeResolver } from './home-resolver.js';
-import { LocalFileService } from './local-file-service.js';
-import { LocalFilePolicy } from './local-file-policy.js';
-import { SessionResourceService } from './session-resource-service.js';
+import { createProviderAdapter } from '@synapse-term/model-providers';
+import { AgentCoordinator } from '@synapse-term/application';
+import { AgentTaskScheduler } from '@synapse-term/platform-kernel';
+import { AuditService } from '@synapse-term/infrastructure';
+import { CoreIpcServer } from '@synapse-term/infrastructure';
+import { CoreLifecycle, type CorePipeServer, type CoreTimer } from '@synapse-term/infrastructure';
+import { getCoreDataPaths } from '@synapse-term/infrastructure';
+import type { PolicyEngine } from '@synapse-term/platform-kernel';
+import { createDefaultPolicyEngine } from '@synapse-term/platform-kernel';
+import { ProviderProfileService } from '@synapse-term/model-providers';
+import { ModelValidator } from '@synapse-term/model-providers';
+import { ModelCatalogService } from '@synapse-term/model-providers';
+import { ProviderModelDiscoveryService } from '@synapse-term/model-providers';
+import { CoreRepositories } from '@synapse-term/infrastructure';
+import { RetentionManager } from '@synapse-term/infrastructure';
+import { SessionManager } from '@synapse-term/terminal-service';
+import { SessionRecovery } from '@synapse-term/terminal-service';
+import { CredentialSecretStore } from '@synapse-term/infrastructure';
+import { SqliteStore } from '@synapse-term/infrastructure';
+import { OutputJournal } from '@synapse-term/terminal-service';
+import { NodePtySpawner, type PtySpawner } from '@synapse-term/terminal-service';
+import { CoreRequestRouter } from '@synapse-term/application';
+import { CORE_MIGRATIONS } from '@synapse-term/infrastructure';
+import { FileAuthTokenStore, ensureCoreDataLayout } from '@synapse-term/infrastructure';
+import { UpgradeStateFile } from '@synapse-term/infrastructure';
+import { HomeResolver } from '@synapse-term/infrastructure';
+import { LocalFileService } from '@synapse-term/tooling';
+import { LocalFilePolicy } from '@synapse-term/platform-kernel';
+import { SessionResourceService } from '@synapse-term/terminal-service';
 
 export interface CoreApplicationOptions {
   dataDirectory: string;
@@ -213,6 +213,11 @@ export class CoreApplication {
           return Promise.resolve(result);
         }
         return lifecycle.requestShutdown(mode);
+      },
+      external: {
+        policy,
+        localFiles,
+        localFilePolicy,
       },
       emitTerminalOutput: (event) => {
         runtime.ipc?.broadcastTerminalOutput(

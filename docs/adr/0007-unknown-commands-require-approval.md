@@ -1,3 +1,3 @@
-# Unknown Commands Require Approval
+# 未知命令需要审批
 
-Only commands that deterministic policy rules can classify as safely read-only may run without user approval. Model-provided risk labels are advisory, and any unknown, ambiguous, state-changing, privileged, or destructive command is routed through the approval flow; this accepts false positives in exchange for preventing probabilistic classification from becoming the security boundary.
+只有确定性策略规则可归类为安全只读的命令才能不经审批运行。模型提供的风险标签仅供参考，任何未知、有歧义、改变状态、特权或破坏性命令都进入审批流程；这接受误报，以换取"概率分类不能成为安全边界"的保证。

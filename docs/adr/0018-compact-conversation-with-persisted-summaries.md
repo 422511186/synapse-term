@@ -1,3 +1,3 @@
-# Compact Conversation history with persisted summaries
+# 用持久化摘要压缩对话历史
 
-When a Context Budget is exceeded, Core creates a bounded summary of older structured Model Items and uses that summary plus recent exact items for later Model Runs. Original items remain stored for audit and user-visible history; simple truncation was rejected because it silently loses decisions, while always sending the full transcript eventually violates Provider context limits.
+当上下文预算超限时，Core 为较旧的结构化模型条目创建有界摘要，并在后续模型运行中使用该摘要加上最近的精确条目。原始条目仍保留用于审计和用户可见历史；简单截断被否决，因为它会静默丢失决策，而始终发送完整转录最终会违反 Provider 上下文限制。

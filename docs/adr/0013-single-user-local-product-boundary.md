@@ -1,3 +1,3 @@
-# Single-User Local Product Boundary
+# 单用户本地产品边界
 
-The MVP is a single-user local desktop product whose identity and isolation boundary is the current Windows user. It will not implement product accounts, shared workspaces, centralized policy distribution, or organization-wide audit collection; adding multi-user or enterprise control is a separate product phase rather than an implicit extension of the local Core.
+MVP 是单用户本地桌面产品，其身份与隔离边界是当前操作系统用户。它不实现产品账户、共享工作区、集中策略分发或组织级审计收集；多用户或企业管控是独立产品阶段，而不是本地 Core 的隐式扩展。

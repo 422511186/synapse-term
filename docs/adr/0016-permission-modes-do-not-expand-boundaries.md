@@ -1,3 +1,3 @@
-# Permission modes do not expand Tool or filesystem boundaries
+# 权限模式不扩大工具或文件系统边界
 
-Permission Mode only decides whether a policy-classified operation pauses for approval. Even Full Access cannot add Tools, escape the current user home for local-file operations, bypass exact-argument validation, disclose protected input, or operate a different Terminal Session; this keeps the high-convenience mode auditable without turning it into arbitrary local process access.
+权限模式只决定某个策略分类的操作是否暂停等待审批。即使是完全访问也不能新增工具、不能使本地文件操作逃出当前用户 home、不能绕过精确参数校验、不能披露受保护输入、不能操作其他终端会话；这让高便利模式保持可审计，而不会变成任意本地进程访问。

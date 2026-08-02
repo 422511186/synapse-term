@@ -1,5 +1,5 @@
 {
-  "name": "@terminal-agent/desktop",
+  "name": "@synapse-term/desktop",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,18 +17,24 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@terminal-agent/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@synapse-term/infrastructure": "workspace:*",
+    "@synapse-term/protocol": "workspace:*",
+    "@synapse-term/terminal-service": "workspace:*",
+    "@synapse-term/ui-platform": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/xterm": "^6.0.0",
+    "@zed-industries/agent-client-protocol": "^0.4.5",
     "lucide-react": "0.487.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@terminal-agent/test-kit": "workspace:*",
+    "@synapse-term/test-kit": "workspace:*",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",

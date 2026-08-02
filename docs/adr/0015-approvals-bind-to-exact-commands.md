@@ -1,3 +1,3 @@
-# Approvals Bind to Exact Commands
+# 审批绑定精确命令
 
-An Approval Grant binds to the exact ordered command text, target Session, and displayed risk metadata rather than a natural-language intent or time window. The Core rejects any edited, inserted, reordered, or retargeted command and requests a new approval, trading additional prompts for a mechanically enforceable authorization boundary.
+审批授权绑定到精确的有序命令文本、目标会话和展示的风险元数据，而不是自然语言意图或时间窗口。Core 拒绝任何被编辑、插入、重排或重定向的命令并要求重新审批，以额外的提示换取机械可执行的授权边界。

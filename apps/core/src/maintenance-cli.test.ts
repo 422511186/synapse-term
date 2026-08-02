@@ -3,9 +3,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { withTemporaryDirectory } from '@terminal-agent/test-kit';
+import { withTemporaryDirectory } from '@synapse-term/test-kit';
 
-import { createDatabaseBackup } from './database-backup.js';
+import { createDatabaseBackup } from '@synapse-term/infrastructure';
 import { isCoreRunning, runCoreMaintenance } from './maintenance-cli.js';
 
 describe('Core maintenance CLI', () => {

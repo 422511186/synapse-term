@@ -98,10 +98,8 @@ test('backs the prototype resource, agent, approval, and audit surfaces with run
     page.getByText('systemctl action changes service state', { exact: true }),
   ).toHaveCount(0);
 
-  await page.getByRole('tab', { name: '审计日志 (Audit)', exact: true }).click();
-  await expect(page.getByRole('tabpanel', { name: '审计日志 (Audit)' })).toContainText(
-    '创建终端会话',
-  );
+  await page.getByRole('tab', { name: '审计日志', exact: true }).click();
+  await expect(page.getByRole('tabpanel', { name: '审计日志' })).toContainText('创建终端会话');
 });
 
 test('creates, closes, and reuses sessions through the prototype controls', async ({ page }) => {
@@ -413,7 +411,7 @@ test('exposes an explicit Core shutdown action that ends current sessions', asyn
   page.on('dialog', (dialog) => void dialog.accept());
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  const shutdown = page.getByRole('menuitem', { name: '退出 Core（结束所有会话）', exact: true });
+  const shutdown = page.getByRole('menuitem', { name: '退出 Core', exact: true });
   await expect(shutdown).toBeVisible();
   await shutdown.click();
 
@@ -449,8 +447,8 @@ test('uses runtime model and Provider configuration behind the prototype pages',
     page.getByRole('button', { name: '模型: GPT-5 runtime', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '服务商配置 (Providers)', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '服务商凭据 (Provider Profiles)' })).toBeVisible();
+  await page.getByRole('menuitem', { name: '服务商配置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '服务商凭据' })).toBeVisible();
   await expect(page.getByText('OpenAI 官方', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '测试连接 / 编辑', exact: true }).click();
   const providerEditor = page.getByRole('dialog', { name: '配置服务商' });

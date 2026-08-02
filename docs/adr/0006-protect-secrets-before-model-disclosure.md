@@ -1,3 +1,3 @@
-# Protect Secrets Before Model Disclosure
+# 模型披露前保护密钥
 
-Protected Input will never be forwarded to the Agent or persisted in terminal journals, and terminal output will pass through configurable secret detectors before entering model context or long-lived audit payloads. Automatic redaction is intentionally conservative and users may explicitly disclose a selected value for one task when it is genuinely required.
+受保护输入永远不会转发给 Agent 或持久化到终端日志；终端输出在进入模型上下文或长期审计载荷之前，先经过可配置的密钥检测器。自动脱敏刻意保持保守，用户可在确有需要时，为单次任务显式披露某个选定的值。

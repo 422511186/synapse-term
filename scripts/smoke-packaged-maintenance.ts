@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { createDatabaseBackup } from '../apps/core/src/database-backup.js';
+import { createDatabaseBackup } from '@synapse-term/infrastructure';
 
 const workspace = resolve(import.meta.dirname, '..');
 const runtime = resolve(

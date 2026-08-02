@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { restoreDatabaseBackup, verifyDatabaseBackup } from './database-backup.js';
+import { restoreDatabaseBackup, verifyDatabaseBackup } from '@synapse-term/infrastructure';
 
 export interface CoreMaintenanceIo {
   stdout(line: string): void;

@@ -1,3 +1,3 @@
-# Sessions Do Not Survive Core Restarts
+# 会话不跨 Core 重启存活
 
-The MVP preserves Terminal Sessions across desktop UI detachment and restart, but not across termination, crash, or upgrade of the Core process that owns ConPTY. After a Core restart the system restores metadata, Agent Task history, and audit records while marking prior Sessions as interrupted; per-Session host processes and live reattachment are deferred until reliability requirements justify them.
+MVP 在桌面 UI 分离和重启后保留终端会话，但不跨拥有 ConPTY 的 Core 进程的终止、崩溃或升级而存活。Core 重启后，系统恢复元数据、Agent 任务历史和审计记录，并将之前的会话标记为中断；按会话的主机进程与实时重连推迟到可靠性需求证明其必要为止。

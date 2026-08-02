@@ -1,3 +1,3 @@
-# Detach the UI Without Terminating Sessions
+# 分离 UI 而不终止会话
 
-Closing the desktop window detaches the UI while the per-user Core keeps active Terminal Sessions and Agent Tasks alive. An explicit quit flow offers termination or continued background operation, and an idle Core may exit after the last Session ends; this preserves terminal continuity without forcing a resident process when nothing is active.
+关闭桌面窗口只分离 UI，按用户隔离的 Core 继续保活活动终端会话和 Agent 任务。显式退出流程提供"终止"或"继续后台运行"两种选择，Core 在最后一个会话结束后可在空闲时退出；这在不强制常驻进程的前提下保持终端连续性。

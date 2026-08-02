@@ -1,5 +1,5 @@
 {
-  "name": "terminal-agent",
+  "name": "synapse-term",
   "version": "0.2.0",
   "private": true,
   "description": "Local-first terminal and agent runtime for user-managed sessions.",
@@ -11,8 +11,8 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "dev": "pnpm --filter @terminal-agent/desktop dev",
-    "start": "pnpm --filter @terminal-agent/desktop start",
+    "dev": "pnpm --filter @synapse-term/desktop dev",
+    "start": "pnpm --filter @synapse-term/desktop start",
     "format": "prettier --write \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
     "format:check": "prettier --check \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
     "lint": "eslint .",
@@ -36,6 +36,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.0",
+    "@synapse-term/infrastructure": "workspace:*",
+    "@synapse-term/protocol": "workspace:*",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
     "electron-builder": "26.15.3",

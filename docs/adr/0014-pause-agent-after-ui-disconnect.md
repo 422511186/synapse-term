@@ -1,3 +1,3 @@
-# Pause the Agent After UI Disconnect
+# UI 断开后暂停 Agent
 
-If the desktop UI disconnects during a Command Transaction, the Core lets that command reach its natural completion but then marks the Agent Task suspended before another model turn or command begins. This avoids interrupting a remote operation mid-effect while preventing unattended continuation when the user can no longer observe, interrupt, or approve the task.
+如果桌面 UI 在命令事务期间断开，Core 让该命令自然完成，然后在下一个模型轮次或命令开始前将 Agent 任务标记为挂起。这避免在远程操作执行中途打断它，同时在用户无法再观察、打断或审批任务时防止无人值守地继续。

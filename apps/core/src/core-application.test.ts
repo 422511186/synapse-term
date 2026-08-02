@@ -6,12 +6,12 @@ import { createConnection, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { FakeClock, FakePty, withTemporaryDirectory } from '@terminal-agent/test-kit';
+import { FakeClock, FakePty, withTemporaryDirectory } from '@synapse-term/test-kit';
 
 import { CoreApplication } from './core-application.js';
-import { PolicyEngine } from './policy-engine.js';
-import type { PtySpawner } from './pty-adapter.js';
-import type { CorePipeServer } from './core-lifecycle.js';
+import { PolicyEngine } from '@synapse-term/platform-kernel';
+import type { PtySpawner } from '@synapse-term/terminal-service';
+import type { CorePipeServer } from '@synapse-term/infrastructure';
 
 class FakePipe implements CorePipeServer {
   handler: ((socket: Socket) => void) | undefined;

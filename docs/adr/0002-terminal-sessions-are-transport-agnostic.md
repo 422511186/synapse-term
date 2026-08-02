@@ -1,3 +1,3 @@
-# Terminal Sessions Are Transport Agnostic
+# 终端会话与传输无关
 
-The system models an already prepared Terminal Session, not an SSH, bastion, container, or server connection. Users establish any required connection inside the terminal before invoking the Agent, which keeps the Agent independent of connection topology but means it cannot rely on transport metadata to identify or recover the remote environment.
+系统建模的是"已经准备好的终端会话"，而不是 SSH、跳板机、容器或服务器连接。用户在使用 Agent 之前，先在终端内建立任何所需连接，这使 Agent 独立于连接拓扑，但也意味着它不能依赖传输元数据来识别或恢复远程环境。

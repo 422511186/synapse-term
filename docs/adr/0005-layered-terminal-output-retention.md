@@ -1,3 +1,3 @@
-# Layered Terminal Output Retention
+# 分层终端输出保留
 
-The Core will retain a bounded raw output journal while a Session is active and for a short recovery window, then remove it according to a configurable cleanup policy. Long-lived audit storage will keep structured commands, approvals, tool calls, exit results, and timestamps rather than complete terminal transcripts, reducing secret exposure while preserving accountability.
+会话活动期间以及短暂的恢复窗口内，Core 保留有界的原始输出日志，之后按可配置的清理策略移除。长期审计存储保留结构化命令、审批、工具调用、退出结果和时间戳，而不是完整终端转录，从而在保持可问责性的同时减少密钥暴露。

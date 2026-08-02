@@ -1,3 +1,3 @@
-# Resource snapshots use the current Terminal Session
+# 资源快照使用当前终端
 
-Server resources are collected by explicit, read-only commands in the current Ready Session after the user requests a refresh. The product does not create an SSH or host asset model and does not auto-poll an unknown login or TUI state, so the same resource view works after SSH, a bastion hop, container entry, or a purely local shell.
+服务器资源由用户在请求刷新后，通过当前就绪会话中的显式只读命令收集。产品不建立 SSH 或主机资产模型，也不自动轮询未知登录或 TUI 状态，因此同一资源视图在 SSH、跳板、进入容器或纯本地 shell 之后都可用。

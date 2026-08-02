@@ -18,7 +18,7 @@ const externalPackages = new Set([
 
 export default defineConfig({
   ssr: {
-    noExternal: ['@terminal-agent/domain', '@terminal-agent/protocol'],
+    noExternal: ['@synapse-term/domain', '@synapse-term/protocol'],
   },
   build: {
     ssr: true,

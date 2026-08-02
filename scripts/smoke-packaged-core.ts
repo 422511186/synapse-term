@@ -4,10 +4,10 @@ import { tmpdir, userInfo } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { CURRENT_PROTOCOL_VERSION } from '@terminal-agent/protocol';
+import { CURRENT_PROTOCOL_VERSION } from '@synapse-term/protocol';
 
-import { getDesktopCoreConfig } from '../apps/desktop/src/core-config.js';
-import { NamedPipeCoreConnector } from '../apps/desktop/src/named-pipe-core-connector.js';
+import { getDesktopCoreConfig } from '../apps/desktop/src/main/core-config.js';
+import { NamedPipeCoreConnector } from '../apps/desktop/src/main/named-pipe-core-connector.js';
 
 const workspace = resolve(import.meta.dirname, '..');
 const runtime = resolve(
