@@ -153,12 +153,17 @@ jobs:
         working-directory: release-assets
         run: sha256sum *.exe *.dmg > SHA256SUMS.txt
 
-      - name: 创建正式 Release
+      - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          PRERELEASE_FLAG=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "Synapse Term $GITHUB_REF_NAME" \
-            --generate-notes
+            --generate-notes \
+            $PRERELEASE_FLAG
