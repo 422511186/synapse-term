@@ -20,6 +20,7 @@ import {
 import { DesktopWindowRegistry, createBrowserWindowOptions } from './electron-window.js';
 import { createAcpController, type AcpController } from '../acp/acp-controller.js';
 import { createMcpController, type McpController } from '../mcp/mcp-controller.js';
+import { normalizeMcpApprovalMode } from '../mcp/mcp-settings.js';
 import { NamedPipeCoreConnector } from './named-pipe-core-connector.js';
 import { ShellLocator } from '@synapse-term/terminal-service/shell-locator';
 import { migrateLegacyUserData } from './user-data-migration.js';
@@ -81,9 +82,7 @@ function registerMcpIpc(controller: McpController): void {
         case 'mcp:set-enabled':
           return controller.setEnabled(argumentsValue[0] === true);
         case 'mcp:set-approval-mode':
-          return controller.setApprovalMode(
-            argumentsValue[0] === 'managed' ? 'managed' : 'read_only',
-          );
+          return controller.setApprovalMode(normalizeMcpApprovalMode(argumentsValue[0]));
         case 'mcp:regenerate-token':
           return controller.regenerateToken();
         case 'mcp:revoke-token':

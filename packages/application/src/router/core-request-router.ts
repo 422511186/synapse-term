@@ -14,7 +14,7 @@ import type {
 } from '@synapse-term/model-providers';
 import type { LocalFilePolicy, PolicyEngine } from '@synapse-term/platform-kernel';
 import { parseCoreRequest, type CoreServiceEvent } from '@synapse-term/protocol';
-import type { OutputJournal, SessionManager } from '@synapse-term/terminal-service';
+import type { OutputJournal, ProbeScheduler, SessionManager } from '@synapse-term/terminal-service';
 import type { LocalFileService } from '@synapse-term/tooling';
 
 import { routerError } from './contracts.js';
@@ -70,6 +70,7 @@ export interface CoreRequestRouterOptions {
     localFilePolicy?: LocalFilePolicy;
     redactor?: SecretRedactor;
   };
+  shareProbe?: { timeoutMs?: number; scheduler?: ProbeScheduler };
 }
 
 export class CoreRequestRouter {
@@ -98,6 +99,7 @@ export class CoreRequestRouter {
       emitEvent: options.emitEvent,
       onActivityChange: options.onActivityChange,
       audit: options.audit,
+      shareProbe: options.shareProbe,
     });
     this.#agentHandler = new AgentRequestHandler({ agents: options.agents });
     this.#providerHandler = new ProviderRequestHandler({
@@ -262,6 +264,8 @@ export class CoreRequestRouter {
         return this.#requireExternal().terminalWait(request.payload);
       case 'external.terminalInterrupt':
         return this.#requireExternal().terminalInterrupt(request.payload);
+      case 'external.terminalStatus':
+        return this.#requireExternal().terminalStatus(request.payload);
       case 'external.localListFiles':
         return this.#requireExternal().localListFiles(request.payload);
       case 'external.localSearchFiles':

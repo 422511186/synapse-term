@@ -8,6 +8,8 @@ describe('protocol errors', () => {
     expect(ERROR_CODES).toContain('stale_lease_epoch');
     expect(ERROR_CODES).toContain('approval_required');
     expect(ERROR_CODES).toContain('incompatible_protocol');
+    expect(ERROR_CODES).toContain('invalid_session');
+    expect(ERROR_CODES).toContain('transaction_not_found');
     expect(ERROR_CODES).toContain('local_path_outside_home');
     expect(ERROR_CODES).toContain('local_file_conflict');
     expect(ERROR_CODES).toContain('agent_loop_limit_reached');

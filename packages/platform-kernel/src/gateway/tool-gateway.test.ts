@@ -70,15 +70,17 @@ async function setup(
 describe('TerminalToolGateway', () => {
   it('rejects unknown tools and attempts to switch Session', async () => {
     const { gateway } = await setup();
-    await expect(
-      gateway.call('terminal_execute', { command: 'ls', sessionId: 'other' }),
-    ).resolves.toMatchObject({
+    const result = await gateway.call('terminal_execute', { command: 'ls', sessionId: 'other' });
+    expect(result).toMatchObject({
       ok: false,
       error: 'invalid_tool_call',
+      recoverable: true,
     });
+    if (!result.ok) expect(result.message).toContain('sessionId');
     await expect(gateway.call('terminal_send_keys', {})).resolves.toMatchObject({
       ok: false,
       error: 'invalid_tool_call',
+      recoverable: true,
     });
   });
 
@@ -86,11 +88,22 @@ describe('TerminalToolGateway', () => {
     const { gateway } = await setup(undefined, 'full_access');
     await expect(
       gateway.call('terminal_execute', { command: 'ls', sessionId: 'other' }),
-    ).resolves.toMatchObject({ ok: false, error: 'invalid_tool_call' });
+    ).resolves.toMatchObject({ ok: false, error: 'invalid_tool_call', recoverable: true });
     await expect(gateway.call('terminal_send_keys', {})).resolves.toMatchObject({
       ok: false,
       error: 'invalid_tool_call',
+      recoverable: true,
     });
+  });
+
+  it('returns a recoverable invalid tool call with a fix hint for absolute local file paths', async () => {
+    const { gateway } = await setup();
+    const result = await gateway.call('local_read_file', { path: '/Users/me/secret.txt' });
+
+    expect(result).toMatchObject({ ok: false, error: 'invalid_tool_call', recoverable: true });
+    if (!result.ok) {
+      expect(result.message).toContain('path');
+    }
   });
 
   it('executes read-only commands through the bound Session and returns redacted output', async () => {

@@ -64,6 +64,8 @@ async function withRouter(
         record: (input) => audit.push(input),
       },
       ...(options.external === false ? {} : { external: { policy: new PolicyEngine(parser) } }),
+      // 共享自动探测使用短超时：测试不模拟探测响应时快速失败，避免悬挂
+      shareProbe: { timeoutMs: 15 },
     });
     await callback({ router, sessions, repositories, audit });
   });
@@ -73,6 +75,8 @@ async function createSharedSession(context: { router: CoreRequestRouter }): Prom
   const created = await context.router.handle('session.create', launch, 'connection-1');
   const sessionId = (created as { id: string }).id;
   await context.router.handle('session.markShared', { sessionId }, 'connection-1');
+  // 等待共享自动探测结束（短超时失败并释放外部租约），避免与后续外部调用竞争
+  await new Promise<void>((resolve) => setTimeout(resolve, 40));
   return sessionId;
 }
 
@@ -104,7 +108,9 @@ describe('ExternalRequestHandler through CoreRequestRouter', () => {
       const sessionId = await createSharedSession({ router });
 
       expect(repositories.getSession(sessionId)?.sharedAt).toBeDefined();
-      expect(audit.at(-1)).toMatchObject({ type: 'session.shared', sessionId });
+      expect(
+        audit.some((entry) => entry.type === 'session.shared' && entry.sessionId === sessionId),
+      ).toBe(true);
 
       await expect(
         router.handle(
@@ -120,6 +126,160 @@ describe('ExternalRequestHandler through CoreRequestRouter', () => {
         type: 'external.observe',
         sessionId,
         actor: { kind: 'external', callerKind: 'mcp', callerId: 'mcp-client' },
+      });
+    });
+  });
+
+  it('probes session status without throwing for expired sessions', async () => {
+    await withRouter(async ({ router, audit }) => {
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId: 'does-not-exist', approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId: 'does-not-exist', status: 'expired', shared: false },
+      });
+
+      const sessionId = await createSharedSession({ router });
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: {
+          sessionId,
+          status: 'not_ready',
+          shared: true,
+          pty: 'running',
+          shell: 'unknown',
+        },
+      });
+
+      expect(audit.filter((entry) => entry.type === 'external.status')).toMatchObject([
+        {
+          sessionId: 'does-not-exist',
+          actor: { kind: 'external', callerKind: 'mcp', callerId: 'mcp-client' },
+          payload: { status: 'expired', source: 'mcp' },
+        },
+        {
+          sessionId,
+          actor: { kind: 'external', callerKind: 'mcp', callerId: 'mcp-client' },
+          payload: { status: 'not_ready', shared: true },
+        },
+      ]);
+    });
+  });
+
+  it('reports ready after the shell becomes ready', async () => {
+    await withRouter(async ({ router, sessions }) => {
+      const sessionId = await createSharedSession({ router });
+      const actor = sessions.get(sessionId);
+      if (actor === undefined) throw new Error('expected session actor');
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId, status: 'ready', shared: true, shell: 'ready' },
+      });
+    });
+  });
+
+  it('gives actionable hints for unknown and probing shells', async () => {
+    await withRouter(async ({ router, sessions }) => {
+      const sessionId = await createSharedSession({ router });
+      const actor = sessions.get(sessionId);
+      if (actor === undefined) throw new Error('expected session actor');
+
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: {
+          status: 'not_ready',
+          shell: 'unknown',
+          hint: expect.stringContaining('terminal_execute'),
+        },
+      });
+
+      await actor.transitionShell('probing');
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: {
+          status: 'not_ready',
+          shell: 'probing',
+          hint: expect.stringContaining('Shell 探测'),
+        },
+      });
+    });
+  });
+
+  it('treats an unshared session as expired for external callers', async () => {
+    await withRouter(async ({ router }) => {
+      const created = await router.handle('session.create', launch, 'connection-1');
+      const sessionId = (created as { id: string }).id;
+
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId, status: 'expired', shared: false },
+      });
+    });
+  });
+
+  it('treats a closed session as expired and allows subsequent sessions', async () => {
+    await withRouter(async ({ router }) => {
+      const sessionId = await createSharedSession({ router });
+      await router.handle('session.close', { sessionId }, 'connection-1');
+
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId, status: 'expired', shared: false },
+      });
+
+      const nextSessionId = await createSharedSession({ router });
+      await expect(
+        router.handle(
+          'external.terminalStatus',
+          { sessionId: nextSessionId, approvalMode: 'read_only', caller },
+          'connection-1',
+        ),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { sessionId: nextSessionId, status: 'not_ready', shared: true },
       });
     });
   });

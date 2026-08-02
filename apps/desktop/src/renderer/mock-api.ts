@@ -6,6 +6,7 @@ import type {
   AgentHistoryView,
   AuditEventView,
   DesktopApi,
+  McpApprovalMode,
   ModelConfigurationInput,
   ModelConfigurationView,
   ProviderProfileView,
@@ -1036,7 +1037,7 @@ export function createMockDesktopApi(): DesktopApi {
       // 演示用的内存状态：mock 场景默认关闭、read-only、无 token。
       let enabled = false;
       let running = false;
-      let approvalMode: 'read_only' | 'managed' = 'read_only';
+      let approvalMode: McpApprovalMode = 'read_only';
       let token: string | undefined;
       return {
         status: async () => ({
@@ -1048,9 +1049,10 @@ export function createMockDesktopApi(): DesktopApi {
           ...(running ? { port: 18789, connectionString: 'http://127.0.0.1:18789/mcp' } : {}),
         }),
         setEnabled: async (next) => {
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 400));
+          if (next && token === undefined) token = 'mock-token';
           enabled = next;
           running = next && token !== undefined;
-          if (running && token === undefined) token = 'mock-token';
           return {
             enabled,
             running,

@@ -22,6 +22,7 @@ import type {
   OutputJournal,
   SessionActor,
 } from '@synapse-term/terminal-service';
+import { ShellProbe } from '@synapse-term/terminal-service';
 import type { LocalFileService } from '@synapse-term/tooling';
 
 import type { PolicyEngine } from '../policy/policy-engine.js';
@@ -32,11 +33,12 @@ import { LocalFilePolicy } from '../policy/local-file-policy.js';
  *
  * - read_only：只放行读类操作（MCP 配置）；
  * - managed：低危（read_only / mutating）自动放行（MCP 配置）；
+ * - full：完全权限模式（MCP 配置），不审查命令，全部放行；
  * - approved_once：仅由 ACP 桥接在用户人工批准某条具体命令后附加，
  *   让高危命令仍进入同一管线（策略分类 → 租约 → 事务 → 审计），
  *   不创建第二套审批通道（ADR-0030）。
  */
-export type ExternalApprovalMode = 'read_only' | 'managed' | 'approved_once';
+export type ExternalApprovalMode = 'read_only' | 'managed' | 'full' | 'approved_once';
 
 export type ExternalToolResult =
   | { ok: true; result: unknown }
@@ -72,6 +74,7 @@ const TERMINAL_LEGACY_STATUSES: ReadonlySet<string> = new Set([
  * - read-only：只放行读类工具（observe / 只读文件），任何执行类一律拒绝；
  * - managed：按 PolicyEngine 低危放行（read_only / mutating），unknown、privileged、
  *   destructive 一律拒绝，不可配置放行；
+ * - full：完全权限模式，不审查命令，任何策略分类都进入执行管线；
  * - approved_once：人工批准后的单次执行，任何策略分类都进入执行管线
  *   （批准动作本身已在审批 UI 中绑定具体命令与风险）。
  */
@@ -80,7 +83,7 @@ function decideExternalAuthorization(
   risk: CommandRisk,
   effect: 'observe' | 'mutate',
 ): 'allowed' | 'denied' {
-  if (mode === 'approved_once') return 'allowed';
+  if (mode === 'full' || mode === 'approved_once') return 'allowed';
   if (mode === 'read_only') {
     return effect === 'observe' && risk === 'read_only' ? 'allowed' : 'denied';
   }
@@ -225,6 +228,36 @@ export class ExternalToolPipeline {
 
     let result: CommandExecutionResult;
     try {
+      // 外部调用没有内置 Agent 的 #prepareExecution 前置步骤：会话 Shell 未就绪
+      // 或环境未验证时，在执行前懒触发一次 Shell 探测（与内置 Agent 同语义，
+      // ADR-0024）。探测失败返回可恢复的 session_not_ready，不写业务命令。
+      const snapshot = this.#actor.snapshot;
+      const needsProbe =
+        snapshot.shell !== 'ready' ||
+        snapshot.environment.verificationStatus !== 'verified' ||
+        snapshot.environment.platform === 'unknown' ||
+        snapshot.environment.operatingSystem === 'unknown';
+      if (needsProbe) {
+        const probe = new ShellProbe(this.#actor);
+        try {
+          const probeResult = await probe.run({
+            taskId: context.caller.id,
+            leaseEpoch,
+            ownerKind: 'external',
+          });
+          if (probeResult.mode !== 'structured') {
+            await this.#releaseLease();
+            return {
+              ok: false,
+              error: 'session_not_ready',
+              message: `Shell probe failed: ${probeResult.reason}`,
+              recoverable: true,
+            };
+          }
+        } finally {
+          probe.dispose();
+        }
+      }
       result = await this.#executor.execute({
         taskId: context.caller.id,
         ownerKind: 'external',

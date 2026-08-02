@@ -709,6 +709,55 @@ describe('AgentRuntime', () => {
     });
   });
 
+  it('feeds a recoverable invalid tool call back to the model instead of failing the turn', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-bad-path', name: 'local_read_file' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-bad-path',
+          name: 'local_read_file',
+          argumentsJson: '{"path":"/Users/me/secret.txt"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '绝对路径不被允许，我会改用相对路径。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '已读取文件。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => ({
+          ok: false,
+          error: 'invalid_tool_call',
+          message: 'path: 必须是相对主目录的路径',
+          recoverable: true,
+        }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '读取文件' },
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({
+      status: 'completed',
+      answer: '已读取文件。',
+    });
+    expect(adapter.requests).toHaveLength(3);
+    expect(adapter.requests[1]?.items.at(-1)).toMatchObject({
+      type: 'tool_result',
+      toolCallId: 'call-bad-path',
+      isError: true,
+    });
+  });
+
   it('returns a command audit rejection to the model instead of leaving the turn active', async () => {
     const adapter = new ScriptedAdapter([
       [

@@ -133,6 +133,30 @@ describe('ShellProbe', () => {
     probe.dispose();
   });
 
+  it('completes under an external lease owned by the probing caller', async () => {
+    const pty = new FakePty(123);
+    const actor = new SessionActor('session-1', pty, { executionDialect: 'posix' });
+    await actor.markPtyRunning();
+    await actor.verifyCurrentEnvironment('posix', 'unix', 'linux');
+    const lease = await actor.grantExternalLease('mcp-client', 0);
+    if (!lease.ok) throw new Error('expected external lease');
+
+    const probe = new ShellProbe(actor, { nonceFactory: () => 'probe-ext' });
+    const resultPromise = probe.run({
+      taskId: 'mcp-client',
+      leaseEpoch: lease.value.lease.epoch,
+      ownerKind: 'external',
+    });
+    await waitForProbeDispatch(actor, pty);
+    expect(actor.snapshot.shell).toBe('probing');
+
+    pty.emitData('\u001b]777;TA;probe-ext;0\u0007');
+
+    await expect(resultPromise).resolves.toMatchObject({ mode: 'structured', nonce: 'probe-ext' });
+    expect(actor.snapshot.shell).toBe('ready');
+    probe.dispose();
+  });
+
   it('falls back to observation-only when the probe deadline expires', async () => {
     const { pty, actor, leaseEpoch } = await createAgentSession();
     const clock = new FakeClock(0);

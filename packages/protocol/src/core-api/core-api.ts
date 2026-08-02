@@ -36,7 +36,7 @@ const terminalTypeSchema = z.string().trim().min(1).max(128);
  * - approved_once：仅 ACP 桥接在用户人工批准具体命令后附加，
  *   使该次调用仍走统一 Tool Pipeline（ADR-0030）。
  */
-const externalApprovalModeSchema = z.enum(['read_only', 'managed', 'approved_once']);
+const externalApprovalModeSchema = z.enum(['read_only', 'managed', 'approved_once', 'full']);
 
 /** ACP 驱动者审批模式（specs/acp-driver、ADR-0030）：managed 低危自动；manual 全部走人工 */
 const acpApprovalModeSchema = z.enum(['managed', 'manual']);
@@ -94,6 +94,7 @@ export const coreApiUseCaseSchema = z.enum([
   'external.terminalObserve',
   'external.terminalWait',
   'external.terminalInterrupt',
+  'external.terminalStatus',
   'external.localListFiles',
   'external.localSearchFiles',
   'external.localReadFile',
@@ -606,6 +607,10 @@ export const coreRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({
     method: z.literal('external.terminalInterrupt'),
     payload: externalCallerContextSchema.extend(terminalInterruptInputSchema.shape),
+  }),
+  z.strictObject({
+    method: z.literal('external.terminalStatus'),
+    payload: externalCallerContextSchema,
   }),
   z.strictObject({
     method: z.literal('external.localListFiles'),

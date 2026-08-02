@@ -118,7 +118,7 @@ export interface AuditEventView {
   summary: string;
 }
 
-export type McpApprovalMode = 'read_only' | 'managed';
+export type McpApprovalMode = 'read_only' | 'managed' | 'full';
 
 export interface McpStatus {
   enabled: boolean;

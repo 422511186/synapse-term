@@ -106,7 +106,15 @@ export class TerminalToolGateway {
     context: ToolCallContext = {},
   ): Promise<ToolGatewayResult> {
     const parsed = terminalToolCallSchema.safeParse({ name, arguments: rawArguments });
-    if (!parsed.success) return { ok: false, error: 'invalid_tool_call' };
+    if (!parsed.success) {
+      // 模型可自行修正的参数错误：回传模型重规划（ReAct），由运行时 no-progress 上限防死循环
+      return {
+        ok: false,
+        error: 'invalid_tool_call',
+        message: formatToolCallValidationMessage(parsed.error),
+        recoverable: true,
+      };
+    }
     return this.#callParsed(parsed.data, approval, context);
   }
 
@@ -548,6 +556,17 @@ export class TerminalToolGateway {
       },
     };
   }
+}
+
+/** 汇总 Zod 校验失败为模型可读的修复提示（最多 3 条，控制上下文开销） */
+function formatToolCallValidationMessage(error: {
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>;
+}): string {
+  const details = error.issues.slice(0, 3).map((issue) => {
+    const field = issue.path.length === 0 ? 'arguments' : String(issue.path[0]);
+    return `${field}: ${issue.message}`;
+  });
+  return `tool call arguments failed validation: ${details.join('; ')}`;
 }
 
 function isBlockingResult(result: unknown): boolean {

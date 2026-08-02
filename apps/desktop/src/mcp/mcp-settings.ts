@@ -3,19 +3,27 @@
  *
  * 设置持久化在桌面用户数据目录（userData/mcp/settings.json）：
  * - enabled：设置页开关，关闭时端点完全不监听回环端口；
- * - approvalMode：read_only / managed 两级外部审批配置，高危操作不可配置放行；
- * - token：可吊销、无过期的 Bearer token，吊销后立即拒绝所有新调用。
+ * - approvalMode：read_only / managed / full 三级外部审批配置；
+ * - token：可吊销、无过期的 Bearer token，吊销后立即拒绝所有新调用；
+ * - port：稳定监听端口（首次启用分配并持久化，重启/停用-启用保持不变）。
  */
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type McpApprovalMode = 'read_only' | 'managed';
+export type McpApprovalMode = 'read_only' | 'managed' | 'full';
+
+/** IPC/存储边界的模式归一化：只接受白名单值，未知值回退 read_only */
+export function normalizeMcpApprovalMode(value: unknown): McpApprovalMode {
+  return value === 'managed' || value === 'full' ? value : 'read_only';
+}
 
 export interface McpSettings {
   enabled: boolean;
   approvalMode: McpApprovalMode;
   token?: string;
+  /** 稳定监听端口：1-65535 整数，首次启用时分配，之后保持不变 */
+  port?: number;
 }
 
 /** 设置存储端口：桌面主进程唯一读写方，渲染进程经 IPC 访问 */
@@ -74,8 +82,20 @@ export function sanitizeMcpSettings(value: unknown): McpSettings {
   }
   const record = value as Record<string, unknown>;
   const enabled = record.enabled === true;
-  const approvalMode: McpApprovalMode = record.approvalMode === 'managed' ? 'managed' : 'read_only';
+  const approvalMode = normalizeMcpApprovalMode(record.approvalMode);
   const token =
     typeof record.token === 'string' && record.token.length > 0 ? record.token : undefined;
-  return { enabled, approvalMode, ...(token === undefined ? {} : { token }) };
+  const port =
+    typeof record.port === 'number' &&
+    Number.isInteger(record.port) &&
+    record.port >= 1 &&
+    record.port <= 65_535
+      ? record.port
+      : undefined;
+  return {
+    enabled,
+    approvalMode,
+    ...(token === undefined ? {} : { token }),
+    ...(port === undefined ? {} : { port }),
+  };
 }

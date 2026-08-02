@@ -112,6 +112,84 @@ export class ExternalRequestHandler {
     return pipeline.interrupt({ transactionId: payload.transactionId }, this.#context(payload));
   }
 
+  /**
+   * 会话状态探测（specs/mcp-access、terminal_status）
+   *
+   * 与其余 external.* 不同：会话不存在、未共享或 PTY 已退出时返回
+   * `expired` 结果而不是抛错，让客户端能探测失效会话并提示用户重新共享；
+   * 同时清理该会话的缓存管线注册，避免悬挂引用。
+   */
+  terminalStatus(payload: ExternalPayload<'external.terminalStatus'>): ExternalToolResult {
+    const sessionId = payload.sessionId;
+    const actor = this.#sessions.get(sessionId);
+    if (
+      actor === undefined ||
+      !isSessionShared(actor.snapshot) ||
+      actor.snapshot.pty !== 'running'
+    ) {
+      this.#pipelines.delete(sessionId);
+      this.#audit?.record?.({
+        actor: { kind: 'external', callerKind: payload.caller.kind, callerId: payload.caller.id },
+        sessionId,
+        type: 'external.status',
+        payload: {
+          source: payload.caller.kind,
+          callerId: payload.caller.id,
+          status: 'expired',
+          shared: false,
+        },
+      });
+      return {
+        ok: true,
+        result: {
+          sessionId,
+          status: 'expired',
+          shared: false,
+          hint: '会话已失效：请在桌面端重新复制并共享会话 ID 后再调用',
+        },
+      };
+    }
+
+    const snapshot = actor.snapshot;
+    const ready = snapshot.shell === 'ready';
+    const hint =
+      snapshot.pty === 'starting'
+        ? '会话正在启动，请稍后重试'
+        : snapshot.shell === 'executing'
+          ? '当前有命令正在执行，请使用 terminal_wait 等待其完成'
+          : snapshot.shell === 'interaction_required'
+            ? '会话正在等待用户交互（如输入密码或确认），完成后可继续'
+            : snapshot.shell === 'probing'
+              ? '会话正在完成 Shell 探测，请稍后重试'
+              : snapshot.shell === 'unknown'
+                ? '会话尚未完成 Shell 探测：执行一次 terminal_execute 即可自动就绪'
+                : '会话 Shell 尚未就绪，请稍后重试或等待用户完成初始化';
+    this.#audit?.record?.({
+      actor: { kind: 'external', callerKind: payload.caller.kind, callerId: payload.caller.id },
+      sessionId,
+      type: 'external.status',
+      payload: {
+        source: payload.caller.kind,
+        callerId: payload.caller.id,
+        status: ready ? 'ready' : 'not_ready',
+        shared: true,
+        pty: snapshot.pty,
+        shell: snapshot.shell,
+      },
+    });
+    return {
+      ok: true,
+      result: {
+        sessionId,
+        status: ready ? 'ready' : 'not_ready',
+        shared: true,
+        pty: snapshot.pty,
+        shell: snapshot.shell,
+        hint: ready ? '会话可用' : hint,
+      },
+    };
+  }
+
   localListFiles(payload: ExternalPayload<'external.localListFiles'>): Promise<ExternalToolResult> {
     const pipeline = this.#pipelineFor(payload.sessionId);
     return pipeline.listFiles(
@@ -243,6 +321,8 @@ export class ExternalRequestHandler {
       !isSessionShared(actor.snapshot) ||
       actor.snapshot.pty !== 'running'
     ) {
+      // 会话已失效：清理缓存管线，避免旧执行器/租约状态被后续调用复用
+      this.#pipelines.delete(sessionId);
       throw routerError('invalid_session', '无效的会话标识');
     }
     return actor;

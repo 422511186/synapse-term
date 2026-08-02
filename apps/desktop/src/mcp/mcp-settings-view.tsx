@@ -1,14 +1,16 @@
 /**
  * MCP 服务设置页（specs/mcp-access、ADR-0021 / ADR-0023）
  *
- * 提供：启用/停用开关、连接串复制、read-only / managed 两级审批配置、
+ * 提供：启用/停用开关、连接串复制、read-only / managed / full 三级审批配置、
  * token 生成与吊销。所有操作经 IPC 交给桌面主进程的 MCP 控制器，
- * 渲染进程不直接触碰设置文件或 HTTP 端点。
+ * 渲染进程不直接触碰设置文件或 HTTP 端点。开关与 token 操作统一走
+ * useAsyncAction 防连点，启用/停用展示"正在启动…/正在停止…"状态流转。
  */
 import { useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 
 import type { DesktopApi, McpStatus } from '../preload/preload-api.js';
+import { ConfirmDialog, useAsyncAction, useToast } from '../renderer/feedback/index.js';
 
 interface McpSettingsViewProps {
   api: DesktopApi;
@@ -17,10 +19,12 @@ interface McpSettingsViewProps {
 
 export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JSX.Element {
   const [status, setStatus] = useState<McpStatus | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [transition, setTransition] = useState<'start' | 'stop' | undefined>(undefined);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [copied, setCopied] = useState<'token' | 'url' | undefined>(undefined);
+  const action = useAsyncAction();
+  const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -30,23 +34,28 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
         if (!cancelled) setStatus(next);
       })
       .catch((caught: unknown) => {
-        if (!cancelled) setError(toMessage(caught));
+        if (!cancelled) toast.error(toMessage(caught));
       });
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, toast]);
 
-  const run = async (action: () => Promise<McpStatus>): Promise<void> => {
-    setBusy(true);
-    setError(undefined);
-    try {
-      setStatus(await action());
-    } catch (caught) {
-      setError(toMessage(caught));
-    } finally {
-      setBusy(false);
-    }
+  const run = (
+    operation: () => Promise<McpStatus>,
+    options: { transition?: 'start' | 'stop'; successMessage?: string } = {},
+  ): void => {
+    if (action.pending) return;
+    setTransition(options.transition);
+    void action
+      .run(operation, {
+        onSuccess: (next) => {
+          setStatus(next);
+          if (options.successMessage !== undefined) toast.success(options.successMessage);
+        },
+        onError: (caught) => toast.error(toMessage(caught)),
+      })
+      .finally(() => setTransition(undefined));
   };
 
   const copyText = async (kind: 'token' | 'url', text: string): Promise<void> => {
@@ -54,6 +63,15 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
     setCopied(kind);
     globalThis.setTimeout(() => setCopied(undefined), 1_500);
   };
+
+  const runningLabel =
+    transition === 'start'
+      ? '正在启动…'
+      : transition === 'stop'
+        ? '正在停止…'
+        : status?.running === true
+          ? '运行中'
+          : '未运行';
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -73,12 +91,6 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
           </p>
         </div>
 
-        {error !== undefined && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-            {error}
-          </div>
-        )}
-
         {/* 启用开关 + 运行状态 */}
         <section className="rounded-xl border border-border bg-[#18181b] p-4 space-y-3">
           <div className="flex items-center justify-between gap-4">
@@ -89,21 +101,35 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
               </div>
             </div>
             <button
+              aria-busy={action.pending}
+              aria-label={`${status?.enabled ? '停用' : '启用'} MCP Server`}
               aria-pressed={status?.enabled ?? false}
-              className={`relative h-6 w-11 rounded-full transition-colors ${status?.enabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
-              disabled={busy}
-              onClick={() => void run(() => api.mcp.setEnabled(!(status?.enabled ?? false)))}
+              className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${status?.enabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+              disabled={action.pending}
+              onClick={() =>
+                run(() => api.mcp.setEnabled(!(status?.enabled ?? false)), {
+                  transition: !(status?.enabled ?? false) ? 'start' : 'stop',
+                })
+              }
               type="button"
             >
               <span
-                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${status?.enabled ? 'translate-x-5' : 'translate-x-0.5'}`}
+                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                  status?.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                }`}
               />
             </button>
           </div>
           <div className="text-xs">
             <span className="text-muted-foreground">状态：</span>
-            <span className={status?.running === true ? 'text-emerald-400' : 'text-zinc-400'}>
-              {status?.running === true ? '运行中' : '未运行'}
+            <span
+              className={
+                status?.running === true || transition === 'start'
+                  ? 'text-emerald-400'
+                  : 'text-zinc-400'
+              }
+            >
+              {runningLabel}
             </span>
             {status?.port !== undefined && (
               <span className="ml-2 text-muted-foreground">端口 {status.port}</span>
@@ -126,24 +152,31 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
         {/* 审批模式 */}
         <section className="rounded-xl border border-border bg-[#18181b] p-4 space-y-3">
           <div className="text-sm font-medium">外部调用审批模式</div>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-3">
             <ModeButton
               active={(status?.approvalMode ?? 'read_only') === 'read_only'}
               description="只放行读类工具（observe / 只读文件），写类一律拒绝"
-              disabled={busy}
+              disabled={action.pending}
               label="只读模式"
-              onClick={() => void run(() => api.mcp.setApprovalMode('read_only'))}
+              onClick={() => run(() => api.mcp.setApprovalMode('read_only'))}
             />
             <ModeButton
               active={(status?.approvalMode ?? 'read_only') === 'managed'}
               description="低危命令自动放行；破坏性与未知高危一律拒绝"
-              disabled={busy}
+              disabled={action.pending}
               label="托管模式"
-              onClick={() => void run(() => api.mcp.setApprovalMode('managed'))}
+              onClick={() => run(() => api.mcp.setApprovalMode('managed'))}
+            />
+            <ModeButton
+              active={(status?.approvalMode ?? 'read_only') === 'full'}
+              description="不审查命令，任何命令直接放行（高风险）"
+              disabled={action.pending}
+              label="完全权限模式"
+              onClick={() => run(() => api.mcp.setApprovalMode('full'))}
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            高危操作（destructive / unknown）不可通过任何配置自动放行；默认拒绝。
+            只读模式默认拒绝一切写类命令；完全权限模式会放行包括高危在内的所有命令，请谨慎使用。
           </p>
         </section>
 
@@ -154,16 +187,16 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
             <div className="flex gap-2">
               <button
                 className="text-xs border border-border rounded px-2 py-1 hover:bg-secondary disabled:opacity-40"
-                disabled={busy}
-                onClick={() => void run(api.mcp.regenerateToken)}
+                disabled={action.pending}
+                onClick={() => run(api.mcp.regenerateToken, { successMessage: 'Token 已重新生成' })}
                 type="button"
               >
                 重新生成
               </button>
               <button
                 className="text-xs border border-red-500/40 text-red-300 rounded px-2 py-1 hover:bg-red-500/10 disabled:opacity-40"
-                disabled={busy || !(status?.hasToken ?? false)}
-                onClick={() => void run(api.mcp.revokeToken)}
+                disabled={action.pending || !(status?.hasToken ?? false)}
+                onClick={() => setConfirmRevoke(true)}
                 type="button"
               >
                 吊销
@@ -204,6 +237,20 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
           </p>
         </section>
       </div>
+
+      <ConfirmDialog
+        confirmLabel="吊销"
+        danger
+        description="吊销后所有外部客户端的新调用（含已建立连接的重连）都会被拒绝，此操作不可撤销。"
+        onCancel={() => setConfirmRevoke(false)}
+        onConfirm={() => {
+          setConfirmRevoke(false);
+          run(api.mcp.revokeToken, { successMessage: 'Token 已吊销' });
+        }}
+        open={confirmRevoke}
+        pending={action.pending}
+        title="确认吊销 Token"
+      />
     </div>
   );
 
@@ -212,7 +259,7 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
       await copyText('token', current.token);
       return;
     }
-    setError('当前没有可复制的 token');
+    toast.error('当前没有可复制的 token');
   }
 }
 
