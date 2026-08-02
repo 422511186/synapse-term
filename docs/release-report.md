@@ -5,7 +5,7 @@
 ## 当前版本
 
 - 产品名：`Synapse Term`
-- 根目录版本：`0.3.0`
+- 根目录版本：`0.3.1`
 - 许可证：MIT
 - Node.js：`>=24.12.0 <25`
 - pnpm：`10.28.1`
@@ -61,7 +61,7 @@ pnpm smoke:maintenance-package
 
 ## 当前状态
 
-当前版本通过 `v0.3.0` 标签进入 GitHub Release 流程。Release 页面中的实际资产、校验文件和工作流状态，以 GitHub 上的对应 Release 为准；本地 `release/` 目录不代表远程资产。
+当前版本通过 `v0.3.1` 标签进入 GitHub Release 流程。Release 页面中的实际资产、校验文件和工作流状态，以 GitHub 上的对应 Release 为准；本地 `release/` 目录不代表远程资产。
 
 发布前应再次确认：
 
@@ -76,8 +76,8 @@ pnpm smoke:maintenance-package
 1. 更新根目录 `package.json` 的版本，并确认 `electron-builder.yml` 使用该版本。
 2. 运行 `pnpm verify`、平台打包、smoke 和需要的平台安装测试。
 3. 检查 `git diff --check`、敏感信息扫描和最终产物清单。
-4. 提交版本变更并推送 `main`。
-5. 创建并推送签名格式为 `v<version>` 的 tag，例如 `v0.3.0`。
+4. 提交版本变更，推送发布分支，并通过 Pull Request 合并到 `main`。
+5. 创建并推送签名格式为 `v<version>` 的 tag，例如 `v0.3.1`。
 6. 在 GitHub Actions 中确认 `release.yml` 的验证、构建、SHA256 和 publish job 全部成功。
 7. 在 GitHub Release 页面复核自动生成的 notes、资产和校验文件。
 

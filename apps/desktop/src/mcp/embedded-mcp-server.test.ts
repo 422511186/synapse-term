@@ -10,6 +10,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 
 import { EmbeddedMcpServer } from './embedded-mcp-server.js';
@@ -30,6 +32,31 @@ function createCoreRequest() {
         throw Object.assign(new Error('无效的会话标识'), { code: 'invalid_session' });
       }
       return { ok: true, result: { status: 'running', transactionId: 'tx-1' } };
+    }
+    if (method === 'external.terminalStatus') {
+      const input = payload as { sessionId: string };
+      if (input.sessionId === 'invalid-session') {
+        return {
+          ok: true,
+          result: {
+            sessionId: input.sessionId,
+            status: 'expired',
+            shared: false,
+            hint: '会话已失效：请在桌面端重新复制并共享会话 ID 后再调用',
+          },
+        };
+      }
+      return {
+        ok: true,
+        result: {
+          sessionId: input.sessionId,
+          status: 'ready',
+          shared: true,
+          pty: 'running',
+          shell: 'ready',
+          hint: '会话可用',
+        },
+      };
     }
     if (method === 'external.terminalObserve') {
       return {
@@ -107,12 +134,10 @@ describe('EmbeddedMcpServer', () => {
 
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      'local_list_files',
-      'local_read_file',
-      'local_search_files',
       'terminal_execute',
       'terminal_interrupt',
       'terminal_observe',
+      'terminal_status',
       'terminal_wait',
     ]);
 
@@ -135,7 +160,143 @@ describe('EmbeddedMcpServer', () => {
       }),
     );
 
+    const status = await client.callTool({
+      name: 'terminal_status',
+      arguments: { sessionId: 'session-1' },
+    });
+    expect(status.isError).not.toBe(true);
+    expect(JSON.stringify(status.content)).toContain('\\"status\\": \\"ready\\"');
+    expect(request).toHaveBeenCalledWith(
+      'external.terminalStatus',
+      expect.objectContaining({
+        sessionId: 'session-1',
+        approvalMode: 'managed',
+        caller: { kind: 'mcp', id: 'mcp-client', displayName: 'MCP 外部客户端' },
+      }),
+    );
+
     await client.close();
+    await server.stop();
+  });
+
+  it('allows a client to re-initialize a new session after session loss', async () => {
+    const settings: McpSettings = {
+      enabled: true,
+      approvalMode: 'read_only',
+      token: 'secret-token',
+    };
+    const server = await startServer(settings, createCoreRequest());
+    const port = server.status.port!;
+
+    const first = await connectClient(port, 'secret-token');
+    await expect(first.listTools()).resolves.toBeDefined();
+    await first.close();
+
+    // 模拟断线后客户端丢失 sessionId：以全新 transport 重新初始化，
+    // 不应得到 400 "Server already initialized"
+    const second = await connectClient(port, 'secret-token');
+    await expect(second.listTools()).resolves.toBeDefined();
+    await second.close();
+    await server.stop();
+  });
+
+  it('serves two concurrent clients with independent sessions', async () => {
+    const settings: McpSettings = {
+      enabled: true,
+      approvalMode: 'read_only',
+      token: 'secret-token',
+    };
+    const server = await startServer(settings, createCoreRequest());
+    const port = server.status.port!;
+
+    const first = await connectClient(port, 'secret-token');
+    const second = await connectClient(port, 'secret-token');
+    await expect(first.listTools()).resolves.toBeDefined();
+    await expect(second.listTools()).resolves.toBeDefined();
+    await first.close();
+    await second.close();
+    await server.stop();
+  });
+
+  it('restarts cleanly after stop with an active client connected', async () => {
+    const mutable: { settings: McpSettings } = {
+      settings: { enabled: true, approvalMode: 'read_only', token: 'secret-token' },
+    };
+    const server = new EmbeddedMcpServer({
+      getSettings: () => mutable.settings,
+      request: createCoreRequest(),
+    });
+    await server.start();
+
+    const first = await connectClient(server.status.port!, 'secret-token');
+    await expect(first.listTools()).resolves.toBeDefined();
+
+    mutable.settings = { ...mutable.settings, enabled: false };
+    await server.stop();
+    expect(server.status.running).toBe(false);
+
+    mutable.settings = { ...mutable.settings, enabled: true };
+    await server.start();
+    expect(server.status.running).toBe(true);
+
+    const second = await connectClient(server.status.port!, 'secret-token');
+    await expect(second.listTools()).resolves.toBeDefined();
+    await second.close();
+    await server.stop();
+  });
+
+  it('listens on the requested fixed port and keeps it across restarts', async () => {
+    const port = await getFreePort();
+    const server = new EmbeddedMcpServer({
+      getSettings: () => ({ enabled: true, approvalMode: 'read_only', token: 'secret-token' }),
+      request: createCoreRequest(),
+    });
+
+    await server.start(port);
+    expect(server.status.port).toBe(port);
+
+    await server.stop();
+    await server.start(port);
+    expect(server.status.port).toBe(port);
+    await server.stop();
+  });
+
+  it('falls back to an ephemeral port when the requested port is occupied', async () => {
+    const blocker = await listenOnFreePort();
+    try {
+      const server = new EmbeddedMcpServer({
+        getSettings: () => ({ enabled: true, approvalMode: 'read_only', token: 'secret-token' }),
+        request: createCoreRequest(),
+      });
+
+      await server.start(blocker.port);
+      expect(server.status.running).toBe(true);
+      expect(server.status.port).not.toBe(blocker.port);
+      await server.stop();
+    } finally {
+      await closeServer(blocker.server);
+    }
+  });
+
+  it('rejects requests with an unknown session id with 404 so the client can re-initialize', async () => {
+    const settings: McpSettings = {
+      enabled: true,
+      approvalMode: 'read_only',
+      token: 'secret-token',
+    };
+    const server = await startServer(settings, createCoreRequest());
+    const port = server.status.port!;
+
+    const stale = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer secret-token',
+        'mcp-session-id': 'stale-session',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(stale.status).toBe(404);
     await server.stop();
   });
 
@@ -155,7 +316,8 @@ describe('EmbeddedMcpServer', () => {
     });
     expect(result.isError).toBe(true);
     const text = JSON.stringify(result.content);
-    expect(text).toContain('无效的会话标识');
+    expect(text).toContain('SESSION_EXPIRED');
+    expect(text).toContain('重新复制并共享会话 ID');
     expect(text).not.toContain('invalid-session');
 
     await client.close();
@@ -216,3 +378,31 @@ describe('EmbeddedMcpServer', () => {
     await server.stop();
   });
 });
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createHttpServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+function listenOnFreePort(): Promise<{ server: HttpServer; port: number }> {
+  return new Promise((resolve, reject) => {
+    const server = createHttpServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({ server, port });
+    });
+  });
+}
+
+function closeServer(server: HttpServer): Promise<void> {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+}

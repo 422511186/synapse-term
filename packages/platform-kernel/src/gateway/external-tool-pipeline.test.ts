@@ -37,14 +37,17 @@ async function setup(
   options: {
     localFiles?: LocalFileService;
     journal?: OutputJournal;
+    ready?: boolean;
   } = {},
 ) {
   const pty = new FakePty(80);
   const actor = new SessionActor('session-1', pty, { executionDialect: 'posix' });
   await actor.markPtyRunning();
-  await actor.transitionShell('probing');
-  await actor.transitionShell('ready');
   await actor.verifyCurrentEnvironment('posix', 'unix', 'linux');
+  if (options.ready !== false) {
+    await actor.transitionShell('probing');
+    await actor.transitionShell('ready');
+  }
   const clock = new FakeClock(0);
   const executor = new CommandExecutor(actor, {
     scheduler: schedulerFor(clock),
@@ -143,6 +146,48 @@ describe('ExternalToolPipeline', () => {
     expect(Object.keys(audit.at(-1)!)).not.toContain('taskId');
   });
 
+  it('runs a lazy shell probe for an unready session before external execution', async () => {
+    const { pty, actor, pipeline } = await setup({ ready: false });
+    const execution = pipeline.execute({ command: 'printf ok' }, context());
+
+    await waitForDispatch(actor, pty);
+    const dispatched = pty.writes.join('');
+    const nonceMatch = dispatched.match(/__TA_OS_([A-Za-z0-9-]+)__/);
+    if (nonceMatch === null) throw new Error('expected capability probe payload');
+    expect(actor.snapshot.shell).toBe('probing');
+
+    pty.emitData(`\u001b]777;TA;${nonceMatch[1]};0\u0007`);
+    await Promise.resolve();
+    await actor.idle();
+    expect(actor.snapshot.shell).toBe('ready');
+
+    pty.emitData('ok__TA_DONE_tx-1;0__');
+    await expect(execution).resolves.toMatchObject({
+      ok: true,
+      result: { status: 'completed', transaction: { status: 'completed', exitCode: 0 } },
+    });
+    expect(actor.snapshot.lease.owner).toEqual({ kind: 'none' });
+  });
+
+  it('returns session_not_ready when the lazy shell probe is invalidated', async () => {
+    const { pty, actor, pipeline } = await setup({ ready: false });
+    const execution = pipeline.execute({ command: 'printf ok' }, context());
+
+    await waitForDispatch(actor, pty);
+    const dispatched = pty.writes.join('');
+    const nonceMatch = dispatched.match(/__TA_OS_([A-Za-z0-9-]+)__/);
+    if (nonceMatch === null) throw new Error('expected capability probe payload');
+    await actor.writeUser('manual\r');
+    pty.emitData(`\u001b]777;TA;${nonceMatch[1]};0\u0007`);
+
+    await expect(execution).resolves.toMatchObject({
+      ok: false,
+      error: 'session_not_ready',
+      recoverable: true,
+    });
+    expect(actor.snapshot.lease.owner).toEqual({ kind: 'user' });
+  });
+
   it.each(['unknown', 'privileged', 'destructive'])(
     'rejects %s risk in managed mode with default deny',
     async (risk) => {
@@ -168,6 +213,31 @@ describe('ExternalToolPipeline', () => {
       });
     },
   );
+
+  it('executes a destructive command in full mode and audits the risk', async () => {
+    const { pty, actor, pipeline, audit } = await setup();
+    const execution = pipeline.execute(
+      { command: 'rm -rf /tmp/external-full-test' },
+      context('full'),
+    );
+    await Promise.resolve();
+    await actor.idle();
+    pty.emitData('ok__TA_DONE_tx-1;0__');
+
+    await expect(execution).resolves.toMatchObject({
+      ok: true,
+      result: { status: 'completed', transaction: { status: 'completed', exitCode: 0 } },
+    });
+    expect(actor.snapshot.lease.owner).toEqual({ kind: 'none' });
+    expect(audit.at(-1)).toMatchObject({
+      type: 'external.command',
+      payload: {
+        risk: 'destructive',
+        approvalMode: 'full',
+        authorization: 'auto_allowed',
+      },
+    });
+  });
 
   it('returns a recoverable lease conflict while the built-in agent owns the Session', async () => {
     const { pty, actor, pipeline } = await setup();

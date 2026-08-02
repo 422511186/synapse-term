@@ -2,7 +2,11 @@
  * MCP 控制器测试：开关、审批模式、token 生成/吊销与端点生命周期。
  */
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { withTemporaryDirectory } from '@synapse-term/test-kit';
@@ -58,6 +62,11 @@ describe('McpController', () => {
       const managed = await controller.setApprovalMode('managed');
       expect(managed.approvalMode).toBe('managed');
       await expect(store.load()).resolves.toMatchObject({ approvalMode: 'managed' });
+
+      // full 完全权限模式切换后持久化
+      const full = await controller.setApprovalMode('full');
+      expect(full.approvalMode).toBe('full');
+      await expect(store.load()).resolves.toMatchObject({ approvalMode: 'full' });
 
       // 重新生成 token：旧 token 立即失效，新调用必须携带新 token
       const regenerated = await controller.regenerateToken();
@@ -118,4 +127,70 @@ describe('McpController', () => {
       await controller.dispose();
     });
   });
+
+  it('restarts the endpoint after disabling with a client connected', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const controller = createMcpControllerWithStore(
+        createMcpSettingsStore(join(directory, 'mcp')),
+        {
+          settingsDirectory: join(directory, 'mcp'),
+          request: vi.fn(),
+        },
+      );
+      const enabled = await controller.setEnabled(true);
+      const first = await connectClient(enabled.port!, enabled.token!);
+      await expect(first.listTools()).resolves.toBeDefined();
+
+      const disabled = await controller.setEnabled(false);
+      expect(disabled.running).toBe(false);
+
+      const reenabled = await controller.setEnabled(true);
+      expect(reenabled.running).toBe(true);
+
+      const second = await connectClient(reenabled.port!, reenabled.token!);
+      await expect(second.listTools()).resolves.toBeDefined();
+      await second.close();
+      await controller.dispose();
+    });
+  });
+
+  it('keeps the same port across disable and re-enable cycles and persists it', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const controller = createMcpControllerWithStore(
+        createMcpSettingsStore(join(directory, 'mcp')),
+        {
+          settingsDirectory: join(directory, 'mcp'),
+          request: vi.fn(),
+        },
+      );
+      const enabled = await controller.setEnabled(true);
+      expect(enabled.port).toBeDefined();
+      const port = enabled.port!;
+
+      const disabled = await controller.setEnabled(false);
+      expect(disabled.running).toBe(false);
+
+      const reenabled = await controller.setEnabled(true);
+      expect(reenabled.port).toBe(port);
+      expect(reenabled.connectionString).toBe(`http://127.0.0.1:${port}/mcp`);
+
+      const raw = JSON.parse(await readFile(join(directory, 'mcp', 'settings.json'), 'utf8')) as {
+        port?: unknown;
+      };
+      expect(raw.port).toBe(port);
+      await controller.dispose();
+    });
+  });
 });
+
+async function connectClient(port: number, token: string): Promise<Client> {
+  const client = new Client(
+    { name: 'mcp-controller-test', version: '1.0.0' },
+    { capabilities: {} },
+  );
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  await client.connect(transport as unknown as Transport);
+  return client;
+}

@@ -11,6 +11,7 @@ import { withTemporaryDirectory } from '@synapse-term/test-kit';
 import {
   createMcpSettingsStore,
   generateMcpToken,
+  normalizeMcpApprovalMode,
   sanitizeMcpSettings,
   type McpSettings,
 } from './mcp-settings.js';
@@ -33,6 +34,7 @@ describe('McpSettingsStore', () => {
         enabled: true,
         approvalMode: 'managed',
         token: 'test-token-value',
+        port: 18789,
       };
       await store.save(settings);
       await expect(store.load()).resolves.toEqual(settings);
@@ -40,6 +42,20 @@ describe('McpSettingsStore', () => {
       // 设置文件确实落在 userData/mcp/settings.json
       const raw = await readFile(join(directory, 'mcp', 'settings.json'), 'utf8');
       expect(JSON.parse(raw)).toMatchObject({ enabled: true, approvalMode: 'managed' });
+    });
+  });
+
+  it('persists the stable MCP port and reloads it round-trip', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = createMcpSettingsStore(join(directory, 'mcp'));
+      const settings: McpSettings = {
+        enabled: true,
+        approvalMode: 'read_only',
+        token: 't',
+        port: 18789,
+      };
+      await store.save(settings);
+      await expect(store.load()).resolves.toEqual(settings);
     });
   });
 
@@ -72,6 +88,28 @@ describe('McpSettingsStore', () => {
       approvalMode: 'managed',
       token: 'abc',
     });
+    expect(sanitizeMcpSettings({ enabled: true, approvalMode: 'full', token: 'abc' })).toEqual({
+      enabled: true,
+      approvalMode: 'full',
+      token: 'abc',
+    });
+  });
+
+  it('keeps only valid integer ports in the whitelist', () => {
+    expect(sanitizeMcpSettings({ enabled: true, approvalMode: 'managed', port: 18789 })).toEqual({
+      enabled: true,
+      approvalMode: 'managed',
+      port: 18789,
+    });
+    expect(
+      sanitizeMcpSettings({ enabled: true, approvalMode: 'managed', port: 0 }),
+    ).not.toHaveProperty('port');
+    expect(
+      sanitizeMcpSettings({ enabled: true, approvalMode: 'managed', port: 70_000 }),
+    ).not.toHaveProperty('port');
+    expect(
+      sanitizeMcpSettings({ enabled: true, approvalMode: 'managed', port: '18789' }),
+    ).not.toHaveProperty('port');
   });
 
   it('generates URL-safe tokens with sufficient entropy', () => {
@@ -79,5 +117,13 @@ describe('McpSettingsStore', () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(token.length).toBeGreaterThanOrEqual(40);
     expect(generateMcpToken()).not.toBe(token);
+  });
+
+  it('normalizes the approval mode across the IPC boundary', () => {
+    expect(normalizeMcpApprovalMode('full')).toBe('full');
+    expect(normalizeMcpApprovalMode('managed')).toBe('managed');
+    expect(normalizeMcpApprovalMode('read_only')).toBe('read_only');
+    expect(normalizeMcpApprovalMode('super_admin')).toBe('read_only');
+    expect(normalizeMcpApprovalMode(undefined)).toBe('read_only');
   });
 });

@@ -1,4 +1,4 @@
-/** Provider 编辑弹窗（自 app.tsx 拆分） */
+/** Provider 编辑弹窗（自 app.tsx 拆分）：保存/测试连接统一走 useAsyncAction */
 import { useState, type JSX } from 'react';
 import { Check, RefreshCw, Save, X } from 'lucide-react';
 
@@ -8,6 +8,7 @@ import type {
   ProviderProfileInput,
   ProviderProfileView,
 } from '../../preload/preload-api.js';
+import { useAsyncAction, useToast } from '../feedback/index.js';
 import { newProviderInput, providerInput } from './inputs.js';
 
 export function ProviderEditModal({
@@ -25,10 +26,11 @@ export function ProviderEditModal({
     provider === undefined ? newProviderInput() : providerInput(provider),
   );
   const [apiKey, setApiKey] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<'none' | 'success'>('none');
   const [error, setError] = useState<string>();
+  const saveAction = useAsyncAction();
+  const testAction = useAsyncAction();
+  const toast = useToast();
 
   const validate = (): boolean => {
     if (!draft.name.trim() || !draft.baseUrl.trim()) {
@@ -41,64 +43,63 @@ export function ProviderEditModal({
       setError('Base URL 必须是有效 URL。');
       return false;
     }
+    setError(undefined);
     return true;
   };
 
-  const testConnection = async (): Promise<void> => {
+  const testConnection = (): void => {
     if (!validate()) return;
-    setTesting(true);
     setTestResult('none');
-    setError(undefined);
-    try {
-      await api.providers.save(
-        { ...draft, name: draft.name.trim(), baseUrl: draft.baseUrl.trim() },
-        apiKey.trim() || undefined,
-      );
-      await api.providers.discoverModels(draft.id);
-      setTestResult('success');
-    } catch (caught) {
-      setError(errorMessageZh(caught));
-    } finally {
-      setTesting(false);
-    }
+    void testAction.run(
+      async () => {
+        await api.providers.save(
+          { ...draft, name: draft.name.trim(), baseUrl: draft.baseUrl.trim() },
+          apiKey.trim() || undefined,
+        );
+        await api.providers.discoverModels(draft.id);
+        setTestResult('success');
+      },
+      { onError: (caught) => toast.error(errorMessageZh(caught)) },
+    );
   };
 
-  const save = async (): Promise<void> => {
+  const save = (): void => {
     if (!validate()) return;
-    setSaving(true);
-    setError(undefined);
-    try {
-      await api.providers.save(
-        { ...draft, name: draft.name.trim(), baseUrl: draft.baseUrl.trim() },
-        apiKey.trim() || undefined,
-      );
-      await onSaved();
-    } catch (caught) {
-      setError(errorMessageZh(caught));
-      setSaving(false);
-    }
+    void saveAction.run(
+      async () => {
+        await api.providers.save(
+          { ...draft, name: draft.name.trim(), baseUrl: draft.baseUrl.trim() },
+          apiKey.trim() || undefined,
+        );
+        await onSaved();
+      },
+      { onError: (caught) => toast.error(errorMessageZh(caught)) },
+    );
   };
+
+  const busy = saveAction.pending || testAction.pending;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
       <div
         aria-label="配置服务商"
         aria-modal="true"
-        className="bg-[#18181b] border border-border w-full max-w-md rounded-xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-200"
+        className="flex w-full max-w-md animate-in zoom-in-95 duration-200 flex-col rounded-xl border border-border bg-[#18181b] shadow-2xl"
         role="dialog"
       >
-        <div className="flex items-center justify-between p-4 border-b border-border/50 bg-[#09090b] rounded-t-xl">
+        <div className="flex items-center justify-between rounded-t-xl border-b border-border/50 bg-[#09090b] p-4">
           <h2 className="text-[15px] font-semibold">配置服务商</h2>
           <button
             aria-label="关闭服务商配置"
-            onClick={onClose}
             className="text-muted-foreground hover:text-foreground"
+            disabled={busy}
+            onClick={onClose}
             type="button"
           >
             <X size={18} />
           </button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="space-y-4 p-5">
           <div className="space-y-2">
             <label
               className="text-[13px] font-medium text-foreground/90"
@@ -111,7 +112,7 @@ export function ProviderEditModal({
               value={draft.name}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
               type="text"
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
+              className="w-full rounded-lg border border-border bg-[#09090b] px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
             />
           </div>
           <div className="space-y-2">
@@ -130,7 +131,7 @@ export function ProviderEditModal({
                   protocol: event.target.value as ProviderProfileView['protocol'],
                 })
               }
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary appearance-none transition-colors"
+              className="w-full appearance-none rounded-lg border border-border bg-[#09090b] px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
             >
               <option value="openai_chat_completions">OpenAI Chat Completions</option>
               <option value="openai_responses">OpenAI Responses</option>
@@ -149,7 +150,7 @@ export function ProviderEditModal({
               value={draft.baseUrl}
               onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
               type="text"
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors font-mono"
+              className="w-full rounded-lg border border-border bg-[#09090b] px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-primary"
             />
           </div>
           <div className="space-y-2">
@@ -165,7 +166,7 @@ export function ProviderEditModal({
               onChange={(event) => setApiKey(event.target.value)}
               type="password"
               placeholder="留空则保留当前凭据"
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors font-mono"
+              className="w-full rounded-lg border border-border bg-[#09090b] px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-primary"
             />
           </div>
           {error !== undefined && (
@@ -174,36 +175,41 @@ export function ProviderEditModal({
             </div>
           )}
         </div>
-        <div className="p-4 border-t border-border flex justify-between items-center bg-[#09090b] rounded-b-xl">
+        <div className="flex items-center justify-between rounded-b-xl border-t border-border bg-[#09090b] p-4">
           <button
-            onClick={() => void testConnection()}
-            disabled={testing || saving}
-            className={`px-3 py-2 text-xs font-medium border rounded-lg transition-colors flex items-center gap-1.5 ${testResult === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'border-border hover:bg-secondary text-muted-foreground hover:text-foreground'} disabled:opacity-40`}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-40 ${
+              testResult === 'success'
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground'
+            }`}
+            disabled={busy}
+            onClick={testConnection}
+            title="测试连接会先保存当前草稿"
             type="button"
           >
             {testResult === 'success' ? (
               <Check size={14} />
             ) : (
-              <RefreshCw size={14} className={testing ? 'animate-spin' : ''} />
+              <RefreshCw size={14} className={testAction.pending ? 'animate-spin' : ''} />
             )}
-            {testing ? '连接中...' : testResult === 'success' ? '测试成功' : '测试连接'}
+            {testAction.pending ? '连接中...' : testResult === 'success' ? '测试成功' : '测试连接'}
           </button>
           <div className="flex gap-2">
             <button
-              disabled={saving}
+              className="rounded-lg px-4 py-2 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+              disabled={busy}
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium hover:bg-secondary rounded-lg transition-colors"
               type="button"
             >
               取消
             </button>
             <button
-              disabled={saving}
-              onClick={() => void save()}
-              className="px-4 py-2 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-xs font-semibold text-black shadow-sm transition-colors hover:bg-white/90 disabled:opacity-40"
+              disabled={busy}
+              onClick={save}
               type="button"
             >
-              <Save size={14} /> {saving ? '正在保存…' : '保存凭据'}
+              <Save size={14} /> {saveAction.pending ? '正在保存…' : '保存凭据'}
             </button>
           </div>
         </div>

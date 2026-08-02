@@ -24,6 +24,8 @@ export interface EmbeddedMcpServerOptions {
   host?: string;
   /** HTTP 端点路径，默认 /mcp */
   pathname?: string;
+  /** 期望监听端口；start() 未显式传参时使用。占用时自动回退临时端口 */
+  port?: number;
 }
 
 export interface EmbeddedMcpStatus {
@@ -32,14 +34,21 @@ export interface EmbeddedMcpStatus {
   connectionString?: string;
 }
 
+interface McpSession {
+  transport: StreamableHTTPServerTransport;
+  server: McpServer;
+}
+
 const DEFAULT_PATHNAME = '/mcp';
 const MAX_BODY_BYTES = 1_048_576;
+/** stop() 中 httpServer.close 的最大等待时间，超时后强制销毁连接，避免开关永久 pending */
+const HTTP_SERVER_CLOSE_TIMEOUT_MS = 3_000;
 
 export class EmbeddedMcpServer {
   readonly #options: EmbeddedMcpServerOptions;
   #httpServer: Server | undefined;
-  #mcpServer: McpServer | undefined;
-  #transport: StreamableHTTPServerTransport | undefined;
+  /** 每个 MCP 客户端会话独立的 transport + server：支持并发客户端与断线后重新初始化 */
+  #sessions = new Map<string, McpSession>();
   #port: number | undefined;
 
   constructor(options: EmbeddedMcpServerOptions) {
@@ -58,8 +67,8 @@ export class EmbeddedMcpServer {
     };
   }
 
-  /** 启动端点：要求设置已启用且存在 token，否则拒绝启动 */
-  async start(): Promise<void> {
+  /** 启动端点：要求设置已启用且存在 token，否则拒绝启动。preferredPort 被占用时回退临时端口 */
+  async start(preferredPort?: number): Promise<void> {
     if (this.status.running) return;
     const settings = this.#options.getSettings();
     if (!settings.enabled) {
@@ -70,56 +79,71 @@ export class EmbeddedMcpServer {
     }
 
     const host = this.#options.host ?? '127.0.0.1';
-    const pathname = this.#options.pathname ?? DEFAULT_PATHNAME;
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-    const mcpServer = new McpServer({
-      name: 'synapse-term-mcp',
-      version: '1.0.0',
-    });
-    registerMcpTools(mcpServer, {
-      request: this.#options.request,
-      getSettings: this.#options.getSettings,
-    });
+    const requestedPort = preferredPort ?? this.#options.port ?? 0;
+    try {
+      this.#port = await this.#listen(host, requestedPort);
+    } catch (error) {
+      if (requestedPort === 0 || !isEaddrinuse(error)) throw error;
+      this.#port = await this.#listen(host, 0);
+    }
+  }
 
+  async #listen(host: string, port: number): Promise<number> {
     const httpServer = createServer((request, response) => {
-      void this.#handleHttpRequest(request, response, pathname);
+      void this.#handleHttpRequest(request, response, this.#options.pathname ?? DEFAULT_PATHNAME);
     });
-    this.#httpServer = httpServer;
-    this.#mcpServer = mcpServer;
-    this.#transport = transport;
-
-    // SDK 1.30 的 Transport 接口在 exactOptionalPropertyTypes 下与
-    // StreamableHTTPServerTransport 的 onclose 可空类型不完全兼容，此处显式收窄。
-    await mcpServer.connect(transport as unknown as Transport);
     await new Promise<void>((resolve, reject) => {
       httpServer.once('error', reject);
-      httpServer.listen(0, host, () => {
+      httpServer.listen(port, host, () => {
         httpServer.off('error', reject);
         resolve();
       });
     });
-    this.#port = (httpServer.address() as AddressInfo).port;
+    this.#httpServer = httpServer;
+    return (httpServer.address() as AddressInfo).port;
   }
 
   /** 停止端点：关闭 HTTP 服务与 MCP 会话，吊销/关闭后无残留监听 */
   async stop(): Promise<void> {
     const httpServer = this.#httpServer;
-    const mcpServer = this.#mcpServer;
+    const sessions = [...this.#sessions.values()];
     this.#httpServer = undefined;
-    this.#mcpServer = undefined;
-    this.#transport = undefined;
+    this.#sessions.clear();
     this.#port = undefined;
     if (httpServer !== undefined && httpServer.listening) {
-      await new Promise<void>((resolve) => {
-        httpServer.close(() => resolve());
-        httpServer.closeAllConnections();
-      });
+      await closeHttpServerBounded(httpServer);
     }
-    if (mcpServer !== undefined) {
-      await mcpServer.close().catch(() => undefined);
+    for (const session of sessions) {
+      await session.transport.close().catch(() => undefined);
+      await session.server.close().catch(() => undefined);
     }
+  }
+
+  /** 为新的初始化请求创建独立会话：transport 与 McpServer 一一对应 */
+  async #createSession(): Promise<StreamableHTTPServerTransport> {
+    const server = new McpServer({
+      name: 'synapse-term-mcp',
+      version: '1.0.0',
+    });
+    registerMcpTools(server, {
+      request: this.#options.request,
+      getSettings: this.#options.getSettings,
+    });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => {
+        this.#sessions.set(id, { transport, server });
+      },
+    });
+    // 会话关闭（DELETE / 服务停止）时从会话表清理
+    transport.onclose = () => {
+      const id = transport.sessionId;
+      if (id !== undefined) this.#sessions.delete(id);
+    };
+    // SDK 1.30 的 Transport 接口在 exactOptionalPropertyTypes 下与
+    // StreamableHTTPServerTransport 的 onclose 可空类型不完全兼容，此处显式收窄。
+    await server.connect(transport as unknown as Transport);
+    return transport;
   }
 
   async #handleHttpRequest(
@@ -127,8 +151,7 @@ export class EmbeddedMcpServer {
     response: ServerResponse,
     pathname: string,
   ): Promise<void> {
-    const transport = this.#transport;
-    if (transport === undefined) {
+    if (this.#httpServer === undefined || !this.#httpServer.listening) {
       sendJson(response, 503, { error: 'MCP 服务未运行' });
       return;
     }
@@ -160,17 +183,57 @@ export class EmbeddedMcpServer {
         return;
       }
     }
+    const sessionHeader = request.headers['mcp-session-id'];
+    const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+
     try {
+      let transport: StreamableHTTPServerTransport;
+      if (request.method === 'POST' && sessionId === undefined) {
+        // 新会话：初始化请求（含断线后重新初始化）使用全新 transport，
+        // 注册到会话表，后续 GET/POST/DELETE 按 session id 路由。
+        transport = await this.#createSession();
+      } else {
+        const existing = sessionId === undefined ? undefined : this.#sessions.get(sessionId);
+        if (existing === undefined) {
+          // 未知/过期会话：404 让客户端按 MCP Streamable HTTP 语义重新初始化
+          sendJson(response, 404, { error: 'Session not found' });
+          return;
+        }
+        transport = existing.transport;
+      }
       await transport.handleRequest(request, response, parsedBody);
     } catch (error) {
       if (!response.headersSent) {
         sendJson(response, 500, { error: 'Internal Server Error' });
       } else {
-        response.end();
+        try {
+          response.end();
+        } catch {
+          // 连接已在停机/销毁过程中断开，忽略
+        }
       }
       console.error('[desktop-mcp] handleRequest failed', error);
     }
   }
+}
+
+/** 有界关闭 HTTP 服务：close 回调超时后强制销毁连接并返回，避免调用方永久等待 */
+function closeHttpServerBounded(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = globalThis.setTimeout(() => {
+      server.closeAllConnections();
+      resolve();
+    }, HTTP_SERVER_CLOSE_TIMEOUT_MS);
+    server.close(() => {
+      globalThis.clearTimeout(timer);
+      resolve();
+    });
+    server.closeAllConnections();
+  });
+}
+
+function isEaddrinuse(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
 }
 
 /** Bearer token 校验：常量时间比较，避免时序侧信道 */

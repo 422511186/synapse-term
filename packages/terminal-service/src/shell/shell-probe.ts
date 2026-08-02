@@ -20,6 +20,8 @@ export interface ShellProbeOptions {
 export interface ShellProbeInput {
   taskId: string;
   leaseEpoch: number;
+  /** 探测写入使用的租约类型：默认内置 Agent；外部调用者传 external（ADR-0024） */
+  ownerKind?: 'agent' | 'external';
 }
 
 export type ShellProbeResult =
@@ -198,11 +200,14 @@ export class ShellProbe {
         }
 
         const snapshot = this.#actor.snapshot;
+        const ownerMatches =
+          (snapshot.lease.owner.kind === 'agent' && snapshot.lease.owner.taskId === input.taskId) ||
+          (snapshot.lease.owner.kind === 'external' &&
+            snapshot.lease.owner.callerId === input.taskId);
         if (
           snapshot.shell !== 'probing' ||
           snapshot.lease.epoch !== input.leaseEpoch ||
-          snapshot.lease.owner.kind !== 'agent' ||
-          snapshot.lease.owner.taskId !== input.taskId
+          !ownerMatches
         ) {
           finish({ mode: 'observation_only', reason: 'invalidated', nonce }, false);
           return;
@@ -262,6 +267,7 @@ export class ShellProbe {
           nonce,
           kind: 'capability',
           dialect,
+          ...(input.ownerKind === undefined ? {} : { ownerKind: input.ownerKind }),
         })
         .then((result) => {
           if (!result.ok) {
@@ -325,6 +331,7 @@ export class ShellProbe {
           leaseEpoch: input.leaseEpoch,
           nonce,
           kind: 'environment_fingerprint',
+          ...(input.ownerKind === undefined ? {} : { ownerKind: input.ownerKind }),
         })
         .then((result) => {
           if (!result.ok) finish(null);

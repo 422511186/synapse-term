@@ -34,6 +34,47 @@ function textResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
+/**
+ * 稳定外部错误码（specs/mcp-access）：内部错误码 → 外部客户端可解析的错误码。
+ * MCP CallToolResult 没有结构化错误码字段，统一以 `CODE: message（指引）` 前缀文本返回。
+ */
+const STABLE_ERROR_CODES: Readonly<Record<string, string>> = {
+  session_not_ready: 'SESSION_NOT_READY',
+  invalid_session: 'SESSION_EXPIRED',
+  lease_unavailable: 'SESSION_BUSY',
+  command_transaction_conflict: 'TERMINAL_BUSY',
+  transaction_not_found: 'TRANSACTION_NOT_FOUND',
+  policy_denied: 'POLICY_DENIED',
+  command_not_found: 'COMMAND_NOT_FOUND',
+  command_failed: 'COMMAND_FAILED',
+  command_shell_lost: 'SHELL_LOST',
+  command_interrupted: 'COMMAND_INTERRUPTED',
+  command_protocol_error: 'PROTOCOL_ERROR',
+  plaintext_protocol_error: 'PROTOCOL_ERROR',
+  execution_environment_unverified: 'ENVIRONMENT_UNVERIFIED',
+  command_not_auditable: 'NOT_AUDITABLE',
+  local_file_service_unavailable: 'LOCAL_FILE_UNAVAILABLE',
+  file_operation_failed: 'FILE_OPERATION_FAILED',
+};
+
+/** 恢复指引：让客户端明确下一步，而不是反复猜测或卡死 */
+const ERROR_HINTS: Readonly<Record<string, string>> = {
+  SESSION_NOT_READY: '会话 Shell 尚未就绪，请稍后重试或先调用 terminal_status 探测状态',
+  SESSION_EXPIRED: '会话已失效，请在桌面端重新复制并共享会话 ID 后再调用',
+  SESSION_BUSY: '会话正被用户或内置 Agent 占用，请稍后重试',
+  TERMINAL_BUSY: '已有命令正在执行，请先调用 terminal_wait 等待其完成',
+  TRANSACTION_NOT_FOUND: '事务不存在或已过期，请重新发起 terminal_execute',
+  SHELL_LOST: '终端 Shell 已退出，请重新共享会话 ID 后再调用',
+};
+
+function formatExternalError(result: { error?: string; message?: string }): string {
+  const error = result.error ?? 'external_error';
+  const code = STABLE_ERROR_CODES[error] ?? error.toUpperCase();
+  const hint = ERROR_HINTS[code];
+  const message = result.message ?? '外部调用被拒绝';
+  return hint === undefined ? `${code}: ${message}` : `${code}: ${message}（${hint}）`;
+}
+
 /** 稳定错误结果：不把内部堆栈或会话细节暴露给外部调用者 */
 function errorResult(message: string): CallToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
@@ -68,9 +109,7 @@ export async function runMcpTool(
     | 'external.terminalObserve'
     | 'external.terminalWait'
     | 'external.terminalInterrupt'
-    | 'external.localListFiles'
-    | 'external.localSearchFiles'
-    | 'external.localReadFile',
+    | 'external.terminalStatus',
   input: Record<string, unknown>,
 ): Promise<CallToolResult> {
   const settings = runtime.getSettings();
@@ -84,27 +123,29 @@ export async function runMcpTool(
     const result = await runtime.request(request.method, request.payload);
     if (isExternalToolResult(result)) {
       if (result.ok) return textResult(formatResult(result.result));
-      return errorResult(result.message ?? result.error ?? '外部调用被拒绝');
+      return errorResult(formatExternalError(result));
     }
     return textResult(formatResult(result));
   } catch (error) {
     // 无效会话统一返回稳定文案，不泄露其他会话的任何信息（ADR-0022）。
     if (error instanceof Error && 'code' in error && error.code === 'invalid_session') {
-      return errorResult('无效的会话标识');
+      return errorResult(
+        formatExternalError({ error: 'invalid_session', message: '无效的会话标识' }),
+      );
     }
     const message = error instanceof Error ? error.message : '外部调用失败';
     return errorResult(`外部调用失败：${message}`);
   }
 }
 
-/** 注册 MCP 工具集合：终端执行 / observe / wait / interrupt + 只读文件能力 */
+/** 注册 MCP 工具集合：仅 terminal_*（execute / observe / wait / interrupt / status） */
 export function registerMcpTools(server: McpServer, runtime: McpToolRuntime): void {
   server.registerTool(
     'terminal_execute',
     {
       title: '终端执行',
       description:
-        '在用户共享的终端会话中执行一条命令。命令由本地策略引擎分类：read-only 模式拒绝一切写类命令；managed 模式只自动放行低危命令，破坏性命令一律拒绝。',
+        '在用户共享的终端会话中执行一条命令。命令由本地策略引擎分类：read-only 模式拒绝一切写类命令；managed 模式只自动放行低危命令；full 完全权限模式不审查命令、全部放行。',
       inputSchema: {
         sessionId: z.string().min(1).describe('用户从桌面复制的会话 ID'),
         command: z.string().min(1).describe('要执行的命令文本'),
@@ -190,75 +231,18 @@ export function registerMcpTools(server: McpServer, runtime: McpToolRuntime): vo
   );
 
   server.registerTool(
-    'local_list_files',
+    'terminal_status',
     {
-      title: '列出目录',
-      description: '只读列出用户共享会话下的本地目录内容，路径受本地文件策略限制。',
+      title: '终端会话状态',
+      description:
+        '只读探测共享终端会话状态：ready / not_ready / expired。会话失效时返回 expired 与重新共享指引；不创建租约、不写入终端。',
       inputSchema: {
         sessionId: z.string().min(1).describe('用户从桌面复制的会话 ID'),
-        path: z.string().optional().describe('要列出的目录路径（缺省为会话工作目录）'),
-        maxDepth: z.number().int().positive().optional().describe('递归深度上限'),
-        maxResults: z.number().int().positive().optional().describe('返回条目数上限'),
       },
     },
     async (args) =>
-      runMcpTool(runtime, 'external.localListFiles', {
+      runMcpTool(runtime, 'external.terminalStatus', {
         sessionId: args.sessionId,
-        ...(args.path === undefined ? {} : { path: args.path }),
-        ...(args.maxDepth === undefined ? {} : { maxDepth: args.maxDepth }),
-        ...(args.maxResults === undefined ? {} : { maxResults: args.maxResults }),
-      }),
-  );
-
-  server.registerTool(
-    'local_search_files',
-    {
-      title: '搜索文件',
-      description: '只读搜索目录中的文件与内容，路径受本地文件策略限制。',
-      inputSchema: {
-        sessionId: z.string().min(1).describe('用户从桌面复制的会话 ID'),
-        path: z.string().describe('搜索根目录'),
-        query: z.string().min(1).describe('搜索关键字'),
-        mode: z.enum(['filename', 'content']).describe('按文件名或文件内容搜索'),
-        maxDepth: z.number().int().positive().optional(),
-        maxResults: z.number().int().positive().optional(),
-        maxBytes: z.number().int().positive().optional(),
-        timeoutMs: z.number().int().positive().optional(),
-      },
-    },
-    async (args) =>
-      runMcpTool(runtime, 'external.localSearchFiles', {
-        sessionId: args.sessionId,
-        path: args.path,
-        query: args.query,
-        mode: args.mode,
-        ...(args.maxDepth === undefined ? {} : { maxDepth: args.maxDepth }),
-        ...(args.maxResults === undefined ? {} : { maxResults: args.maxResults }),
-        ...(args.maxBytes === undefined ? {} : { maxBytes: args.maxBytes }),
-        ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
-      }),
-  );
-
-  server.registerTool(
-    'local_read_file',
-    {
-      title: '读取文件',
-      description: '只读读取文件内容，路径受本地文件策略限制。',
-      inputSchema: {
-        sessionId: z.string().min(1).describe('用户从桌面复制的会话 ID'),
-        path: z.string().describe('要读取的文件路径'),
-        startLine: z.number().int().positive().optional(),
-        endLine: z.number().int().positive().optional(),
-        maxBytes: z.number().int().positive().optional(),
-      },
-    },
-    async (args) =>
-      runMcpTool(runtime, 'external.localReadFile', {
-        sessionId: args.sessionId,
-        path: args.path,
-        ...(args.startLine === undefined ? {} : { startLine: args.startLine }),
-        ...(args.endLine === undefined ? {} : { endLine: args.endLine }),
-        ...(args.maxBytes === undefined ? {} : { maxBytes: args.maxBytes }),
       }),
   );
 }

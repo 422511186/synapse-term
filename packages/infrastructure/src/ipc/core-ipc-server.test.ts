@@ -270,6 +270,93 @@ describe('CoreIpcServer', () => {
     await transport.close();
   });
 
+  it('preserves router error codes such as invalid_session across IPC', async () => {
+    const token = 'local-auth-token-with-at-least-32-bytes';
+    const ipc = new CoreIpcServer({
+      coreInstanceId: 'core-1',
+      token,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      handleRequest: async () => {
+        throw Object.assign(new Error('无效的会话标识'), { code: 'invalid_session' });
+      },
+    });
+    const transport = new NamedPipeServer();
+    const pipeName = buildUserScopedPipeName(`ipc-${randomUUID()}`, 'current-user');
+    await transport.listen(pipeName, (socket) => ipc.accept(socket));
+    const socket = createConnection(pipeName);
+    await once(socket, 'connect');
+    const inbox = new FrameInbox(socket);
+
+    socket.write(
+      encodeControlFrame(
+        request('hello', 'handshake.hello', {
+          kind: 'client_hello',
+          protocolVersion: CURRENT_PROTOCOL_VERSION,
+          clientInstanceId: 'desktop-1',
+        }),
+      ),
+    );
+    const challengeFrame = await inbox.next();
+    if (
+      challengeFrame.kind !== 'control' ||
+      challengeFrame.envelope.kind !== 'response' ||
+      !challengeFrame.envelope.ok
+    ) {
+      throw new Error('expected handshake challenge');
+    }
+    const challenge = challengeFrame.envelope.result as {
+      challenge: string;
+      coreInstanceId: string;
+      protocolVersion: typeof CURRENT_PROTOCOL_VERSION;
+    };
+    socket.write(
+      encodeControlFrame(
+        request('auth', 'handshake.authenticate', {
+          kind: 'client_authentication',
+          protocolVersion: challenge.protocolVersion,
+          clientInstanceId: 'desktop-1',
+          coreInstanceId: challenge.coreInstanceId,
+          challenge: challenge.challenge,
+          proof: createAuthenticationProof({
+            token,
+            challenge: challenge.challenge,
+            clientInstanceId: 'desktop-1',
+            coreInstanceId: challenge.coreInstanceId,
+            protocolVersion: challenge.protocolVersion,
+          }),
+        }),
+      ),
+    );
+    await expect(inbox.next()).resolves.toMatchObject({
+      kind: 'control',
+      envelope: { kind: 'response', requestId: 'auth', ok: true },
+    });
+
+    socket.write(
+      encodeControlFrame(
+        request('exec', 'external.terminalExecute', {
+          sessionId: 'session-1',
+          caller: { kind: 'mcp', id: 'mcp-client' },
+          approvalMode: 'managed',
+          command: 'ls',
+        }),
+      ),
+    );
+    await expect(inbox.next()).resolves.toMatchObject({
+      kind: 'control',
+      envelope: {
+        kind: 'response',
+        requestId: 'exec',
+        ok: false,
+        error: { code: 'invalid_session', message: '无效的会话标识' },
+      },
+    });
+
+    socket.destroy();
+    await ipc.close();
+    await transport.close();
+  });
+
   it('reports desktop client connection changes', async () => {
     const clientCounts: number[] = [];
     let resolveCoreDisconnect: (() => void) | undefined;

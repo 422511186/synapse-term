@@ -21,14 +21,18 @@ import {
   Power,
   GripVertical,
   Link2,
+  Loader2,
   PanelRightClose,
   PanelRightOpen,
 } from 'lucide-react';
 
 import { McpSettingsView } from '../mcp/mcp-settings-view.js';
 import { AcpSettingsView } from '../acp/acp-settings-view.js';
+import { ConfirmDialog, ToastProvider } from './feedback/index.js';
 import { createMockDesktopApi } from './mock-api.js';
 import { mergeAcpHistoryIntoTimeline, RuntimeAudit, RuntimeTimeline } from './agent-panel/index.js';
+import { RunningStatusBar } from './agent-panel/running-status-bar.js';
+import { shouldShowThinkingPlaceholder } from './agent-panel/running-status.js';
 import { AllSessionsPopover, NewSessionModal, SearchHistoryModal } from './sessions/index.js';
 import {
   ModelEditModal,
@@ -92,6 +96,12 @@ const dialectLabels: Record<SessionSummary['executionDialect'], string> = {
 
 type PermissionMode = 'manual' | 'auto' | 'full_access';
 
+type PendingConfirm =
+  | { kind: 'approve'; item: AgentTimelineItem }
+  | { kind: 'resetAcp' }
+  | { kind: 'resetBuiltin' }
+  | { kind: 'exitCore' };
+
 const permissionLabels: Record<PermissionMode, string> = {
   manual: '人工审批',
   auto: '自动审批',
@@ -142,6 +152,11 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEventView[]>([]);
   const [resources, setResources] = useState<Record<string, ResourceViewState>>({});
   const [startingTurn, setStartingTurn] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState<number>();
+  const [hasTurnActivity, setHasTurnActivity] = useState(false);
+  const [cancellingTurn, setCancellingTurn] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>();
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string>();
   const [coreClosed, setCoreClosed] = useState(false);
   const [sessionSearch, setSessionSearch] = useState('');
@@ -405,6 +420,9 @@ export function App() {
         if (eventDriver === 'acp') clearAcpActiveTurn(event.sessionId);
         else clearActiveTurn(event.sessionId);
       }
+      if (event.sessionId === activeSessionIdRef.current && event.kind !== 'user') {
+        setHasTurnActivity(true);
+      }
       if (eventDriver === 'acp') refreshAcpHistory(event.sessionId);
       else refreshAgentHistory(event.sessionId);
     });
@@ -473,6 +491,14 @@ export function App() {
   useEffect(() => {
     if (driver === 'acp' && acpStatus?.enabled === false) setDriver('builtin');
   }, [acpStatus?.enabled, driver]);
+
+  // 任务结束后复位运行状态（耗时与思考占位）
+  useEffect(() => {
+    if (!activeTurn) {
+      setTurnStartedAt(undefined);
+      setHasTurnActivity(false);
+    }
+  }, [activeTurn]);
 
   useEffect(() => {
     shouldStickTimelineToBottom.current = true;
@@ -567,6 +593,8 @@ export function App() {
     if (coreClosed || !goal || activeSession === undefined || activeTurn) return;
     const sessionId = activeSession.id;
     setStartingTurn(true);
+    setTurnStartedAt(Date.now());
+    setHasTurnActivity(false);
     setChatInput('');
     try {
       if (driver === 'acp') {
@@ -602,7 +630,15 @@ export function App() {
 
   const approve = async (item: AgentTimelineItem): Promise<void> => {
     if (coreClosed || activeSession === undefined) return;
-    if (item.risk === 'destructive' && !window.confirm('该操作具有破坏性，确认继续执行？')) return;
+    if (item.risk === 'destructive') {
+      setPendingConfirm({ kind: 'approve', item });
+      return;
+    }
+    await submitApproval(item);
+  };
+
+  const submitApproval = async (item: AgentTimelineItem): Promise<void> => {
+    if (coreClosed || activeSession === undefined) return;
     try {
       if ((item.driver ?? 'builtin') === 'acp') {
         // ACP 单一审批通道：批准后外部 Agent 以 approved_once 继续执行
@@ -726,11 +762,14 @@ export function App() {
 
   const cancelTurn = async (): Promise<void> => {
     if (coreClosed || activeSession === undefined) return;
+    setCancellingTurn(true);
     try {
       if (driver === 'acp') await api.acp.cancelTurn(activeSession.id);
       else await api.agent.cancel(activeSession.id);
     } catch (caught) {
       setRuntimeError(errorMessageZh(caught));
+    } finally {
+      setCancellingTurn(false);
     }
   };
 
@@ -745,36 +784,48 @@ export function App() {
 
   const resetConversation = async (): Promise<void> => {
     if (coreClosed || activeSession === undefined || activeTurn) return;
-    const sessionId = activeSession.id;
     if (driver === 'acp') {
       if (activeAcpHistory?.conversation === undefined) return;
-      if (!window.confirm('确认关闭当前 ACP 对话？外部 Agent 子进程将被终止。')) return;
-      bumpHistoryVersion(sessionId);
-      try {
-        await api.acp.closeConversation(sessionId);
-        setAcpHistories((items) => ({
-          ...items,
-          [sessionId]: {
-            sessionId,
-            turns: [],
-            projection: { userText: [], assistantText: [], toolCalls: [] },
-          },
-        }));
-        setTimeline((items) =>
-          items.filter(
-            (item) => item.sessionId !== sessionId || (item.driver ?? 'builtin') !== 'acp',
-          ),
-        );
-        shouldStickTimelineToBottom.current = true;
-        setRuntimeError(undefined);
-      } catch (caught) {
-        setRuntimeError(errorMessageZh(caught));
-      }
+      setPendingConfirm({ kind: 'resetAcp' });
       return;
     }
     if (activeHistory?.conversation === undefined) return;
-    if (!window.confirm('确认清空当前 Agent 会话？该操作会移除当前会话的历史消息。')) return;
+    setPendingConfirm({ kind: 'resetBuiltin' });
+  };
 
+  const performResetAcp = async (): Promise<void> => {
+    if (coreClosed || activeSession === undefined || activeAcpHistory?.conversation === undefined) {
+      return;
+    }
+    const sessionId = activeSession.id;
+    bumpHistoryVersion(sessionId);
+    try {
+      await api.acp.closeConversation(sessionId);
+      setAcpHistories((items) => ({
+        ...items,
+        [sessionId]: {
+          sessionId,
+          turns: [],
+          projection: { userText: [], assistantText: [], toolCalls: [] },
+        },
+      }));
+      setTimeline((items) =>
+        items.filter(
+          (item) => item.sessionId !== sessionId || (item.driver ?? 'builtin') !== 'acp',
+        ),
+      );
+      shouldStickTimelineToBottom.current = true;
+      setRuntimeError(undefined);
+    } catch (caught) {
+      setRuntimeError(errorMessageZh(caught));
+    }
+  };
+
+  const performResetBuiltin = async (): Promise<void> => {
+    if (coreClosed || activeSession === undefined || activeHistory?.conversation === undefined) {
+      return;
+    }
+    const sessionId = activeSession.id;
     const conversationId = activeHistory.conversation.id;
     bumpHistoryVersion(sessionId);
     try {
@@ -793,13 +844,10 @@ export function App() {
 
   const closeCore = async (): Promise<void> => {
     if (coreClosed) return;
-    if (
-      !window.confirm(
-        '确认退出 Core？所有当前终端会话和 PTY 都会结束，但本地配置和审计数据会保留。',
-      )
-    ) {
-      return;
-    }
+    setPendingConfirm({ kind: 'exitCore' });
+  };
+
+  const performCloseCore = async (): Promise<void> => {
     try {
       await api.core.exit('terminate_sessions');
       setCoreClosed(true);
@@ -820,6 +868,57 @@ export function App() {
       setRuntimeError(errorMessageZh(caught));
     }
   };
+
+  const runPendingConfirm = async (): Promise<void> => {
+    const pending = pendingConfirm;
+    if (pending === undefined || confirmBusy) return;
+    setConfirmBusy(true);
+    try {
+      if (pending.kind === 'approve') {
+        await submitApproval(pending.item);
+      } else if (pending.kind === 'resetAcp') {
+        await performResetAcp();
+      } else if (pending.kind === 'resetBuiltin') {
+        await performResetBuiltin();
+      } else {
+        await performCloseCore();
+      }
+      setPendingConfirm(undefined);
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
+  const pendingConfirmView = (() => {
+    switch (pendingConfirm?.kind) {
+      case 'approve':
+        return {
+          title: '确认批准破坏性操作',
+          description: `命令：${pendingConfirm.item.text}。该操作具有破坏性，确认继续执行？`,
+          confirmLabel: '批准执行',
+        };
+      case 'resetAcp':
+        return {
+          title: '关闭当前 ACP 对话',
+          description: '外部 Agent 子进程将被终止，当前对话历史将被清空。',
+          confirmLabel: '关闭对话',
+        };
+      case 'resetBuiltin':
+        return {
+          title: '清空当前 Agent 会话',
+          description: '该操作会移除当前会话的历史消息。',
+          confirmLabel: '清空会话',
+        };
+      case 'exitCore':
+        return {
+          title: '退出 Core',
+          description: '所有当前终端会话和 PTY 都会结束，但本地配置和审计数据会保留。',
+          confirmLabel: '退出 Core',
+        };
+      default:
+        return undefined;
+    }
+  })();
 
   const updateAgentPanelWidth = (clientX: number): void => {
     const workspaceBounds = workspaceRef.current?.getBoundingClientRect();
@@ -863,782 +962,811 @@ export function App() {
   };
 
   return (
-    <div className="prototype-shell flex flex-col h-screen bg-[#09090b] text-foreground font-sans overflow-hidden">
-      {/* GLOBAL HEADER */}
-      <header className="prototype-header h-14 border-b border-border bg-[#09090b] flex items-center justify-between px-4 shrink-0 relative z-50">
-        {/* Logo & App Name */}
-        <div className="prototype-brand flex items-center gap-3 pr-6 border-r border-border shrink-0">
-          <div className="relative flex items-center justify-center w-7 h-7 bg-white text-black rounded-md shadow-[0_0_15px_rgba(255,255,255,0.2)]">
-            <Command size={16} strokeWidth={2.5} />
-            <Sparkles
-              size={10}
-              className="absolute -top-1 -right-1 text-amber-400 fill-amber-400"
-            />
+    <ToastProvider>
+      <div className="prototype-shell flex flex-col h-screen bg-[#09090b] text-foreground font-sans overflow-hidden">
+        {/* GLOBAL HEADER */}
+        <header className="prototype-header h-14 border-b border-border bg-[#09090b] flex items-center justify-between px-4 shrink-0 relative z-50">
+          {/* Logo & App Name */}
+          <div className="prototype-brand flex items-center gap-3 pr-6 border-r border-border shrink-0">
+            <div className="relative flex items-center justify-center w-7 h-7 bg-white text-black rounded-md shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+              <Command size={16} strokeWidth={2.5} />
+              <Sparkles
+                size={10}
+                className="absolute -top-1 -right-1 text-amber-400 fill-amber-400"
+              />
+            </div>
+            <span className="prototype-brand-name font-bold text-[15px] tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+              Synapse Term
+            </span>
           </div>
-          <span className="prototype-brand-name font-bold text-[15px] tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-            Synapse Term
-          </span>
-        </div>
 
-        <div className="session-tab-strip relative z-50">
-          <div aria-label="终端会话" className="session-tab-list" role="tablist">
-            {interactiveSessions.map((session) => (
-              <div
-                className={`session-tab ${session.id === activeSession?.id ? 'is-active' : ''}`}
-                key={session.id}
-              >
-                <button
-                  aria-controls="active-terminal-panel"
-                  aria-label={`${session.title} ${session.terminalType}`}
-                  aria-selected={session.id === activeSession?.id}
-                  className="session-tab-select"
-                  onClick={() => selectSession(session)}
-                  ref={(element) => {
-                    if (element === null) sessionTabRefs.current.delete(session.id);
-                    else sessionTabRefs.current.set(session.id, element);
-                  }}
-                  role="tab"
-                  title={`${session.title} · ${session.terminalType}`}
-                  type="button"
+          <div className="session-tab-strip relative z-50">
+            <div aria-label="终端会话" className="session-tab-list" role="tablist">
+              {interactiveSessions.map((session) => (
+                <div
+                  className={`session-tab ${session.id === activeSession?.id ? 'is-active' : ''}`}
+                  key={session.id}
                 >
-                  <span className="session-tab-title">{session.title}</span>
-                  <span className="session-tab-type">{session.terminalType}</span>
-                </button>
-                <button
-                  aria-label={`关闭 ${session.title}`}
-                  className="session-tab-close"
-                  onClick={() => void closeSession(session.id)}
-                  title={`关闭 ${session.title}`}
-                  type="button"
-                >
-                  <X size={13} />
-                </button>
-                <button
-                  aria-label={`复制 ${session.title} 的会话 ID`}
-                  className="session-tab-copy"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void copySessionId(session);
-                  }}
-                  title={
-                    session.shared === true
-                      ? '会话已共享，点击重新复制 ID'
-                      : '复制会话 ID（共享给外部 Agent 调用）'
-                  }
-                  type="button"
-                >
-                  <Link2 size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="session-tab-tools">
-            <button
-              aria-label="新建终端会话"
-              disabled={coreClosed}
-              className="session-tab-tool"
-              onClick={() => {
-                closeAllDropdowns();
-                setIsNewSessionModalOpen(true);
-              }}
-              title="新建终端会话"
-              type="button"
-            >
-              <Plus size={16} />
-            </button>
-            <button
-              aria-expanded={isAllSessionsOpen}
-              aria-label="全部会话"
-              disabled={coreClosed}
-              className="session-tab-tool"
-              onClick={() => {
-                const wasOpen = isAllSessionsOpen;
-                closeAllDropdowns();
-                setIsAllSessionsOpen(!wasOpen);
-              }}
-              title="全部会话"
-              type="button"
-            >
-              <List size={16} />
-            </button>
-          </div>
-          {isAllSessionsOpen && (
-            <AllSessionsPopover
-              activeSessionId={activeSession?.id}
-              onClose={(sessionId) => closeSession(sessionId, { keepAllSessionsOpen: true })}
-              onQueryChange={setSessionSearch}
-              onSelect={selectSession}
-              query={sessionSearch}
-              sessions={sessions}
-            />
-          )}
-        </div>
-
-        <div className="h-4 w-[1px] bg-border mx-1 shrink-0"></div>
-
-        <div className="relative shrink-0">
-          <button
-            aria-label={`方言: ${dialectLabels[currentDialect]}`}
-            disabled={coreClosed || activeSession === undefined}
-            onClick={() => {
-              const wasOpen = isDialectMenuOpen;
-              closeAllDropdowns();
-              setIsDialectMenuOpen(!wasOpen);
-            }}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-secondary/50"
-            type="button"
-          >
-            方言: {dialectLabels[currentDialect]} <ChevronDown size={14} />
-          </button>
-          {isDialectMenuOpen && (
-            <div
-              aria-label="方言菜单"
-              className="absolute top-8 left-0 w-40 bg-[#18181b] border border-border rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-              role="menu"
-            >
-              {(
-                Object.entries(dialectLabels) as Array<[SessionSummary['executionDialect'], string]>
-              ).map(([dialect, label]) => (
-                <button
-                  key={dialect}
-                  onClick={() => void selectDialect(dialect)}
-                  className="w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-secondary/50 text-foreground transition-colors"
-                  role="menuitemradio"
-                  type="button"
-                >
-                  {label}{' '}
-                  {currentDialect === dialect && <Check size={12} className="text-emerald-500" />}
-                </button>
+                  <button
+                    aria-controls="active-terminal-panel"
+                    aria-label={`${session.title} ${session.terminalType}`}
+                    aria-selected={session.id === activeSession?.id}
+                    className="session-tab-select"
+                    onClick={() => selectSession(session)}
+                    ref={(element) => {
+                      if (element === null) sessionTabRefs.current.delete(session.id);
+                      else sessionTabRefs.current.set(session.id, element);
+                    }}
+                    role="tab"
+                    title={`${session.title} · ${session.terminalType}`}
+                    type="button"
+                  >
+                    <span className="session-tab-title">{session.title}</span>
+                    <span className="session-tab-type">{session.terminalType}</span>
+                  </button>
+                  <button
+                    aria-label={`关闭 ${session.title}`}
+                    className="session-tab-close"
+                    onClick={() => void closeSession(session.id)}
+                    title={`关闭 ${session.title}`}
+                    type="button"
+                  >
+                    <X size={13} />
+                  </button>
+                  <button
+                    aria-label={`复制 ${session.title} 的会话 ID`}
+                    className="session-tab-copy"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void copySessionId(session);
+                    }}
+                    title={
+                      session.shared === true
+                        ? '会话已共享，点击重新复制 ID'
+                        : '复制会话 ID（共享给外部 Agent 调用）'
+                    }
+                    type="button"
+                  >
+                    <Link2 size={12} />
+                  </button>
+                </div>
               ))}
             </div>
-          )}
-        </div>
+            <div className="session-tab-tools">
+              <button
+                aria-label="新建终端会话"
+                disabled={coreClosed}
+                className="session-tab-tool"
+                onClick={() => {
+                  closeAllDropdowns();
+                  setIsNewSessionModalOpen(true);
+                }}
+                title="新建终端会话"
+                type="button"
+              >
+                <Plus size={16} />
+              </button>
+              <button
+                aria-expanded={isAllSessionsOpen}
+                aria-label="全部会话"
+                disabled={coreClosed}
+                className="session-tab-tool"
+                onClick={() => {
+                  const wasOpen = isAllSessionsOpen;
+                  closeAllDropdowns();
+                  setIsAllSessionsOpen(!wasOpen);
+                }}
+                title="全部会话"
+                type="button"
+              >
+                <List size={16} />
+              </button>
+            </div>
+            {isAllSessionsOpen && (
+              <AllSessionsPopover
+                activeSessionId={activeSession?.id}
+                onClose={(sessionId) => closeSession(sessionId, { keepAllSessionsOpen: true })}
+                onQueryChange={setSessionSearch}
+                onSelect={selectSession}
+                query={sessionSearch}
+                sessions={sessions}
+              />
+            )}
+          </div>
 
-        {/* Global Actions */}
-        <div className="prototype-global-actions flex items-center gap-3 shrink-0">
-          <button
-            aria-label="资源监控"
-            disabled={coreClosed}
-            onClick={() => {
-              setIsResourceMonitorOpen(true);
-              void refreshResources();
-            }}
-            className="flex items-center gap-1.5 text-xs font-medium border border-border px-3 py-1.5 rounded hover:bg-secondary transition-colors"
-            type="button"
-          >
-            <Cpu size={14} /> <span className="session-action-label">资源监控</span>
-          </button>
+          <div className="h-4 w-[1px] bg-border mx-1 shrink-0"></div>
 
-          <div className="relative z-50">
+          <div className="relative shrink-0">
             <button
+              aria-label={`方言: ${dialectLabels[currentDialect]}`}
+              disabled={coreClosed || activeSession === undefined}
               onClick={() => {
-                const wasOpen = isModelMenuOpen;
+                const wasOpen = isDialectMenuOpen;
                 closeAllDropdowns();
-                setIsModelMenuOpen(!wasOpen);
+                setIsDialectMenuOpen(!wasOpen);
               }}
-              disabled={coreClosed}
-              aria-label={`模型: ${currentModelName}`}
-              className="flex items-center gap-1.5 text-xs bg-secondary/50 hover:bg-secondary border border-border px-3 py-1.5 rounded transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-secondary/50"
               type="button"
             >
-              <span className="session-action-label">
-                <span className="text-muted-foreground">模型:</span> {currentModelName}
-              </span>{' '}
-              <ChevronDown size={14} className="ml-0.5 text-muted-foreground" />
+              方言: {dialectLabels[currentDialect]} <ChevronDown size={14} />
             </button>
-            {isModelMenuOpen && (
+            {isDialectMenuOpen && (
               <div
-                aria-label="模型菜单"
-                className="absolute top-10 right-0 w-52 bg-[#18181b] border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                aria-label="方言菜单"
+                className="absolute top-8 left-0 w-40 bg-[#18181b] border border-border rounded-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 role="menu"
               >
-                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border/50 bg-[#09090b]">
-                  切换模型
-                </div>
-                {eligibleModels.map((model) => (
+                {(
+                  Object.entries(dialectLabels) as Array<
+                    [SessionSummary['executionDialect'], string]
+                  >
+                ).map(([dialect, label]) => (
                   <button
-                    key={model.id}
-                    onClick={() => {
-                      setActiveModelId(model.id);
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-secondary/50 text-foreground transition-colors"
+                    key={dialect}
+                    onClick={() => void selectDialect(dialect)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-secondary/50 text-foreground transition-colors"
                     role="menuitemradio"
                     type="button"
                   >
-                    {model.name}{' '}
-                    {activeModel?.id === model.id && (
-                      <Check size={14} className="text-emerald-500" />
-                    )}
+                    {label}{' '}
+                    {currentDialect === dialect && <Check size={12} className="text-emerald-500" />}
                   </button>
                 ))}
-                {eligibleModels.length === 0 && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">暂无已启用模型</div>
-                )}
-                <div className="border-t border-border/50 bg-[#09090b]">
+              </div>
+            )}
+          </div>
+
+          {/* Global Actions */}
+          <div className="prototype-global-actions flex items-center gap-3 shrink-0">
+            <button
+              aria-label="资源监控"
+              disabled={coreClosed}
+              onClick={() => {
+                setIsResourceMonitorOpen(true);
+                void refreshResources();
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium border border-border px-3 py-1.5 rounded hover:bg-secondary transition-colors"
+              type="button"
+            >
+              <Cpu size={14} /> <span className="session-action-label">资源监控</span>
+            </button>
+
+            <div className="relative z-50">
+              <button
+                onClick={() => {
+                  const wasOpen = isModelMenuOpen;
+                  closeAllDropdowns();
+                  setIsModelMenuOpen(!wasOpen);
+                }}
+                disabled={coreClosed}
+                aria-label={`模型: ${currentModelName}`}
+                className="flex items-center gap-1.5 text-xs bg-secondary/50 hover:bg-secondary border border-border px-3 py-1.5 rounded transition-colors"
+                type="button"
+              >
+                <span className="session-action-label">
+                  <span className="text-muted-foreground">模型:</span> {currentModelName}
+                </span>{' '}
+                <ChevronDown size={14} className="ml-0.5 text-muted-foreground" />
+              </button>
+              {isModelMenuOpen && (
+                <div
+                  aria-label="模型菜单"
+                  className="absolute top-10 right-0 w-52 bg-[#18181b] border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                  role="menu"
+                >
+                  <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border/50 bg-[#09090b]">
+                    切换模型
+                  </div>
+                  {eligibleModels.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={() => {
+                        setActiveModelId(model.id);
+                        closeAllDropdowns();
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-secondary/50 text-foreground transition-colors"
+                      role="menuitemradio"
+                      type="button"
+                    >
+                      {model.name}{' '}
+                      {activeModel?.id === model.id && (
+                        <Check size={14} className="text-emerald-500" />
+                      )}
+                    </button>
+                  ))}
+                  {eligibleModels.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">暂无已启用模型</div>
+                  )}
+                  <div className="border-t border-border/50 bg-[#09090b]">
+                    <button
+                      onClick={() => {
+                        setCurrentView('models');
+                        closeAllDropdowns();
+                      }}
+                      className="w-full px-3 py-2.5 text-xs text-primary hover:bg-secondary/50 text-left transition-colors font-medium flex items-center gap-1.5"
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Box size={14} /> 管理模型配置...
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="relative z-50">
+              <button
+                aria-label={`当前权限：${currentPermission}`}
+                disabled={coreClosed}
+                onClick={() => {
+                  const wasOpen = isPermissionMenuOpen;
+                  closeAllDropdowns();
+                  setIsPermissionMenuOpen(!wasOpen);
+                }}
+                className={`flex items-center gap-1.5 text-xs border px-3 py-1.5 rounded transition-colors ${
+                  currentPermission === '人工审批'
+                    ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-amber-500/20'
+                    : currentPermission === '自动审批'
+                      ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/20'
+                      : 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/20'
+                }`}
+                type="button"
+              >
+                <ShieldAlert size={14} />{' '}
+                <span className="session-action-label">{currentPermission}</span>{' '}
+                <ChevronDown size={14} className="ml-0.5 opacity-80" />
+              </button>
+              {isPermissionMenuOpen && (
+                <div
+                  aria-label="权限菜单"
+                  className="absolute top-10 right-0 w-44 bg-[#18181b] border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                  role="menu"
+                >
                   <button
+                    onClick={() => {
+                      setPermissionMode('manual');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-amber-500 transition-colors"
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    人工审批 {permissionMode === 'manual' && <Check size={12} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPermissionMode('auto');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-blue-400 transition-colors"
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    自动审批 (推荐) {permissionMode === 'auto' && <Check size={12} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPermissionMode('full_access');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-red-400 transition-colors"
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    完全权限 (高风险) {permissionMode === 'full_access' && <Check size={12} />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="h-4 w-[1px] bg-border mx-1"></div>
+
+            {/* Global Settings Dropdown */}
+            <div className="relative z-50">
+              <button
+                onClick={() => {
+                  const wasOpen = isSettingsMenuOpen;
+                  closeAllDropdowns();
+                  setIsSettingsMenuOpen(!wasOpen);
+                }}
+                aria-label="设置"
+                className="w-8 h-8 flex items-center justify-center border border-border rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                type="button"
+              >
+                <Settings size={16} />
+              </button>
+
+              {isSettingsMenuOpen && (
+                <div
+                  aria-label="设置菜单"
+                  className="absolute top-10 right-0 w-64 bg-[#18181b] border border-border rounded-lg shadow-2xl overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-200"
+                  role="menu"
+                >
+                  <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border/50 mb-1">
+                    全局配置
+                  </div>
+                  <button
+                    disabled={coreClosed}
+                    onClick={() => {
+                      setCurrentView('providers');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Key size={14} /> 服务商配置
+                  </button>
+                  <button
+                    disabled={coreClosed}
                     onClick={() => {
                       setCurrentView('models');
                       closeAllDropdowns();
                     }}
-                    className="w-full px-3 py-2.5 text-xs text-primary hover:bg-secondary/50 text-left transition-colors font-medium flex items-center gap-1.5"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
                     role="menuitem"
                     type="button"
                   >
-                    <Box size={14} /> 管理模型配置...
+                    <Box size={14} /> 模型配置
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCurrentView('mcp');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Network size={14} /> MCP 服务
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCurrentView('acp');
+                      closeAllDropdowns();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Sparkles size={14} /> ACP 集成
+                  </button>
+                  <button
+                    aria-label="清空当前 Agent 会话"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={
+                      activeTurn ||
+                      (driver === 'acp'
+                        ? activeAcpHistory?.conversation === undefined
+                        : activeHistory?.conversation === undefined)
+                    }
+                    onClick={() => {
+                      closeAllDropdowns();
+                      void resetConversation();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <RefreshCw size={14} /> 清空当前 Agent 会话
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2 whitespace-nowrap px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={coreClosed}
+                    onClick={() => {
+                      closeAllDropdowns();
+                      void closeCore();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Power size={14} /> 退出 Core
                   </button>
                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className="relative z-50">
-            <button
-              aria-label={`当前权限：${currentPermission}`}
-              disabled={coreClosed}
-              onClick={() => {
-                const wasOpen = isPermissionMenuOpen;
-                closeAllDropdowns();
-                setIsPermissionMenuOpen(!wasOpen);
-              }}
-              className={`flex items-center gap-1.5 text-xs border px-3 py-1.5 rounded transition-colors ${
-                currentPermission === '人工审批'
-                  ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-amber-500/20'
-                  : currentPermission === '自动审批'
-                    ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/20'
-                    : 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border-red-500/20'
-              }`}
-              type="button"
-            >
-              <ShieldAlert size={14} />{' '}
-              <span className="session-action-label">{currentPermission}</span>{' '}
-              <ChevronDown size={14} className="ml-0.5 opacity-80" />
-            </button>
-            {isPermissionMenuOpen && (
-              <div
-                aria-label="权限菜单"
-                className="absolute top-10 right-0 w-44 bg-[#18181b] border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-                role="menu"
-              >
-                <button
-                  onClick={() => {
-                    setPermissionMode('manual');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-amber-500 transition-colors"
-                  role="menuitemradio"
-                  type="button"
-                >
-                  人工审批 {permissionMode === 'manual' && <Check size={12} />}
-                </button>
-                <button
-                  onClick={() => {
-                    setPermissionMode('auto');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-blue-400 transition-colors"
-                  role="menuitemradio"
-                  type="button"
-                >
-                  自动审批 (推荐) {permissionMode === 'auto' && <Check size={12} />}
-                </button>
-                <button
-                  onClick={() => {
-                    setPermissionMode('full_access');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2.5 text-xs hover:bg-secondary/50 text-red-400 transition-colors"
-                  role="menuitemradio"
-                  type="button"
-                >
-                  完全权限 (高风险) {permissionMode === 'full_access' && <Check size={12} />}
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="h-4 w-[1px] bg-border mx-1"></div>
-
-          {/* Global Settings Dropdown */}
-          <div className="relative z-50">
-            <button
-              onClick={() => {
-                const wasOpen = isSettingsMenuOpen;
-                closeAllDropdowns();
-                setIsSettingsMenuOpen(!wasOpen);
-              }}
-              aria-label="设置"
-              className="w-8 h-8 flex items-center justify-center border border-border rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              type="button"
-            >
-              <Settings size={16} />
-            </button>
-
-            {isSettingsMenuOpen && (
-              <div
-                aria-label="设置菜单"
-                className="absolute top-10 right-0 w-64 bg-[#18181b] border border-border rounded-lg shadow-2xl overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-200"
-                role="menu"
-              >
-                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border/50 mb-1">
-                  全局配置
-                </div>
-                <button
-                  disabled={coreClosed}
-                  onClick={() => {
-                    setCurrentView('models');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                  role="menuitem"
-                  type="button"
-                >
-                  <Box size={14} /> 模型配置
-                </button>
-                <button
-                  disabled={coreClosed}
-                  onClick={() => {
-                    setCurrentView('providers');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                  role="menuitem"
-                  type="button"
-                >
-                  <Key size={14} /> 服务商配置
-                </button>
-                <button
-                  onClick={() => {
-                    setCurrentView('mcp');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                  role="menuitem"
-                  type="button"
-                >
-                  <Network size={14} /> MCP 服务
-                </button>
-                <button
-                  onClick={() => {
-                    setCurrentView('acp');
-                    closeAllDropdowns();
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                  role="menuitem"
-                  type="button"
-                >
-                  <Sparkles size={14} /> ACP 集成
-                </button>
-                <button
-                  aria-label="清空当前 Agent 会话"
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={
-                    activeTurn ||
-                    (driver === 'acp'
-                      ? activeAcpHistory?.conversation === undefined
-                      : activeHistory?.conversation === undefined)
-                  }
-                  onClick={() => {
-                    closeAllDropdowns();
-                    void resetConversation();
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  <RefreshCw size={14} /> 清空当前 Agent 会话
-                </button>
-                <button
-                  className="w-full flex items-center gap-2 whitespace-nowrap px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={coreClosed}
-                  onClick={() => {
-                    closeAllDropdowns();
-                    void closeCore();
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  <Power size={14} /> 退出 Core
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* WORKSPACE AREA */}
-      <main
-        className="prototype-workspace min-w-0 flex-1 flex overflow-hidden relative"
-        ref={workspaceRef}
-      >
-        {currentView === 'workspace' && (
-          <>
-            {/* Terminal Pane (Left) */}
-            <div
-              aria-label="活动终端"
-              className="prototype-terminal min-w-0 flex-1 flex flex-col bg-[#000000] border-r border-border shadow-[inset_-10px_0_20px_rgba(0,0,0,0.2)] z-10 relative group"
-              id="active-terminal-panel"
-              role="tabpanel"
-            >
-              {/* Terminal Search Bar (Floating) */}
-              <div className="absolute top-4 right-4 z-20 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
-                <div className="flex items-center bg-[#18181b]/90 backdrop-blur-md border border-border/80 rounded-lg text-muted-foreground overflow-hidden shadow-2xl focus-within:border-primary/50 transition-colors px-2.5 py-1.5">
-                  <Search size={14} className="mr-2 text-muted-foreground/70" />
-                  <input
-                    aria-label="搜索终端输出"
-                    onChange={(event) => {
-                      window.dispatchEvent(
-                        new CustomEvent<string>('terminal-agent-search', {
-                          detail: event.target.value,
-                        }),
-                      );
-                    }}
-                    type="text"
-                    placeholder="搜索终端输出 (Ctrl+F)"
-                    className="bg-transparent border-none outline-none text-[13px] text-foreground placeholder:text-muted-foreground w-40 focus:w-56 transition-all duration-300"
-                  />
-                </div>
-              </div>
-
-              {activeSession === undefined ? (
-                <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-                  {coreClosed ? 'Core 已关闭，请重新启动应用' : '暂无终端会话'}
-                </div>
-              ) : (
-                <TerminalView api={api} session={activeSession} />
-              )}
-              {isAgentPanelCollapsed && (
-                <button
-                  aria-label="显示 Agent 面板"
-                  className="agent-panel-show-button"
-                  onClick={() => setIsAgentPanelCollapsed(false)}
-                  title="显示 Agent 面板"
-                  type="button"
-                >
-                  <PanelRightOpen size={16} />
-                </button>
               )}
             </div>
+          </div>
+        </header>
 
-            {/* Agent Pane (Right) */}
-            {!isAgentPanelCollapsed && (
+        {/* WORKSPACE AREA */}
+        <main
+          className="prototype-workspace min-w-0 flex-1 flex overflow-hidden relative"
+          ref={workspaceRef}
+        >
+          {currentView === 'workspace' && (
+            <>
+              {/* Terminal Pane (Left) */}
               <div
-                className={`prototype-agent min-w-0 flex flex-col bg-[#09090b] shrink-0 z-10 ${isAgentPanelResizing ? 'is-resizing' : ''}`}
-                style={{ width: `${agentPanelWidth}px` }}
+                aria-label="活动终端"
+                className="prototype-terminal min-w-0 flex-1 flex flex-col bg-[#000000] border-r border-border shadow-[inset_-10px_0_20px_rgba(0,0,0,0.2)] z-10 relative group"
+                id="active-terminal-panel"
+                role="tabpanel"
               >
-                <div
-                  aria-label="调整 Agent 面板宽度"
-                  aria-orientation="vertical"
-                  aria-valuemax={agentPanelMaxWidth}
-                  aria-valuemin={AGENT_PANEL_MIN_WIDTH}
-                  aria-valuenow={agentPanelWidth}
-                  className={`agent-panel-resize-handle ${isAgentPanelResizing ? 'is-resizing' : ''}`}
-                  onKeyDown={handleAgentPanelResizeKeyDown}
-                  onPointerCancel={finishAgentPanelResize}
-                  onPointerDown={startAgentPanelResize}
-                  onPointerMove={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      updateAgentPanelWidth(event.clientX);
-                    }
-                  }}
-                  onPointerUp={finishAgentPanelResize}
-                  role="separator"
-                  tabIndex={0}
-                  title="拖动调整 Agent 面板宽度"
-                >
-                  <GripVertical aria-hidden="true" size={14} />
+                {/* Terminal Search Bar (Floating) */}
+                <div className="absolute top-4 right-4 z-20 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
+                  <div className="flex items-center bg-[#18181b]/90 backdrop-blur-md border border-border/80 rounded-lg text-muted-foreground overflow-hidden shadow-2xl focus-within:border-primary/50 transition-colors px-2.5 py-1.5">
+                    <Search size={14} className="mr-2 text-muted-foreground/70" />
+                    <input
+                      aria-label="搜索终端输出"
+                      onChange={(event) => {
+                        window.dispatchEvent(
+                          new CustomEvent<string>('terminal-agent-search', {
+                            detail: event.target.value,
+                          }),
+                        );
+                      }}
+                      type="text"
+                      placeholder="搜索终端输出 (Ctrl+F)"
+                      className="bg-transparent border-none outline-none text-[13px] text-foreground placeholder:text-muted-foreground w-40 focus:w-56 transition-all duration-300"
+                    />
+                  </div>
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col">
-                  {/* Agent Timeline Header */}
-                  <div className="flex border-b border-border bg-[#09090b] shrink-0">
-                    <button
-                      aria-selected={agentTab === 'timeline'}
-                      onClick={() => setAgentTab('timeline')}
-                      className={`flex-1 h-10 text-[13px] font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${agentTab === 'timeline' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/20'}`}
-                      role="tab"
-                      type="button"
-                    >
-                      <Sparkles size={14} /> Agent Timeline
-                    </button>
-                    <button
-                      aria-selected={agentTab === 'audit'}
-                      onClick={() => setAgentTab('audit')}
-                      className={`flex-1 h-10 text-[13px] font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${agentTab === 'audit' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/20'}`}
-                      role="tab"
-                      type="button"
-                    >
-                      <FileText size={14} /> 审计日志
-                    </button>
-                    <button
-                      aria-label="隐藏 Agent 面板"
-                      className="agent-panel-collapse-button"
-                      onClick={() => setIsAgentPanelCollapsed(true)}
-                      title="隐藏 Agent 面板"
-                      type="button"
-                    >
-                      <PanelRightClose size={15} />
-                    </button>
+                {activeSession === undefined ? (
+                  <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+                    {coreClosed ? 'Core 已关闭，请重新启动应用' : '暂无终端会话'}
                   </div>
-
-                  {/* 驱动者切换：内置 Agent / 外部 Agent（ACP） */}
-                  {agentTab === 'timeline' && (
-                    <>
-                      <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-[#0c0c0e] shrink-0">
-                        <button
-                          aria-pressed={driver === 'builtin'}
-                          className={`flex-1 text-xs font-medium rounded-md px-2 py-1.5 transition-colors ${driver === 'builtin' ? 'bg-primary/15 text-foreground border border-primary/40' : 'text-muted-foreground hover:bg-secondary/60 border border-transparent'}`}
-                          onClick={() => switchDriver('builtin')}
-                          type="button"
-                        >
-                          内置 Agent
-                        </button>
-                        <button
-                          aria-pressed={driver === 'acp'}
-                          className={`flex-1 text-xs font-medium rounded-md px-2 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${driver === 'acp' ? 'bg-primary/15 text-foreground border border-primary/40' : 'text-muted-foreground hover:bg-secondary/60 border border-transparent'}`}
-                          disabled={acpStatus?.enabled !== true}
-                          onClick={() => switchDriver('acp')}
-                          type="button"
-                        >
-                          外部 Agent
-                        </button>
-                      </div>
-                      {driver === 'acp' && acpStatus?.enabled !== true && (
-                        <div className="px-3 py-1.5 text-[11px] text-amber-400/90 bg-amber-500/5 border-b border-border shrink-0">
-                          ACP 集成未启用：请到 设置 → ACP 集成 打开后使用外部驱动者。
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Chat Timeline or Audit */}
-                  <div
-                    aria-label={agentTab === 'audit' ? '审计日志 (Audit)' : 'Agent Timeline'}
-                    className="flex-1 overflow-y-auto p-5 space-y-7"
-                    onScroll={(event) => {
-                      const element = event.currentTarget;
-                      shouldStickTimelineToBottom.current =
-                        element.scrollHeight - element.scrollTop - element.clientHeight <= 64;
-                    }}
-                    ref={agentTimelineRef}
-                    role="tabpanel"
+                ) : (
+                  <TerminalView api={api} session={activeSession} />
+                )}
+                {isAgentPanelCollapsed && (
+                  <button
+                    aria-label="显示 Agent 面板"
+                    className="agent-panel-show-button"
+                    onClick={() => setIsAgentPanelCollapsed(false)}
+                    title="显示 Agent 面板"
+                    type="button"
                   >
-                    {agentTab === 'audit' ? (
-                      <RuntimeAudit events={auditEvents} />
-                    ) : (
-                      <RuntimeTimeline
-                        events={activeTimeline}
-                        onApprove={approve}
-                        onInterrupt={interruptCommand}
-                        onTakeOver={takeOver}
-                      />
-                    )}
+                    <PanelRightOpen size={16} />
+                  </button>
+                )}
+              </div>
+
+              {/* Agent Pane (Right) */}
+              {!isAgentPanelCollapsed && (
+                <div
+                  className={`prototype-agent min-w-0 flex flex-col bg-[#09090b] shrink-0 z-10 ${isAgentPanelResizing ? 'is-resizing' : ''}`}
+                  style={{ width: `${agentPanelWidth}px` }}
+                >
+                  <div
+                    aria-label="调整 Agent 面板宽度"
+                    aria-orientation="vertical"
+                    aria-valuemax={agentPanelMaxWidth}
+                    aria-valuemin={AGENT_PANEL_MIN_WIDTH}
+                    aria-valuenow={agentPanelWidth}
+                    className={`agent-panel-resize-handle ${isAgentPanelResizing ? 'is-resizing' : ''}`}
+                    onKeyDown={handleAgentPanelResizeKeyDown}
+                    onPointerCancel={finishAgentPanelResize}
+                    onPointerDown={startAgentPanelResize}
+                    onPointerMove={(event) => {
+                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                        updateAgentPanelWidth(event.clientX);
+                      }
+                    }}
+                    onPointerUp={finishAgentPanelResize}
+                    role="separator"
+                    tabIndex={0}
+                    title="拖动调整 Agent 面板宽度"
+                  >
+                    <GripVertical aria-hidden="true" size={14} />
                   </div>
 
-                  {/* Input Box */}
-                  <div className="p-4 border-t border-border bg-[#09090b]">
-                    <div className="border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
-                      <textarea
-                        aria-keyshortcuts={
-                          api.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
-                        }
-                        disabled={coreClosed}
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(event) => {
-                          const modifierPressed =
-                            api.platform === 'darwin' ? event.metaKey : event.ctrlKey;
-                          if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) return;
-                          event.preventDefault();
-                          void submitGoal();
-                        }}
-                        placeholder="输入目标，Command/Ctrl+Enter 发送"
-                        className="w-full bg-transparent outline-none resize-none text-[13px] p-3.5 min-h-[60px] text-foreground placeholder:text-muted-foreground/70"
-                      />
-                      <div className="px-3 pb-2.5 flex items-center justify-between">
-                        <button
-                          aria-label="取消当前 Agent 任务"
-                          className={`text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary ${activeTurn ? '' : 'hidden'}`}
-                          onClick={() => void cancelTurn()}
-                          type="button"
-                        >
-                          <XCircle size={14} /> 取消任务
-                        </button>
-                        <button
-                          onClick={() => setIsSearchHistoryOpen(true)}
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    {/* Agent Timeline Header */}
+                    <div className="flex border-b border-border bg-[#09090b] shrink-0">
+                      <button
+                        aria-selected={agentTab === 'timeline'}
+                        onClick={() => setAgentTab('timeline')}
+                        className={`flex-1 h-10 text-[13px] font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${agentTab === 'timeline' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/20'}`}
+                        role="tab"
+                        type="button"
+                      >
+                        <Sparkles size={14} /> Agent Timeline
+                      </button>
+                      <button
+                        aria-selected={agentTab === 'audit'}
+                        onClick={() => setAgentTab('audit')}
+                        className={`flex-1 h-10 text-[13px] font-medium border-b-2 transition-colors flex items-center justify-center gap-2 ${agentTab === 'audit' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/20'}`}
+                        role="tab"
+                        type="button"
+                      >
+                        <FileText size={14} /> 审计日志
+                      </button>
+                      <button
+                        aria-label="隐藏 Agent 面板"
+                        className="agent-panel-collapse-button"
+                        onClick={() => setIsAgentPanelCollapsed(true)}
+                        title="隐藏 Agent 面板"
+                        type="button"
+                      >
+                        <PanelRightClose size={15} />
+                      </button>
+                    </div>
+
+                    {/* 驱动者切换：内置 Agent / 外部 Agent（ACP） */}
+                    {agentTab === 'timeline' && (
+                      <>
+                        <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-[#0c0c0e] shrink-0">
+                          <button
+                            aria-pressed={driver === 'builtin'}
+                            className={`flex-1 text-xs font-medium rounded-md px-2 py-1.5 transition-colors ${driver === 'builtin' ? 'bg-primary/15 text-foreground border border-primary/40' : 'text-muted-foreground hover:bg-secondary/60 border border-transparent'}`}
+                            onClick={() => switchDriver('builtin')}
+                            type="button"
+                          >
+                            内置 Agent
+                          </button>
+                          <button
+                            aria-pressed={driver === 'acp'}
+                            className={`flex-1 text-xs font-medium rounded-md px-2 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${driver === 'acp' ? 'bg-primary/15 text-foreground border border-primary/40' : 'text-muted-foreground hover:bg-secondary/60 border border-transparent'}`}
+                            disabled={acpStatus?.enabled !== true}
+                            onClick={() => switchDriver('acp')}
+                            type="button"
+                          >
+                            外部 Agent
+                          </button>
+                        </div>
+                        {driver === 'acp' && acpStatus?.enabled !== true && (
+                          <div className="px-3 py-1.5 text-[11px] text-amber-400/90 bg-amber-500/5 border-b border-border shrink-0">
+                            ACP 集成未启用：请到 设置 → ACP 集成 打开后使用外部驱动者。
+                          </div>
+                        )}
+                        <RunningStatusBar
+                          cancelling={cancellingTurn}
+                          modelName={activeModel?.name}
+                          onCancel={() => void cancelTurn()}
+                          running={activeTurn}
+                          startedAt={turnStartedAt}
+                          startup={startingTurn && driver === 'acp'}
+                        />
+                      </>
+                    )}
+
+                    {/* Chat Timeline or Audit */}
+                    <div
+                      aria-label={agentTab === 'audit' ? '审计日志 (Audit)' : 'Agent Timeline'}
+                      className="flex-1 overflow-y-auto p-5 space-y-7"
+                      onScroll={(event) => {
+                        const element = event.currentTarget;
+                        shouldStickTimelineToBottom.current =
+                          element.scrollHeight - element.scrollTop - element.clientHeight <= 64;
+                      }}
+                      ref={agentTimelineRef}
+                      role="tabpanel"
+                    >
+                      {agentTab === 'audit' ? (
+                        <RuntimeAudit events={auditEvents} />
+                      ) : (
+                        <RuntimeTimeline
+                          events={activeTimeline}
+                          onApprove={approve}
+                          onInterrupt={interruptCommand}
+                          onTakeOver={takeOver}
+                          thinking={shouldShowThinkingPlaceholder(activeTurn, hasTurnActivity)}
+                        />
+                      )}
+                    </div>
+
+                    {/* Input Box */}
+                    <div className="p-4 border-t border-border bg-[#09090b]">
+                      <div className="border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
+                        <textarea
+                          aria-keyshortcuts={
+                            api.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
+                          }
                           disabled={coreClosed}
-                          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
-                        >
-                          <Clock size={14} /> 提示词历史
-                        </button>
-                        <button
-                          aria-label="发送给 Agent"
-                          onClick={() => void submitGoal()}
-                          disabled={coreClosed || !chatInput.trim() || activeTurn}
-                          className={`px-5 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
-                            chatInput.trim()
-                              ? 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
-                              : 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          {activeTurn ? '处理中…' : '发送'}
-                        </button>
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(event) => {
+                            const modifierPressed =
+                              api.platform === 'darwin' ? event.metaKey : event.ctrlKey;
+                            if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) return;
+                            event.preventDefault();
+                            void submitGoal();
+                          }}
+                          placeholder="输入目标，Command/Ctrl+Enter 发送"
+                          className="w-full bg-transparent outline-none resize-none text-[13px] p-3.5 min-h-[60px] text-foreground placeholder:text-muted-foreground/70"
+                        />
+                        <div className="px-3 pb-2.5 flex items-center justify-between">
+                          <button
+                            aria-label="取消当前 Agent 任务"
+                            className={`text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary disabled:opacity-40 ${activeTurn ? '' : 'hidden'}`}
+                            disabled={cancellingTurn}
+                            onClick={() => void cancelTurn()}
+                            type="button"
+                          >
+                            <XCircle size={14} /> {cancellingTurn ? '取消中…' : '取消任务'}
+                          </button>
+                          <button
+                            onClick={() => setIsSearchHistoryOpen(true)}
+                            disabled={coreClosed}
+                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
+                          >
+                            <Clock size={14} /> 提示词历史
+                          </button>
+                          <button
+                            aria-label="发送给 Agent"
+                            onClick={() => void submitGoal()}
+                            disabled={coreClosed || !chatInput.trim() || activeTurn}
+                            className={`flex items-center gap-1.5 px-5 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
+                              chatInput.trim()
+                                ? 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
+                                : 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
+                            }`}
+                          >
+                            {activeTurn && <Loader2 className="animate-spin" size={12} />}
+                            {activeTurn ? '处理中…' : '发送'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
+              )}
+            </>
+          )}
+
+          {currentView === 'models' && (
+            <ModelSettings
+              api={api}
+              models={models}
+              onBack={() => setCurrentView('workspace')}
+              onEdit={(model) => setModelEditor({ mode: 'edit', modelId: model.id })}
+              onNew={() => setModelEditor({ mode: 'new' })}
+              onModelsChange={setModels}
+              onRefresh={refreshConfigurations}
+            />
+          )}
+          {currentView === 'providers' && (
+            <ProviderSettings
+              api={api}
+              onBack={() => setCurrentView('workspace')}
+              onEdit={(provider) => setProviderEditor({ mode: 'edit', providerId: provider.id })}
+              onNew={() => setProviderEditor({ mode: 'new' })}
+              onRefresh={refreshConfigurations}
+              providers={providers}
+            />
+          )}
+          {currentView === 'mcp' && (
+            <McpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
+          )}
+          {currentView === 'acp' && (
+            <AcpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
+          )}
+        </main>
+
+        {/* OVERLAYS & MODALS */}
+
+        {runtimeError !== undefined && (
+          <div className="runtime-error-backdrop" role="presentation">
+            <section
+              aria-label="运行错误"
+              aria-modal="true"
+              className="runtime-error-dialog"
+              role="alertdialog"
+            >
+              <div className="runtime-error-header">
+                <div className="runtime-error-title">
+                  <ShieldAlert size={16} />
+                  <span>操作未完成</span>
+                </div>
+                <button
+                  aria-label="关闭错误提示"
+                  className="runtime-error-close"
+                  onClick={() => setRuntimeError(undefined)}
+                  type="button"
+                >
+                  <X size={15} />
+                </button>
               </div>
-            )}
-          </>
-        )}
-
-        {currentView === 'models' && (
-          <ModelSettings
-            api={api}
-            models={models}
-            onBack={() => setCurrentView('workspace')}
-            onEdit={(model) => setModelEditor({ mode: 'edit', modelId: model.id })}
-            onNew={() => setModelEditor({ mode: 'new' })}
-            onRefresh={refreshConfigurations}
-          />
-        )}
-        {currentView === 'providers' && (
-          <ProviderSettings
-            api={api}
-            onBack={() => setCurrentView('workspace')}
-            onEdit={(provider) => setProviderEditor({ mode: 'edit', providerId: provider.id })}
-            onNew={() => setProviderEditor({ mode: 'new' })}
-            onRefresh={refreshConfigurations}
-            providers={providers}
-          />
-        )}
-        {currentView === 'mcp' && (
-          <McpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
-        )}
-        {currentView === 'acp' && (
-          <AcpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
-        )}
-      </main>
-
-      {/* OVERLAYS & MODALS */}
-
-      {runtimeError !== undefined && (
-        <div className="runtime-error-backdrop" role="presentation">
-          <section
-            aria-label="运行错误"
-            aria-modal="true"
-            className="runtime-error-dialog"
-            role="alertdialog"
-          >
-            <div className="runtime-error-header">
-              <div className="runtime-error-title">
-                <ShieldAlert size={16} />
-                <span>操作未完成</span>
+              <div className="runtime-error-message" role="alert">
+                {runtimeError}
               </div>
               <button
-                aria-label="关闭错误提示"
-                className="runtime-error-close"
+                className="runtime-error-confirm"
                 onClick={() => setRuntimeError(undefined)}
                 type="button"
               >
-                <X size={15} />
+                知道了
               </button>
-            </div>
-            <div className="runtime-error-message" role="alert">
-              {runtimeError}
-            </div>
-            <button
-              className="runtime-error-confirm"
-              onClick={() => setRuntimeError(undefined)}
-              type="button"
-            >
-              知道了
-            </button>
-            {activeTurn && activeSession !== undefined && (
-              <button
-                className="runtime-error-confirm"
-                onClick={() => {
-                  setRuntimeError(undefined);
-                  void cancelTurn();
-                }}
-                type="button"
-              >
-                取消当前任务
-              </button>
-            )}
-          </section>
-        </div>
-      )}
-      {isResourceMonitorOpen && (
-        <ResourceMonitorPanel
-          onClose={() => setIsResourceMonitorOpen(false)}
-          onRefresh={refreshResources}
-          resource={activeResource}
-        />
-      )}
-      {isNewSessionModalOpen && (
-        <NewSessionModal
-          environment={sessionEnvironment}
-          onClose={() => setIsNewSessionModalOpen(false)}
-          onCreate={createSession}
-        />
-      )}
-      {isSearchHistoryOpen && (
-        <SearchHistoryModal
-          onClose={() => setIsSearchHistoryOpen(false)}
-          onSelect={(txt) => {
-            setChatInput(txt);
-            setIsSearchHistoryOpen(false);
-          }}
-          prompts={Array.from(
-            new Set(
-              (driver === 'acp'
-                ? activeAcpHistory?.turns.map((turn) => turn.userMessage)
-                : activeHistory?.turns.map((turn) => turn.userMessage)) ?? [],
-            ),
-          ).reverse()}
-        />
-      )}
-      {modelEditor !== undefined && (
-        <ModelEditModal
-          api={api}
-          model={
-            modelEditor.mode === 'edit'
-              ? models.find((model) => model.id === modelEditor.modelId)
-              : undefined
-          }
-          onClose={() => setModelEditor(undefined)}
-          onSaved={async () => {
-            await refreshConfigurations();
-            setModelEditor(undefined);
-          }}
-          providers={providers}
-        />
-      )}
-      {providerEditor !== undefined && (
-        <ProviderEditModal
-          api={api}
-          onClose={() => setProviderEditor(undefined)}
-          onSaved={async () => {
-            await refreshConfigurations();
-            setProviderEditor(undefined);
-          }}
-          provider={
-            providerEditor.mode === 'edit'
-              ? providers.find((provider) => provider.id === providerEditor.providerId)
-              : undefined
-          }
-        />
-      )}
+              {activeTurn && activeSession !== undefined && (
+                <button
+                  className="runtime-error-confirm"
+                  onClick={() => {
+                    setRuntimeError(undefined);
+                    void cancelTurn();
+                  }}
+                  type="button"
+                >
+                  取消当前任务
+                </button>
+              )}
+            </section>
+          </div>
+        )}
+        {pendingConfirmView !== undefined && (
+          <ConfirmDialog
+            confirmLabel={pendingConfirmView.confirmLabel}
+            danger
+            description={pendingConfirmView.description}
+            onCancel={() => setPendingConfirm(undefined)}
+            onConfirm={() => void runPendingConfirm()}
+            open
+            pending={confirmBusy}
+            title={pendingConfirmView.title}
+          />
+        )}
+        {isResourceMonitorOpen && (
+          <ResourceMonitorPanel
+            onClose={() => setIsResourceMonitorOpen(false)}
+            onRefresh={refreshResources}
+            resource={activeResource}
+          />
+        )}
+        {isNewSessionModalOpen && (
+          <NewSessionModal
+            environment={sessionEnvironment}
+            onClose={() => setIsNewSessionModalOpen(false)}
+            onCreate={createSession}
+          />
+        )}
+        {isSearchHistoryOpen && (
+          <SearchHistoryModal
+            onClose={() => setIsSearchHistoryOpen(false)}
+            onSelect={(txt) => {
+              setChatInput(txt);
+              setIsSearchHistoryOpen(false);
+            }}
+            prompts={Array.from(
+              new Set(
+                (driver === 'acp'
+                  ? activeAcpHistory?.turns.map((turn) => turn.userMessage)
+                  : activeHistory?.turns.map((turn) => turn.userMessage)) ?? [],
+              ),
+            ).reverse()}
+          />
+        )}
+        {modelEditor !== undefined && (
+          <ModelEditModal
+            api={api}
+            model={
+              modelEditor.mode === 'edit'
+                ? models.find((model) => model.id === modelEditor.modelId)
+                : undefined
+            }
+            onClose={() => setModelEditor(undefined)}
+            onDraftSaved={refreshConfigurations}
+            onSaved={async () => {
+              await refreshConfigurations();
+              setModelEditor(undefined);
+            }}
+            providers={providers}
+          />
+        )}
+        {providerEditor !== undefined && (
+          <ProviderEditModal
+            api={api}
+            onClose={() => setProviderEditor(undefined)}
+            onSaved={async () => {
+              await refreshConfigurations();
+              setProviderEditor(undefined);
+            }}
+            provider={
+              providerEditor.mode === 'edit'
+                ? providers.find((provider) => provider.id === providerEditor.providerId)
+                : undefined
+            }
+          />
+        )}
 
-      {/* Dropdown Click Catcher */}
-      {(isSettingsMenuOpen ||
-        isAllSessionsOpen ||
-        isModelMenuOpen ||
-        isDialectMenuOpen ||
-        isPermissionMenuOpen) && (
-        <div className="fixed inset-0 z-40" onClick={closeAllDropdowns}></div>
-      )}
-    </div>
+        {/* Dropdown Click Catcher */}
+        {(isSettingsMenuOpen ||
+          isAllSessionsOpen ||
+          isModelMenuOpen ||
+          isDialectMenuOpen ||
+          isPermissionMenuOpen) && (
+          <div className="fixed inset-0 z-40" onClick={closeAllDropdowns}></div>
+        )}
+      </div>
+    </ToastProvider>
   );
 }
 

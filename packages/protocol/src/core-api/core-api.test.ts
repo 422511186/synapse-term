@@ -378,6 +378,13 @@ describe('Core API protocol', () => {
       method: 'external.terminalExecute',
       payload: { command: 'ls' },
     });
+    expect(
+      parseCoreRequest('external.terminalExecute', {
+        ...base,
+        approvalMode: 'full',
+        command: 'ls',
+      }),
+    ).toMatchObject({ method: 'external.terminalExecute' });
     expect(parseCoreRequest('external.terminalObserve', { ...base, view: 'output' })).toMatchObject(
       { method: 'external.terminalObserve' },
     );
@@ -387,6 +394,10 @@ describe('Core API protocol', () => {
     expect(
       parseCoreRequest('external.terminalInterrupt', { ...base, transactionId: 'tx-1' }),
     ).toMatchObject({ method: 'external.terminalInterrupt' });
+    expect(parseCoreRequest('external.terminalStatus', { ...base })).toMatchObject({
+      method: 'external.terminalStatus',
+      payload: { sessionId: 'session-1' },
+    });
     expect(parseCoreRequest('external.localListFiles', { ...base, path: 'src' })).toMatchObject({
       method: 'external.localListFiles',
     });

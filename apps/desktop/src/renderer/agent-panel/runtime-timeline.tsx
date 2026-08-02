@@ -1,5 +1,5 @@
 /** Agent 实时时间线（自 app.tsx 拆分）：用户/助手/审批/命令卡片展示 */
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 import { Check, Clock, Command, FileText, Play, XCircle } from 'lucide-react';
 
 import {
@@ -17,16 +17,26 @@ export function RuntimeTimeline({
   onApprove,
   onInterrupt,
   onTakeOver,
+  thinking = false,
 }: {
   events: AgentTimelineItem[];
   onApprove: (item: AgentTimelineItem) => Promise<void>;
   onInterrupt: (item: AgentTimelineItem) => Promise<void>;
   onTakeOver: (item?: AgentTimelineItem) => Promise<void>;
+  thinking?: boolean;
 }): JSX.Element {
+  const [approvingId, setApprovingId] = useState<string>();
+  const [rejectingId, setRejectingId] = useState<string>();
+
   if (events.length === 0) {
     return (
-      <div className="text-[13px] text-muted-foreground">
-        输入目标后，Agent 的实时操作会显示在这里。
+      <div className="space-y-4">
+        {thinking && <ThinkingBubble />}
+        {!thinking && (
+          <div className="text-[13px] text-muted-foreground">
+            输入目标后，Agent 的实时操作会显示在这里。
+          </div>
+        )}
       </div>
     );
   }
@@ -113,18 +123,31 @@ export function RuntimeTimeline({
               {waiting && (
                 <div className="px-3 py-2.5 border-t border-amber-500/20 bg-amber-500/5 flex gap-2">
                   <button
-                    className="flex-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs py-1.5 rounded transition flex justify-center items-center gap-1.5 shadow-sm"
-                    onClick={() => void onApprove(event)}
+                    className="flex-1 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs py-1.5 rounded transition flex justify-center items-center gap-1.5 shadow-sm disabled:opacity-40"
+                    disabled={approvingId === event.id || rejectingId === event.id}
+                    onClick={() => {
+                      setApprovingId(event.id);
+                      void onApprove(event).finally(() => setApprovingId(undefined));
+                    }}
                     type="button"
                   >
-                    <Check size={14} /> 批准执行
+                    <Check size={14} /> {approvingId === event.id ? '批准中…' : '批准执行'}
                   </button>
                   <button
-                    className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs py-1.5 rounded transition flex justify-center items-center gap-1.5 border border-border shadow-sm"
-                    onClick={() => void onTakeOver(event)}
+                    className="flex-1 bg-secondary hover:bg-secondary/80 text-foreground font-medium text-xs py-1.5 rounded transition flex justify-center items-center gap-1.5 border border-border shadow-sm disabled:opacity-40"
+                    disabled={approvingId === event.id || rejectingId === event.id}
+                    onClick={() => {
+                      setRejectingId(event.id);
+                      void onTakeOver(event).finally(() => setRejectingId(undefined));
+                    }}
                     type="button"
                   >
-                    <XCircle size={14} /> {event.driver === 'acp' ? '拒绝执行' : '拒绝并接管'}
+                    <XCircle size={14} />{' '}
+                    {rejectingId === event.id
+                      ? '拒绝中…'
+                      : event.driver === 'acp'
+                        ? '拒绝执行'
+                        : '拒绝并接管'}
                   </button>
                 </div>
               )}
@@ -158,6 +181,31 @@ export function RuntimeTimeline({
           </div>
         );
       })}
+      {thinking && <ThinkingBubble />}
+    </div>
+  );
+}
+
+function ThinkingBubble(): JSX.Element {
+  return (
+    <div className="thinking-placeholder flex gap-3">
+      <div className="w-8 h-8 rounded bg-white text-black flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(255,255,255,0.15)]">
+        <Command size={16} strokeWidth={2.5} />
+      </div>
+      <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <span className="flex gap-1">
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+          <span
+            className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
+            style={{ animationDelay: '150ms' }}
+          />
+          <span
+            className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
+            style={{ animationDelay: '300ms' }}
+          />
+        </span>
+        思考中…
+      </div>
     </div>
   );
 }

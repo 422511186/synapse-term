@@ -77,7 +77,7 @@ Session Resource 刷新 MUST 使用同一套当前 environment verification 和�
 - **THEN** Core 验证当前环境、使用 POSIX 资源命令并将快照标记为当前 epoch 的结果
 
 ### Requirement: Exclusive Session Lease
-任一时刻一个 Session MUST 只有一个输入控制者，且用户 SHALL 能随时撤销 Agent Lease。
+任一时刻一个 Session MUST 只有一个输入控制者（用户、内置 Agent 或外部调用者），用户 SHALL 能随时撤销非用户 Lease。
 
 #### Scenario: User emergency takeover
 - **WHEN** 用户在 Agent 持有 Lease 时执行紧急接管
@@ -86,6 +86,21 @@ Session Resource 刷新 MUST 使用同一套当前 environment verification 和�
 #### Scenario: Stale Agent write
 - **WHEN** Core 收到携带旧 Lease epoch 的 Agent 输入
 - **THEN** 系统拒绝该输入并记录审计事件
+
+#### Scenario: External caller conflicts with user input
+- **WHEN** 用户正在输入而外部调用者请求执行
+- **THEN** 外部调用者 MUST 等待或失败，且不得抢占用户输入
+
+### Requirement: Shared Session
+Terminal Session MUST 只有在用户显式复制其 sessionId 并披露给外部调用者后才可被外部调用寻址（Shared Session）；复制动作 MUST NOT 改变 Session 状态、Lease 或安全边界。
+
+#### Scenario: User copies session id
+- **WHEN** 用户从桌面 UI 复制某个 Ready Session 的 id
+- **THEN** 该 Session 成为 Shared Session，外部调用者可携带该 id 寻址，其余 Session 保持不可寻址
+
+#### Scenario: Session never shared
+- **WHEN** 用户未复制任何 id
+- **THEN** 所有外部寻址调用都失败，且错误不泄露会话存在性
 
 ### Requirement: Ordered Output Events
 Core MUST 为每个 Session 的 PTY 输出分配严格递增 sequence，并将同一有序事件用于日志、终端状态和订阅者。
@@ -154,3 +169,22 @@ Core 与 Desktop Main MUST 为同一 appId 和当前 OS 用户推导相同的本
 #### Scenario: Distinct user scopes
 - **WHEN** 两个不同 OS 用户启动同一 appId 的 Core
 - **THEN** 两者 MUST 得到不同的 endpoint，且不得共享认证 token
+
+### Requirement: GUI Shell Environment Initialization
+本地 PTY Session MUST 将桌面进程继承的环境与启动配置中的显式环境覆盖合并后传给 Shell，并由平台对应的 Shell 启动规则完成用户环境初始化。Session MUST 保留现有当前 PTY environment capability 验证作为 Agent 结构化执行前的最终事实源。
+
+#### Scenario: macOS GUI session discovers user commands
+- **WHEN** 应用从 Finder 启动并创建 macOS Zsh 或 Bash Session，且用户在登录 Shell 配置中声明了额外 PATH 目录
+- **THEN** Session 内的 Shell MUST 能发现该 PATH 目录中的可执行命令，且 Agent Probe 依据当前 PTY 返回的 capability 决定是否允许结构化执行
+
+#### Scenario: Windows desktop session inherits environment
+- **WHEN** 应用从 Windows Explorer 启动并创建 Git Bash 或 PowerShell Session，且命令目录已经存在于桌面进程继承的用户环境或 Shell Profile 中
+- **THEN** PTY MUST 接收该环境并能按对应 Shell 规则发现命令，不得因空的 Session 环境覆盖而丢失继承变量
+
+#### Scenario: WSL keeps distro-local command discovery
+- **WHEN** 应用创建 WSL Session 且 `codex` 只安装在 Windows PATH 或只安装在 WSL 发行版 PATH
+- **THEN** 系统 MUST 只在实际运行环境包含该命令时报告发现成功，不得把另一侧环境的 PATH 当作成功依据
+
+#### Scenario: Environment changes after application launch
+- **WHEN** 用户在应用启动后修改系统或用户 PATH
+- **THEN** 新建 Session MUST 使用应用当前可获得的环境；已存在的 PTY 不得被静默重写，用户需要重启应用或重新建立 Session 才能获得新的桌面环境

@@ -60,6 +60,8 @@ export interface PlaintextProbeDispatchInput {
   readonly nonce: string;
   readonly kind: PlaintextProbeKind;
   readonly dialect?: Exclude<ExecutionDialect, 'observe_only'>;
+  /** 探测写入的租约类型：缺省按内置 Agent 处理（ADR-0024 外部调用者显式传 external） */
+  readonly ownerKind?: 'agent' | 'external';
 }
 
 export type PlaintextDispatchExecutionResult =

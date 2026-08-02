@@ -38,11 +38,23 @@
 - **THEN** 系统 MUST 调用该 Session 的 replay 接口并仅显示该 Session 的有序终端输出
 
 ### Requirement: Launch Profiles
-系统 SHALL 支持由 executable、args、cwd、环境变量引用和初始尺寸组成的本地启动配置，且不得要求配置远程连接类型。
+系统 SHALL 支持由 executable、args、cwd、环境变量引用和初始尺寸组成的本地启动配置，且不得要求配置远程连接类型。受支持的本地 Shell 启动参数 MUST 遵循对应平台的用户环境初始化语义：macOS Zsh/Bash 与 Windows Git Bash MUST 以登录交互模式启动，Windows PowerShell MUST 不禁用用户 Profile，WSL MUST 保持发行版默认 Shell 的环境边界。
 
 #### Scenario: Launch arbitrary local command
 - **WHEN** 用户选择启动 `powershell.exe`、`wsl.exe` 或 `ssh.exe` 的配置
 - **THEN** 系统按配置创建本地 PTY 且不创建 SSH、堡垒机或容器领域对象
+
+#### Scenario: Launch a POSIX shell from the desktop
+- **WHEN** 用户从 Finder、Explorer 或终端启动 macOS Zsh、macOS Bash 或 Windows Git Bash
+- **THEN** 系统使用登录交互 Shell 参数创建 PTY，使用户登录初始化配置有机会设置 PATH 和其他用户环境
+
+#### Scenario: Launch PowerShell with its user environment
+- **WHEN** 用户从 Windows 桌面启动 PowerShell Session
+- **THEN** 系统不得传入 `-NoProfile`，且 PowerShell 按默认规则加载可用的用户 Profile
+
+#### Scenario: Launch WSL without crossing environment boundaries
+- **WHEN** 用户从 Windows 桌面启动 WSL Session
+- **THEN** 系统使用 WSL 默认用户 Shell 和发行版内部环境，不把 Windows 侧 CLI 路径作为 Linux PATH 的替代品
 
 ### Requirement: Session-Scoped Agent Panel
 桌面端 MUST 呈现当前 Session 的固定 Agent 面板，包括 40px 的 `Agent Timeline`/`审计日志 (Audit)` Tabs 和底部 Composer；Timeline、审批和 Audit 卡片必须使用原型视觉，但数据来自 `agent.history`、`agent.onTimeline` 与 `audit.list`。
@@ -68,7 +80,7 @@
 - **THEN** 系统 MUST 请求活动会话的审计记录，并以原型的颜色和等宽字体显示这些记录
 
 ### Requirement: Approval and Takeover Controls
-桌面端 MUST 提供命令批准、拒绝、Agent 取消、命令中断和 User Takeover 的明确独立控件。Approval 卡片 MUST 以唯一 approval id 显示生命周期；完成、取消、过期、任务结束或环境失效后不得继续显示可操作的批准按钮。
+桌面端 MUST 提供命令批准、拒绝、Agent 取消、命令中断和 User Takeover 的明确独立控件。Approval 卡片 MUST 以唯一 approval id 显示生命周期；完成、取消、过期、任务结束或环境失效后不得继续显示可操作的批准按钮。批准、拒绝、取消与中断按钮在请求处理期间 MUST 显示 pending 文案（如"批准中…/拒绝中…/取消中…"）并忽略重复点击。
 
 #### Scenario: Review a mutating command
 - **WHEN** Agent 请求执行需要授权的命令
@@ -85,6 +97,40 @@
 #### Scenario: Take over an interactive terminal
 - **WHEN** Command Transaction 进入 `interaction_required`
 - **THEN** UI 显示接管状态并允许用户获得输入控制权
+
+#### Scenario: Approve or reject is in flight
+- **WHEN** 用户点击"批准执行"或"拒绝执行"
+- **THEN** 按钮 MUST 立即显示"批准中…/拒绝中…"并禁用，重复点击 MUST 被忽略，请求 settle 后恢复可点
+
+#### Scenario: Cancel task is in flight
+- **WHEN** 用户点击"取消任务"且取消请求尚未返回
+- **THEN** 按钮 MUST 显示"取消中…"并禁用，重复点击 MUST 被忽略
+
+### Requirement: Agent Running Status Indicator
+Agent 面板 MUST 在任务运行期间显示常驻运行状态条，包含"Agent 运行中"文案、当前模型名称、持续增长的已运行时长与取消任务入口；状态条 MUST 由 `activeTurn`（含启动中、内置 activeTurn 与 ACP activeTurn）派生，任务结束或取消后 MUST 立即移除。状态条 MUST 不影响现有时间线、审批卡片与 Composer 的可用性。
+
+#### Scenario: Show running status after submit
+- **WHEN** 用户提交目标且任务开始运行
+- **THEN** 面板顶部 MUST 显示运行状态条，展示当前模型与已运行时长，且取消任务按钮可用
+
+#### Scenario: Clear running status on completion
+- **WHEN** Agent 任务完成、失败或用户取消
+- **THEN** 状态条 MUST 移除或复位，不再显示运行中
+
+### Requirement: Thinking and Startup Placeholder
+时间线 MUST 在任务运行中且自用户消息后尚未收到任何新事件时，显示"思考中…"占位动画；第一条工具/助手/系统事件到达后 MUST 自动移除占位。外部 Agent（ACP）首次启动时，MUST 在 spawn 与握手阶段显示"正在启动外部 Agent…"阶段提示，握手完成后由"外部驱动者已就绪"事件自然衔接。
+
+#### Scenario: Thinking placeholder after submit
+- **WHEN** 用户提交目标且模型正在推理、时间线暂无新事件
+- **THEN** 时间线 MUST 在用户消息下方显示"思考中…"占位动画
+
+#### Scenario: Placeholder removed on first event
+- **WHEN** 第一条工具调用或助手事件到达
+- **THEN** "思考中…"占位 MUST 自动移除
+
+#### Scenario: ACP first launch stage hint
+- **WHEN** 首次以 ACP 驱动者提交目标且外部 Agent 子进程正在 spawn/握手
+- **THEN** 时间线或状态条 MUST 显示"正在启动外部 Agent（opencode）…"，完成后显示"外部驱动者已就绪"
 
 ### Requirement: Cancellation Remains Available During Agent Blocking States
 桌面端 MUST 在 Agent 等待审批、环境 Probe、Provider 输出或 Tool Result 时保持取消任务控件可用；显示可恢复错误时不得用全屏遮罩阻断取消操作，除非用户明确关闭该提示后继续。

@@ -4659,3 +4659,40 @@
     }
   }
 }
+
+/* 交互反馈原语补充工具类（unified-interaction-feedback） */
+.animate-bounce {
+  animation: bounce 1s infinite;
+}
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(-25%);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: none;
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+.bg-muted-foreground\/60 {
+  background-color: rgb(113 113 122 / 0.6);
+}
+.bottom-4 {
+  bottom: 1rem;
+}
+.max-w-sm {
+  max-width: 24rem;
+}
+.w-80 {
+  width: 20rem;
+}
+.z-\[90\] {
+  z-index: 90;
+}
+.z-\[100\] {
+  z-index: 100;
+}
+.min-w-\[72px\] {
+  min-width: 72px;
+}

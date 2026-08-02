@@ -21,6 +21,7 @@ import type {
   SessionActorEvent,
   SessionManager,
 } from '@synapse-term/terminal-service';
+import { ShellProbe, type ProbeScheduler } from '@synapse-term/terminal-service';
 
 import { routerError } from '../contracts.js';
 import type { AuditQueryLike, TerminalOutputNotification } from '../contracts.js';
@@ -33,6 +34,8 @@ export interface SessionRequestHandlerOptions {
   emitEvent?: ((event: CoreServiceEvent) => void) | undefined;
   onActivityChange?: ((activity: { sessions: number; agentTasks: number }) => void) | undefined;
   audit?: AuditQueryLike | undefined;
+  /** 共享会话自动 Shell 探测的调度与超时（测试可注入短超时） */
+  shareProbe?: { timeoutMs?: number; scheduler?: ProbeScheduler } | undefined;
 }
 
 export class SessionRequestHandler {
@@ -43,6 +46,7 @@ export class SessionRequestHandler {
   readonly #emitEvent: (event: CoreServiceEvent) => void;
   readonly #onActivityChange: (activity: { sessions: number; agentTasks: number }) => void;
   readonly #audit: AuditQueryLike | undefined;
+  readonly #shareProbe: { timeoutMs?: number; scheduler?: ProbeScheduler } | undefined;
   readonly #titles = new Map<string, string>();
   readonly #terminalTypes = new Map<string, string>();
 
@@ -54,6 +58,7 @@ export class SessionRequestHandler {
     this.#emitEvent = options.emitEvent ?? (() => undefined);
     this.#onActivityChange = options.onActivityChange ?? (() => undefined);
     this.#audit = options.audit;
+    this.#shareProbe = options.shareProbe;
     for (const record of this.#repositories.listSessionMetadata()) {
       this.#titles.set(record.id, record.metadata.title);
       this.#terminalTypes.set(record.id, record.metadata.launch.terminalType);
@@ -179,6 +184,7 @@ export class SessionRequestHandler {
       type: 'session.shared',
       payload: { sharedAt: actor.snapshot.sharedAt },
     });
+    this.#scheduleShareProbe(actor);
     const summary = this.#summary(
       sessionId,
       this.#titles.get(sessionId) ?? sessionId,
@@ -186,6 +192,74 @@ export class SessionRequestHandler {
     );
     this.#emitChanged(summary);
     return summary;
+  }
+
+  /**
+   * 共享后自动 Shell 探测（specs/mcp-access、session-shell-auto-probe）：
+   * 用户复制 sessionId 后尽力而为地初始化 Shell 状态，让 terminal_status
+   * 尽快反映真实可用性。探测失败（用户占用、超时）不影响共享流程。
+   */
+  #scheduleShareProbe(actor: SessionActor): void {
+    const snapshot = actor.snapshot;
+    const needsProbe =
+      snapshot.shell !== 'ready' ||
+      snapshot.environment.verificationStatus !== 'verified' ||
+      snapshot.environment.platform === 'unknown' ||
+      snapshot.environment.operatingSystem === 'unknown';
+    if (!needsProbe) return;
+    void this.#runShareProbe(actor);
+  }
+
+  async #runShareProbe(actor: SessionActor): Promise<void> {
+    const sessionId = actor.snapshot.id;
+    const callerId = `share-probe:${sessionId}`;
+    const grant = await actor.grantExternalLease(callerId, actor.snapshot.lease.epoch);
+    if (!grant.ok) {
+      this.#audit?.record?.({
+        actor: { kind: 'system' },
+        sessionId,
+        type: 'session.probe',
+        payload: { phase: 'share', outcome: 'skipped', reason: grant.error },
+      });
+      return;
+    }
+    const leaseEpoch = grant.value.lease.epoch;
+    const probe = new ShellProbe(actor, {
+      ...(this.#shareProbe?.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: this.#shareProbe.timeoutMs }),
+      ...(this.#shareProbe?.scheduler === undefined
+        ? {}
+        : { scheduler: this.#shareProbe.scheduler }),
+    });
+    try {
+      const result = await probe.run({
+        taskId: callerId,
+        leaseEpoch,
+        ownerKind: 'external',
+      });
+      this.#audit?.record?.({
+        actor: { kind: 'system' },
+        sessionId,
+        type: 'session.probe',
+        payload: {
+          phase: 'share',
+          outcome: result.mode === 'structured' ? 'ready' : 'failed',
+          ...(result.mode === 'structured' ? {} : { reason: result.reason }),
+          shell: actor.snapshot.shell,
+        },
+      });
+    } catch {
+      this.#audit?.record?.({
+        actor: { kind: 'system' },
+        sessionId,
+        type: 'session.probe',
+        payload: { phase: 'share', outcome: 'failed', reason: 'internal_error' },
+      });
+    } finally {
+      probe.dispose();
+      await actor.releaseExternalLease(callerId, leaseEpoch).catch(() => undefined);
+    }
   }
 
   async writeTerminal(sessionId: string, data: string): Promise<null> {

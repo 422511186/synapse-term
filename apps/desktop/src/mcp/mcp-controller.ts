@@ -62,7 +62,13 @@ export function createMcpControllerWithStore(
     const shouldRun = settings.enabled && settings.token !== undefined;
     if (shouldRun && (server === undefined || !server.status.running)) {
       if (server === undefined) server = new EmbeddedMcpServer(serverOptions);
-      await server.start();
+      await server.start(settings.port);
+      // 首选端口被占用而回退时，持久化实际端口，保证下一次启动仍稳定
+      const actualPort = server.status.port;
+      if (actualPort !== undefined && settings.port !== actualPort) {
+        settings = { ...settings, port: actualPort };
+        await store.save(settings);
+      }
       return;
     }
     if (!shouldRun && server !== undefined && server.status.running) {
@@ -115,6 +121,8 @@ export function createMcpControllerWithStore(
           ...settings,
           enabled,
           ...(enabled && settings.token === undefined ? { token: generateMcpToken() } : {}),
+          // 首次启用分配稳定端口，之后沿用持久化端口
+          ...(enabled && settings.port === undefined ? { port: DEFAULT_MCP_PORT } : {}),
         };
         await store.save(settings);
       }),
@@ -143,3 +151,5 @@ export function createMcpControllerWithStore(
     },
   };
 }
+
+const DEFAULT_MCP_PORT = 18_789;

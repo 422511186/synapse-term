@@ -38,6 +38,39 @@ class FakeSupervisor {
 }
 
 describe('DesktopCoreBridge', () => {
+  it('preserves inherited environment while applying explicit Session overrides', async () => {
+    const supervisor = new FakeSupervisor();
+    const bridge = createDesktopCoreBridge(
+      supervisor as unknown as CoreSupervisor,
+      () => undefined,
+      () => undefined,
+      { PATH: 'C:/tools', HOME: 'C:/Users/test' },
+    );
+
+    await bridge.invoke('sessions:create', {
+      title: 'shell',
+      terminalType: 'PowerShell',
+      executable: 'powershell.exe',
+      args: ['-NoLogo'],
+      cwd: 'C:/work',
+      env: { PATH: 'C:/session-tools', TERM: 'screen-256color', CUSTOM: 'enabled' },
+      executionDialect: 'powershell',
+    });
+
+    expect(supervisor.requests[0]).toMatchObject({
+      method: 'session.create',
+      payload: {
+        env: {
+          PATH: 'C:/session-tools',
+          HOME: 'C:/Users/test',
+          TERM: 'screen-256color',
+          CUSTOM: 'enabled',
+        },
+      },
+    });
+    bridge.dispose();
+  });
+
   it('maps only declared renderer channels to validated Core methods', async () => {
     const supervisor = new FakeSupervisor();
     const outputs: unknown[] = [];
