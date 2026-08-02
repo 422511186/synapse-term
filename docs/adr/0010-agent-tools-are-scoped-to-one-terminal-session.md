@@ -1,3 +1,3 @@
-# Agent Tools Are Scoped to One Terminal Session
+# Agent 工具限定在单个终端会话
 
-An MVP Agent Task receives capabilities only for its single selected Terminal Session and cannot directly access local files, local processes, browsers, network clients, or plugin tools. This keeps effects visible in the terminal and gives policy and audit one capability boundary; additional local or plugin tools require a separate future security design.
+MVP Agent 任务只获得其单个选定终端会话的能力，不能直接访问本地文件、本地进程、浏览器、网络客户端或插件工具。这使效果始终在终端内可见，并让策略与审计拥有单一能力边界；新增本地或插件工具需要另行设计安全方案。

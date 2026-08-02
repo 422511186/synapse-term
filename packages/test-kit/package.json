@@ -1,5 +1,5 @@
 {
-  "name": "@terminal-agent/test-kit",
+  "name": "@synapse-term/test-kit",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@terminal-agent/domain": "workspace:*"
+    "@synapse-term/domain": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

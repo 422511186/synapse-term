@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { CoreApplication } from '../apps/core/src/core-application.js';
-import { ShellLocator } from '../apps/desktop/src/shell-locator.js';
+import { ShellLocator } from '@synapse-term/terminal-service';
 
 async function main(): Promise<void> {
   const dataDirectory = required(process.env.TERMINAL_AGENT_DATA_DIR, 'TERMINAL_AGENT_DATA_DIR');

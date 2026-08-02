@@ -1,5 +1,5 @@
-appId: com.terminalagent.desktop
-productName: Terminal Agent
+appId: com.synapseterm.desktop
+productName: Synapse Term
 asar: true
 npmRebuild: false
 electronVersion: 43.2.0

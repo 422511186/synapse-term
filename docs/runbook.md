@@ -24,7 +24,7 @@
 pnpm install --frozen-lockfile
 pnpm verify
 pnpm build
-pnpm --filter @terminal-agent/desktop start
+pnpm --filter @synapse-term/desktop start
 ```
 
 ## 创建和准备 Session

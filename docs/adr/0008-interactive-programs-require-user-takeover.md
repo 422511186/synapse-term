@@ -1,3 +1,3 @@
-# Interactive Programs Require User Takeover
+# 交互式程序需要用户接管
 
-The MVP Agent executes bounded Command Transactions and suspends when it detects a password prompt, pager, editor, confirmation dialogue, or other interactive terminal program. The user receives the Session Lease through User Takeover and may return it after completing the interaction; autonomous TUI operation is deliberately outside the MVP.
+MVP Agent 只执行有界命令事务，并在检测到密码提示、分页器、编辑器、确认对话框或其他交互式终端程序时挂起。用户通过用户接管获得会话租约，完成交互后可交还；自主 TUI 操作被刻意排除在 MVP 之外。

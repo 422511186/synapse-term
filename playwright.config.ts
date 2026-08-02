@@ -12,8 +12,8 @@ export default defineConfig({
   webServer: {
     command:
       process.platform === 'win32'
-        ? 'pnpm.cmd --filter @terminal-agent/desktop dev'
-        : 'pnpm --filter @terminal-agent/desktop dev',
+        ? 'pnpm.cmd --filter @synapse-term/desktop dev'
+        : 'pnpm --filter @synapse-term/desktop dev',
     url: rendererUrl,
     reuseExistingServer: true,
     timeout: 120_000,

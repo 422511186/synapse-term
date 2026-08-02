@@ -4,7 +4,7 @@ import type {
   CommandTransaction,
   ProviderProfile,
   SessionState,
-} from '@terminal-agent/domain';
+} from '@synapse-term/domain';
 import { expectTypeOf, it } from 'vitest';
 
 import type {
@@ -13,7 +13,7 @@ import type {
   CommandTransactionMessage,
   ProviderProfileMessage,
   SessionStateMessage,
-} from './domain-schemas.js';
+} from './schemas/domain-schemas.js';
 
 function assertDomainAssignments(
   sessionMessage: SessionStateMessage,

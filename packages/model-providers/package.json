@@ -1,0 +1,22 @@
+{
+  "name": "@synapse-term/model-providers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@synapse-term/domain": "workspace:*",
+    "@synapse-term/infrastructure": "workspace:*",
+    "@synapse-term/protocol": "workspace:*",
+    "openai": "^6.49.0"
+  },
+  "devDependencies": {
+    "@synapse-term/test-kit": "workspace:*"
+  }
+}

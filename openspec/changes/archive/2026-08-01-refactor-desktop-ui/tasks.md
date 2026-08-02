@@ -38,7 +38,7 @@
 
 - `pnpm exec playwright test apps/desktop/e2e/workspace.spec.ts`: 5/5 passed.
 - `pnpm exec vitest run apps/desktop/src/prototype-terminal.test.ts apps/desktop/src/terminal-view.test.ts --reporter=verbose`: 2/2 passed.
-- `pnpm --filter @terminal-agent/desktop typecheck` and `pnpm --filter @terminal-agent/desktop build`: passed.
+- `pnpm --filter @synapse-term/desktop typecheck` and `pnpm --filter @synapse-term/desktop build`: passed.
 - `pnpm test` still reports platform/environment failures outside this Renderer UI change: Unix-domain socket `EINVAL`, the Windows installer fixture, `node-pty` `posix_spawn`, and the ephemeral secret-store temporary-path assertion.
 - `pnpm exec playwright test apps/desktop/e2e/workspace.spec.ts apps/desktop/e2e/runtime-workspace.spec.ts`: 11/11 passed after replacing stale prototype fixture assertions with runtime API contracts.
 - Chrome at 1440x900 matched the online prototype's 56px Header, 890px Terminal, and 550px Agent layout; Chrome at 980x640 matched the 500px/480px desktop layout without document overflow.

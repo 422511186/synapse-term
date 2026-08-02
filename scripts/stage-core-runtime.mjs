@@ -53,10 +53,10 @@ if (
   throw new Error(`Refusing to stage Core outside ${packagingDirectory}`);
 }
 
-await runPnpm(['--filter', '@terminal-agent/core', 'build']);
+await runPnpm(['--filter', '@synapse-term/core', 'build']);
 await rm(target, { recursive: true, force: true });
 await rm(deployTarget, { recursive: true, force: true });
-await runPnpm(['--filter', '@terminal-agent/core', '--prod', '--legacy', 'deploy', deployTarget]);
+await runPnpm(['--filter', '@synapse-term/core', '--prod', '--legacy', 'deploy', deployTarget]);
 
 await mkdir(join(target, 'node_modules'), { recursive: true });
 await cp(join(deployTarget, 'dist'), join(target, 'dist'), { recursive: true });

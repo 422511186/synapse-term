@@ -1,0 +1,23 @@
+{
+  "name": "@synapse-term/agent-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@synapse-term/domain": "workspace:*",
+    "@synapse-term/infrastructure": "workspace:*",
+    "@synapse-term/model-providers": "workspace:*",
+    "@synapse-term/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@synapse-term/platform-kernel": "workspace:*",
+    "@synapse-term/terminal-service": "workspace:*",
+    "@synapse-term/test-kit": "workspace:*"
+  }
+}

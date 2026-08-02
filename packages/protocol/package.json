@@ -1,5 +1,5 @@
 {
-  "name": "@terminal-agent/protocol",
+  "name": "@synapse-term/protocol",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,6 +13,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@terminal-agent/domain": "workspace:*"
+    "@synapse-term/domain": "workspace:*"
   }
 }

@@ -1,3 +1,3 @@
-# Local Core Owns Terminal Sessions
+# 本地 Core 拥有终端会话
 
-Terminal Sessions, Agent execution, policy enforcement, and audit recording live in a per-user local Core process rather than the desktop UI process. This lets sessions survive UI restarts, reduces the UI failure domain, and creates one enforcement boundary; the cost is a versioned local IPC protocol with replay and reconnection semantics.
+终端会话、Agent 执行、策略执行和审计记录都位于按用户隔离的本地 Core 进程中，而不是桌面 UI 进程中。这让会话在 UI 重启后仍然存活、缩小 UI 故障域，并形成单一执行边界；代价是需要带重放和重连语义的版本化本地 IPC 协议。

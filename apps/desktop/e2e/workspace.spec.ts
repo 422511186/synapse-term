@@ -15,7 +15,7 @@ test('renders the runtime-backed Synapse Term workspace at the wide prototype ge
     page.getByRole('tab', { name: 'api-prod / bash Git Bash', exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Agent Timeline', exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '审计日志 (Audit)', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: '审计日志', exact: true })).toBeVisible();
 
   await expectPrototypeGeometry(page, { terminalWidth: 890, agentWidth: 550, contentHeight: 844 });
   await expect(page.locator('.prototype-header')).toHaveCSS('height', '56px');
@@ -148,8 +148,8 @@ test('uses runtime Timeline, Audit, prompt history, and permission states', asyn
   await page.getByRole('button', { name: '批准执行', exact: true }).click();
   await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible();
 
-  await page.getByRole('tab', { name: '审计日志 (Audit)', exact: true }).click();
-  const audit = page.getByRole('tabpanel', { name: '审计日志 (Audit)' });
+  await page.getByRole('tab', { name: '审计日志', exact: true }).click();
+  const audit = page.getByRole('tabpanel', { name: '审计日志' });
   await expect(audit).toContainText('创建终端会话');
   await page.getByRole('tab', { name: 'Agent Timeline', exact: true }).click();
   await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible();
@@ -178,7 +178,7 @@ test('uses runtime model and Provider data behind prototype secondary pages', as
 
   await page.getByRole('button', { name: '模型: GPT-5', exact: true }).click();
   await page.getByRole('menuitem', { name: '管理模型配置...', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '模型配置 (Model Configuration)' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '模型配置' })).toBeVisible();
   await expect(page.getByRole('table', { name: '模型配置列表' })).toContainText('GPT-5');
   await page.getByRole('button', { name: '编辑 GPT-5', exact: true }).click();
   const modelEditor = page.getByRole('dialog', { name: '编辑模型配置' });
@@ -191,8 +191,8 @@ test('uses runtime model and Provider data behind prototype secondary pages', as
 
   await page.getByRole('button', { name: '返回工作区', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '服务商配置 (Providers)', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '服务商凭据 (Provider Profiles)' })).toBeVisible();
+  await page.getByRole('menuitem', { name: '服务商配置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '服务商凭据' })).toBeVisible();
   await expect(page.getByText('OpenAI 官方', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '测试连接 / 编辑', exact: true }).click();
   const providerEditor = page.getByRole('dialog', { name: '配置服务商' });
