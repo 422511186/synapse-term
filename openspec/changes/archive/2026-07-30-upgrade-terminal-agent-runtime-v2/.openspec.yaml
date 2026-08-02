@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-07-28
+goal: 交付可纯对话或自主循环调用 Terminal/本机文件工具直至完成目标的 Terminal Agent v0.2.0。

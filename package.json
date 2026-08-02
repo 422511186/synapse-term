@@ -1,0 +1,51 @@
+{
+  "name": "terminal-agent",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Local-first terminal and agent runtime for user-managed sessions.",
+  "author": "huangzy",
+  "license": "MIT",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=24.12.0 <25"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "pnpm --filter @terminal-agent/desktop dev",
+    "start": "pnpm --filter @terminal-agent/desktop start",
+    "format": "prettier --write \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
+    "format:check": "prettier --check \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
+    "lint": "eslint .",
+    "postinstall": "node scripts/ensure-node-pty-helper.mjs",
+    "package:core": "node scripts/stage-core-runtime.mjs",
+    "package:win": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --win nsis --publish never",
+    "package:win:dir": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --win dir --publish never",
+    "package:mac": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --mac dmg --publish never",
+    "package:mac:dir": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --mac dir --publish never",
+    "smoke:core-package": "tsx scripts/smoke-packaged-core.ts",
+    "smoke:maintenance-package": "tsx scripts/smoke-packaged-maintenance.ts",
+    "test:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installer-lifecycle.ps1",
+    "verify:real-agent": "tsx scripts/verify-real-agent.mts",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "test:e2e": "playwright test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "electron-builder": "26.15.3",
+    "eslint": "^10.8.0",
+    "fast-check": "^4.9.0",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}

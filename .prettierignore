@@ -1,0 +1,14 @@
+.codex/
+.packaging/
+.tmp-*
+CONTEXT.md
+coverage/
+dist/
+docs/
+node_modules/
+openspec/
+openspec/changes/archive/
+out/
+playwright-report/
+release/
+test-results/

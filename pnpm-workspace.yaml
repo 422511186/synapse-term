@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  electron-winstaller: true
+  esbuild: true
+  node-pty: true
+
+onlyBuiltDependencies:
+  - '@napi-rs/keyring'
+  - electron
+  - esbuild
+  - node-pty

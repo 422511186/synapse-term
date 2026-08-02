@@ -1,0 +1,3 @@
+# TypeScript and Node.js Terminal Stack
+
+The desktop client will use Electron, React, TypeScript, and `@xterm/xterm`; an independent Node.js and TypeScript Core will own Terminal Sessions using `node-pty`, `@xterm/headless`, and `@xterm/addon-serialize`. This stack matches the team's TypeScript expertise and keeps rendering and headless terminal semantics in the same ecosystem, while accepting Electron resource usage and native-module packaging as explicit costs. Go, Rust, and .NET were rejected as primary implementations because their terminal advantages did not justify introducing a less familiar core language.

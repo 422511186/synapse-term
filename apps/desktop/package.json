@@ -1,0 +1,38 @@
+{
+  "name": "@terminal-agent/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/electron-main.mjs",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "vite --config vite.renderer.config.ts",
+    "build": "pnpm build:main && pnpm build:preload && pnpm build:renderer",
+    "build:main": "vite build --config vite.main.config.ts",
+    "build:preload": "vite build --config vite.preload.config.ts",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@terminal-agent/protocol": "workspace:*",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "0.487.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@terminal-agent/test-kit": "workspace:*",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "electron": "^43.2.0",
+    "vite": "^8.1.5"
+  }
+}

@@ -1,0 +1,47 @@
+appId: com.terminalagent.desktop
+productName: Terminal Agent
+asar: true
+npmRebuild: false
+electronVersion: 43.2.0
+electronDist: apps/desktop/node_modules/electron/dist
+directories:
+  output: release
+files:
+  - package.json
+  - from: apps/desktop/dist
+    to: dist
+    filter:
+      - '**/*'
+extraResources:
+  - from: .packaging/core-runtime
+    to: core
+    filter:
+      - '**/*'
+      - '!node_modules/**/*'
+  - from: .packaging/core-runtime/node_modules
+    to: core/node_modules
+    filter:
+      - '**/*'
+extraMetadata:
+  main: dist/main/electron-main.mjs
+win:
+  target: nsis
+  artifactName: Terminal-Agent-${version}-${arch}-Setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+
+mac:
+  target: dmg
+  artifactName: Terminal-Agent-${version}-${arch}.${ext}
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
