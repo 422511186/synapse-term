@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($SetupPath)) {
-  $SetupPath = Join-Path $workspace 'release\Terminal-Agent-0.3.0-x64-Setup.exe'
+  $SetupPath = Join-Path $workspace 'release\Terminal-Agent-0.3.1-x64-Setup.exe'
 }
 $setup = (Resolve-Path -LiteralPath $SetupPath).Path
 $runId = [Guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -98,7 +98,7 @@ try {
 
   [IO.File]::WriteAllText(
     $statePath,
-    "[core]`r`nrunning=1`r`npid=$PID`r`nversion=0.3.0`r`nsessions=2`r`nagentTasks=1`r`nupdatedAt=$([DateTime]::UtcNow.ToString('o'))`r`n",
+    "[core]`r`nrunning=1`r`npid=$PID`r`nversion=0.3.1`r`nsessions=2`r`nagentTasks=1`r`nupdatedAt=$([DateTime]::UtcNow.ToString('o'))`r`n",
     [Text.Encoding]::ASCII
   )
   $blockedExitCode = Invoke-HiddenProcess $setup @('/S', "/D=$blockedDirectory")
