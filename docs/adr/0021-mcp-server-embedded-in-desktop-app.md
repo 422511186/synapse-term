@@ -1,3 +1,15 @@
-# MCP Server 是内嵌桌面功能
+# ADR-0021：MCP Server 内嵌在桌面应用
 
-近期内 MCP server 是内嵌的桌面应用功能（设置开关、权限配置、回环 HTTP 端点），而不是独立的 apps/mcp-server 进程，因此使用 MCP 时桌面应用必须运行。端点使用用户生成的 bearer token 认证，可吊销、无过期。独立或 Core 托管的 MCP server 可在日后重新评估。
+状态：已实现
+
+## 决策
+
+当前 MCP Server 是 Electron Main 的可选能力，不单独拆成独立服务进程。桌面端必须运行，端点默认关闭并只监听本机回环地址。
+
+## 当前实现
+
+`McpController` 持有 `userData/mcp/settings.json`、开关、审批模式和 token；`EmbeddedMcpServer` 监听随机端口的 `/mcp`，使用 Streamable HTTP 和 Bearer token。
+
+## 影响
+
+用户关闭桌面应用或 MCP 开关后端点停止。独立 Core/MCP 服务属于未来评估，不应由当前连接字符串推断为远程服务。

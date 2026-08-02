@@ -1,3 +1,15 @@
-# 分离 UI 而不终止会话
+# ADR-0004：UI 脱离不等于终止 Session
 
-关闭桌面窗口只分离 UI，按用户隔离的 Core 继续保活活动终端会话和 Agent 任务。显式退出流程提供"终止"或"继续后台运行"两种选择，Core 在最后一个会话结束后可在空闲时退出；这在不强制常驻进程的前提下保持终端连续性。
+状态：已实现
+
+## 决策
+
+Session 有独立的 `attached | detached` 状态。Core 支持 `keep_background` 关闭语义，允许桌面 UI 脱离而不立即结束 PTY；`terminate_all` 才会结束当前 Session。
+
+## 当前实现
+
+`SessionActor` 提供 attach/detach，`CoreLifecycle` 和 `CoreSupervisor` 提供两种关闭模式。桌面应用正常退出路径当前使用 `terminate_all`，用户可通过 Core 操作菜单选择保留后台 Core。
+
+## 影响
+
+UI 重连需要 replay 和状态同步；后台保活不是跨 Core 崩溃或系统重启的持久化承诺。

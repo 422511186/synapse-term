@@ -1,113 +1,96 @@
 # 安全边界
 
+Synapse Term 的安全目标是限制模型驱动的终端和本机文件操作，而不是替代远端服务器权限、SSH 密钥管理、操作系统隔离或企业策略中心。当前产品边界是单用户、本机运行；信任主体是当前操作系统用户。
+
 ## 信任模型
 
-Synapse Term 是当前操作系统用户（Windows/macOS）范围内的单用户本地产品。它约束的是模型驱动的终端和本机文件操作，防止模型越过 Session、Tool、路径、凭据和审批边界；它不替代远端服务器自身的最小权限、SSH 密钥管理、操作系统隔离或企业级策略中心。
-
-用户仍可直接在终端中执行任意命令。远端 Shell、终端输出和本机文件内容均视为不可信数据，不能覆盖系统提示、用户目标或 Core 的本地策略。
+- 用户输入、远端 Shell 输出、本机文件和模型输出都视为不可信数据。
+- 远端环境可能是 SSH、跳板机、容器、WSL 或本地 Shell；Core 不根据连接拓扑提升权限。
+- 模型不能通过自然语言、风险标签或工具参数修改 Core 的工具集合、Session 绑定、home 根目录和策略。
+- 用户仍可以绕过 Agent 直接在终端或文件系统中操作；产品只约束 Agent 和外部调用者经过平台的路径。
 
 ## 进程与凭据隔离
 
-- Renderer 开启 sandbox 和 context isolation，关闭 Node integration 和原生菜单栏。
-- preload 只暴露 Session、terminal、Agent、Provider、model、resource、audit 和 Core 的窄接口。
-- Core Named Pipe 使用当前用户作用域名称、认证令牌、challenge 和协议版本握手。
-- Core 数据目录、数据库、原始日志和认证令牌限制为当前用户（Windows 使用 ACL，macOS 使用 POSIX 权限）。
-- Provider API Key 只保存到平台凭据存储（Windows Credential Manager / macOS Keychain）；SQLite 只保存 credential reference。
-- Renderer、审计 payload、模型发现结果和错误信息都不得接收密钥值或原始 Authorization header。
+- Renderer 使用 sandbox、context isolation，关闭 Node integration；preload 只暴露白名单 API。
+- Renderer 不直接接触 PTY、SQLite、文件系统、Provider API Key 或 Named Pipe。
+- Electron Main 负责 BrowserWindow、窄 IPC、Core 子进程、MCP 和 ACP 生命周期。
+- Core Named Pipe 使用当前用户作用域的端点、随机 auth token、challenge-response 和协议版本协商。
+- Core 数据目录、原始日志、审计目录和认证 token 由当前用户权限保护；Windows 使用 ACL，POSIX 使用 `0700/0600` 权限。
+- Provider API Key 只存储在 Windows Credential Manager 或 macOS Keychain；数据库只保存 credential reference。
 
-## Terminal Tool 安全
+## 工具边界
 
-`terminal_execute` 在写入 PTY 前依次执行：Tool Schema 校验、Session/Turn 绑定、方言能力 Probe、JIT Lease、命令风险分类、Permission Mode 决策和精确审批。
+内置 Agent 的工具清单固定在 `packages/protocol/src/schemas/tool-schemas.ts`：四个终端工具和五个本机文件工具。工具调用必须经过 Core 的 `ToolGateway`，外部 MCP/ACP 调用必须经过 `ExternalToolPipeline`。
 
-命令风险为：
+### Terminal Tool
 
-| 风险 | 说明 |
-| --- | --- |
-| `read_only` | 本地规则能够确定为只读观察 |
-| `mutating` | 普通修改或副作用 |
-| `unknown` | 解析失败、语义不明确或无法证明安全 |
-| `privileged` | 提权、敏感配置或高权限操作 |
-| `destructive` | 删除、覆盖、大范围或高影响操作 |
+`terminal_execute` 写入当前 Session 前按顺序执行 Schema 校验、Session/Task 或外部调用者绑定、环境 Probe、JIT Lease、风险分类、权限决策和审批。一个 Session 同时最多处理一个活动 Command Transaction。
 
-模型自报标签不能降低 Core 的风险结果。Approval Grant 绑定 Conversation、Turn、Tool Call、Session、完整命令、风险和命令哈希；命令文本、顺序、Session 或 Lease epoch 改变都会使授权失效。交互式密码、验证码、TUI、pager、编辑器和任意按键提示交给用户接管，Agent 不获得通用 `send_keys`。
+命令风险分为：
 
-## Permission Mode
+| 风险          | 说明                             |
+| ------------- | -------------------------------- |
+| `read_only`   | 规则能够证明是只读观察           |
+| `mutating`    | 普通修改或其他副作用             |
+| `unknown`     | 解析失败、语义不清或无法证明安全 |
+| `privileged`  | 提权、敏感配置或高权限操作       |
+| `destructive` | 删除、覆盖、大范围或高影响操作   |
 
-| 模式 | 确定只读 | 普通修改 | unknown / privileged / destructive |
-| --- | --- | --- | --- |
-| `manual` 人工审批 | 自动执行 | 请求审批 | 请求审批 |
-| `auto` 自动审批 | 自动执行 | 自动执行并审计 | 请求审批 |
-| `full_access` 完全权限 | 自动执行 | 自动执行 | 自动执行并记录高风险 |
+模型提供的风险标签只能作为输入参考，不能降低 Core 的分类结果。审批绑定 Conversation、Turn、Tool Call、Session、完整命令、风险和命令哈希；命令文本、顺序、目标 Session 或 Lease epoch 改变后，旧授权失效。
 
-完全权限只移除审批提示，不扩大能力。所有模式始终保留：九个 Tool allowlist、当前 Session 绑定、用户 home canonical path、参数 Schema、SecretRedactor、expected SHA-256、Lease epoch、ShellDriver 和审计。活动审批不会因切换模式而自动获批，新模式只影响后续 Tool Call。
+命令必须以明文进入 PTY，ShellDriver 用 nonce 和完成事件确认结果。包含控制字符、事务边界标记、伪造完成序列或无法建立可审计明文事务时拒绝执行。密码、OTP、pager、编辑器和 TUI 由用户接管，平台不向 Agent 提供通用 `send_keys`。
 
-## 本机文件边界
+### Local File Tool
 
-Local File Tool 始终以操作系统动态解析的当前用户 home 为唯一根目录。仅接受相对路径，并在访问前后校验 canonical path；绝对路径、UNC、设备路径、ADS、NUL、`..`、symlink、junction 和 reparse point 逃逸均 fail closed。
+本机文件服务的根目录由运行时动态解析为当前用户 home，只接受相对路径。绝对路径、UNC、设备路径、ADS、NUL、`..`、symlink、junction 和 reparse point 逃逸全部 fail closed。
 
-普通读取为 `read_only`；普通 write/edit 为 `mutating`。以下路径或内容至少提升为 `privileged`：
+读取、列出和搜索属于只读能力；创建、替换和编辑属于写能力。`local_write_file` 的 replace 和 `local_edit_file` 要求 expected SHA-256，结果先在内存中构造，再通过同目录临时文件原子替换。返回的变化记录包含相对路径、操作、前后哈希、字节数和有界 Diff。
 
-- `.ssh`、`.aws`、`.azure`、`.kube`、gcloud、Docker、npm、PyPI 等凭据配置
-- `.env*`、浏览器 Profile、私钥、Token、密码和 Secret 特征
-- 启动项与 Shell Profile 修改（Windows Startup、PowerShell Profile 等）提升为 `destructive`
+首版没有本机 delete、move、chmod、注册表或任意进程工具。`.ssh`、`.aws`、`.azure`、`.kube`、`.env*`、浏览器 Profile、私钥、Token 和密码等敏感路径或内容会提升风险或进入脱敏流程。
 
-写入和编辑必须满足操作模式、expected SHA-256 和精确编辑匹配，先在内存构造完整结果，再同目录原子替换。审批绑定相对路径、操作、预期哈希和完整 Diff。首版没有 delete、move、chmod、注册表或任意本机进程 Tool。
+## 权限模式
 
-## 上下文与秘密披露
+内置 Agent 的 Conversation 权限模式为：
 
-- 新 Turn 不默认包含终端屏幕或文件内容；模型必须显式调用 Tool。
-- Protected Input 不进入模型上下文、输入日志或审计 payload。
-- 终端输出和文件内容发送给模型前经过 SecretRedactor；本地终端与经授权 Diff 仍可显示原始内容。
-- Context Compaction 摘要同样先脱敏；原始 Model Item 保留在本地数据库，不自动发送给 Provider。
-- Provider 流产生首个事件后不做隐式重试，避免重复 Tool Call 或副作用。
+| 模式          | `read_only` | `mutating`     | `unknown / privileged / destructive` |
+| ------------- | ----------- | -------------- | ------------------------------------ |
+| `manual`      | 自动执行    | 审批           | 审批                                 |
+| `auto`        | 自动执行    | 自动执行并审计 | 审批                                 |
+| `full_access` | 自动执行    | 自动执行并审计 | 自动执行并记录高风险                 |
+
+`full_access` 只影响是否显示审批，不扩大工具、Session、home、Schema、SecretRedactor、expected hash、Lease 或审计边界。切换权限模式不会自动批准已经等待中的审批。
+
+MCP 使用独立的 `read_only` / `managed` 设置：`read_only` 拒绝写操作，`managed` 允许低危操作并拒绝高危操作。ACP 使用 `managed` / `manual` 设置；需要人工决定时复用同一张审批卡片，批准只授予当前命令一次执行权。
+
+## 秘密与上下文
+
+- 新 Turn 默认不包含终端屏幕、本机文件或远端输出；模型必须显式调用工具。
+- Protected Input 不进入模型上下文、输出日志和审计载荷。
+- 终端输出和文件内容在发送给模型、外部调用者或长期审计前经过 `SecretRedactor`。
+- 默认检测器覆盖私钥块、Bearer token 和常见 `api_key/token/password/secret` 赋值形式；检测器失败时整体替换为安全占位符。
+- 本地终端显示和用户明确批准的文件 Diff 可以保留原始内容，但不应把它们复制到 issue、日志或 Release 资产中。
+- Provider 流出现首个事件后不做隐式重试，避免重复工具调用或副作用。
+
+## MCP 与 ACP 接入安全
+
+MCP 默认关闭，只监听 `127.0.0.1` 的随机端口。每个请求都需要最新 Bearer token，token 可重新生成和吊销；未标记为 shared 的 Session、无效 Session ID 和非 MCP 路径不会暴露其他会话信息。
+
+ACP 子进程使用 stdio 与平台通信。当前只声明终端和只读文件能力；未声明的工具直接拒绝并审计。ACP 外部 Agent 没有直接访问 PTY、Policy、SQLite 或平台密钥的路径。
 
 ## 资源快照
 
-资源刷新必须由用户显式触发，只能在当前 Ready、空闲且非交互状态的 Session 中执行。Core 使用固定只读命令、`read_only` 风险和独立 ShellDriver；不接受模型提供资源采集命令，也不创建 SSH 或服务器资产对象。
-
-每次刷新记录 Session、方言、时间、结果、已采集字段和 `fixed_command` 只读策略，不长期保存完整原始采集输出。部分命令缺失时指标标为不可用，不伪造零值。
+资源面板必须由用户显式刷新，并且只在当前 Session 就绪、空闲、非交互、方言为 POSIX 或 PowerShell 时执行固定只读命令。模型不能提交自定义资源采集命令。采集结果保存结构化指标和状态；命令不可用时返回 `partial` 或 `unavailable`，不伪造零值。
 
 ## 审计与保留
 
-结构化审计追加记录 actor、Session、Conversation、Turn、Tool Call、权限模式、策略判断、授权、命令哈希、文件前后 SHA-256、资源刷新、中断、接管、时间、退出状态和错误。完整终端字节流不是长期审计。
+结构化审计记录 actor、Session、Conversation、Turn、Tool Call、权限模式、策略结论、审批、命令哈希、文件前后 SHA-256、资源刷新、中断、接管、时间、退出状态和错误。完整终端字节流不是长期审计格式。
 
-- 活动 Session 原始日志默认每 Session 64 MiB、全局 1 GiB
-- Session 结束后原始日志默认保留 24 小时
-- 结构化审计默认保留 30 天
-- headless terminal 默认保留 10,000 行 scrollback
+默认保留策略由 `RetentionManager` 控制：原始终端日志 24 小时，结构化审计 30 天。实现可以通过构造参数覆盖这些时长；清理不会修改 Provider 凭据或核心 SQLite 结构。
 
-## 非目标与残余风险
+## 残余风险与限制
 
-- Core 崩溃、升级或系统重启会终止 PTY，不承诺恢复正在运行的远程 Shell。
-- 自动秘密检测可能漏报或误报，不能替代远端最小权限和凭据轮换。
-- 当前安装包未配置 Authenticode 时，Windows 会显示未签名警告。
-- 当前用户本人仍可绕过 Agent，在终端或文件系统中直接操作；产品安全边界只约束 Agent 驱动的能力。
-
-## 明文执行审计要求
-
-所有 Agent 生成的 Shell 命令必须以明文形式写入 PTY，服务器侧审计（堡垒机、会话录像、命令白名单、Shell history）必须能在执行前看到原始命令。系统禁止以下编码后动态执行模式：
-
-- POSIX: `base64 -d`、`eval` 解码变量、命令替换中的 base64 解码
-- PowerShell: `FromBase64String`、`[ScriptBlock]::Create`、`EncodedCommand`、`Invoke-Expression`
-
-非执行数据编码（认证握手、日志序列化、资源字段编码）中的 Base64 仍然允许，但不得流入命令执行器。
-
-### 方言验证
-
-Session 的执行方言从"创建时本地 Shell 属性"收紧为"当前 PTY 环境经验证的能力"。SSH、容器、WSL 或嵌套 Shell 切换后必须重新验证。验证通过固定明文指纹和方言特定 Probe 完成，不猜测远端环境。
-
-### Fail-closed 策略
-
-以下情况系统拒绝执行并保持 observation-only：
-
-- 环境未验证或 capability epoch 过期
-- 命令包含控制字符、事务边界标记或 OSC 777 序列
-- 无法构造语义等价的明文事务
-- 事务完成事件缺失或 nonce 不匹配
-- PTY 写入被拒绝
-
-拒绝时返回稳定错误码（`execution_environment_unverified`、`command_not_auditable`、`plaintext_protocol_error`），不会静默回退到编码 wrapper。
-
-### 迁移与兼容性
-
-旧 Session 的启动方言降级为 unverified hint，Core 重启后旧活动 Session 标记为 `interrupted + unverified`。受影响服务器不得回滚到会重新启用 Base64 wrapper 的版本。
+- Core 崩溃、升级或系统重启会终止旧 PTY，不承诺恢复正在运行的远程 Shell。
+- 秘密检测可能漏报或误报，不能替代远端最小权限和凭据轮换。
+- 未配置代码签名证书时，Windows 安装包可能显示未签名警告。
+- MCP/ACP 是本机外部接入面；启用前应核对 token、共享 Session 和审批模式。
+- `TERMINAL_AGENT_*` 是兼容环境变量，不应把其中的数据目录或 token 传给第三方脚本。

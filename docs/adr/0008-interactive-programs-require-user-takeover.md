@@ -1,3 +1,15 @@
-# 交互式程序需要用户接管
+# ADR-0008：交互式程序需要用户接管
 
-MVP Agent 只执行有界命令事务，并在检测到密码提示、分页器、编辑器、确认对话框或其他交互式终端程序时挂起。用户通过用户接管获得会话租约，完成交互后可交还；自主 TUI 操作被刻意排除在 MVP 之外。
+状态：已实现
+
+## 决策
+
+Agent 只执行有界 Command Transaction。检测到密码、OTP、分页器、编辑器、TUI 或其他需要按键交互的程序时，任务进入等待用户或交互状态，由用户取得 Session Lease。
+
+## 当前实现
+
+`InteractionDetector`、`SessionActor` 和 `AgentCoordinator` 共同处理 `interaction_required`、`waiting_user` 和 user takeover；平台没有通用 `send_keys` Agent 工具。
+
+## 影响
+
+交互流程需要用户完成后再继续；这是刻意保留的产品边界，不是命令执行失败。

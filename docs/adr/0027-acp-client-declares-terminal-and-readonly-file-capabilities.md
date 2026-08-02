@@ -1,3 +1,15 @@
-# ACP 客户端只声明终端与只读文件能力
+# ADR-0027：ACP Client 只声明终端和只读文件能力
 
-平台将终端执行和只读文件访问声明为 ACP 客户端能力；不提供编辑器、搜索、索引和文件编辑能力，因此外部 Agent 改变状态的唯一途径是平台工具管线。这把外部驱动者保持在内置 Agent 相同的安全边界内。
+状态：已实现
+
+## 决策
+
+ACP Client 向外部 Agent 声明终端能力和 `fs.readTextFile` 只读文件能力，不声明文件编辑、删除、索引或任意本机进程能力。外部 Agent 的状态变化必须通过平台工具管线。
+
+## 当前实现
+
+`AcpController` 的能力声明包含 `terminal: true` 和 `fs.readTextFile: true`；工具 permission request 只接受平台允许的工具名，其余请求拒绝并审计。
+
+## 影响
+
+外部 Agent 的能力边界与内置 Agent 的安全管线保持一致。读文件路径由 ACP 适配层转为 home 相对路径，再由 Core 再次校验。

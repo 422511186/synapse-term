@@ -1,3 +1,15 @@
-# ACP 轮次翻译进现有轮次模型
+# ADR-0031：ACP Turn 映射到平台现有 Turn 语义
 
-ACP stop reason 映射到现有终态（end_turn 与 refusal 变为 completed，cancelled 变为 cancelled，max_tokens、max_turn_requests 和错误变为 failed）。外部 Agent 拥有自己的对话记忆，平台只存储消息与工具调用摘要的投影用于展示、审计和恢复；一个 Agent 任务仍绑定恰好一个就绪会话。
+状态：已实现
+
+## 决策
+
+ACP 的开始、文本、工具调用、停止和错误事件映射到平台统一的 Agent 时间线与 Turn 终态：正常结束为 completed，用户取消为 cancelled，进程错误、协议错误或限制为 failed。外部 Agent 自己管理完整上下文，平台保存 Conversation Projection 用于展示、审计和恢复界面。
+
+## 当前实现
+
+`AcpController` 将 ACP session/turn/tool call 投影为带 `sessionId`、Conversation、Turn 和 status 的时间线；领域层的 Driver 字段允许外部 Turn 不携带平台模型选择。
+
+## 影响
+
+用户看到的内置和 ACP 时间线可以共享状态组件，但 ACP 的完整提示词、模型记忆和 Provider 细节不属于平台数据库。外部进程崩溃后不能假设平台拥有足够上下文自动续跑。

@@ -1,170 +1,217 @@
 # 运行手册
 
-## 版本与平台约定
+本文档面向开发者、测试人员和本机维护者。命令以仓库根目录为当前工作目录；除特别说明外，Windows 使用 PowerShell，macOS 使用 bash/zsh。
 
-手册面向 Windows 与 macOS 两种平台，不写死特定版本、架构或平台专属路径。产品品牌统一为 Synapse Term；安装产物、应用包和用户数据目录仍沿用打包标识 `Terminal Agent`（见 `electron-builder.yml`），因此涉及真实文件名、目录和命令时保留该名称。
+## 环境约定
 
-- 安装包按平台输出到 `release/`：Windows 为 `Terminal-Agent-<版本>-<架构>-Setup.exe`，macOS 为 `Terminal-Agent-<版本>-<架构>.dmg`。实际版本与架构以 `release/` 目录中的产物为准；命名规则见 `electron-builder.yml`，产品版本以 `package.json` 的 `version` 为唯一来源。
-- 安装包内置固定版本的 Node.js Core Runtime，文档不重复版本号。开发环境要求见 `package.json` 的 `engines.node`；打包产物的实际 Runtime 版本见安装目录中 `resources/core/runtime-manifest.json`（macOS 为 `Contents/Resources/core/runtime-manifest.json`）。
-- 用户数据目录随平台不同：Windows 为 `%APPDATA%\Terminal Agent`，macOS 为 `~/Library/Application Support/Terminal Agent`；下文统一简称“用户数据目录”。
-- API Key 使用平台原生凭据存储：Windows Credential Manager、macOS Keychain；下文统一简称“平台凭据存储”。
+- Node.js：`>=24.12.0 <25`。
+- pnpm：`10.28.1`，以根目录 `package.json` 为准。
+- Electron：`electron-builder.yml` 当前固定 `43.2.0`。
+- 用户数据目录：Windows `%APPDATA%\synapse-term`，macOS `~/Library/Application Support/synapse-term`。
+- Core 数据目录：用户数据目录下的 `core/`。
+- 安装产物目录：仓库根目录 `release/`，该目录不应作为源码提交。
 
-## 安装与首次启动
+项目仍保留 `terminal-agent` 作为旧数据迁移来源、内部 app id 和 `TERMINAL_AGENT_*` 环境变量前缀。不要因为这些兼容标识而重新使用旧产品名。
 
-从 `release/` 选择当前平台的最新安装包：
+## 安装与启动
 
-- Windows：运行 `Terminal-Agent-<版本>-<架构>-Setup.exe`，按向导选择当前用户安装目录。安装包包含 Electron 桌面端、固定 Node.js Core Runtime、维护 CLI 和卸载器。
-- macOS：打开 `Terminal-Agent-<版本>-<架构>.dmg`，将 Terminal Agent.app 拖入“应用程序”。应用包内包含 Electron 桌面端、固定 Node.js Core Runtime 和维护 CLI。
-
-首次启动后确认顶栏显示“Core 已连接”。应用数据默认位于用户数据目录；卸载默认保留该目录中的模型配置、审计和回滚备份。
-
-开发启动（PowerShell 或 bash）：
+首次安装依赖：
 
 ```bash
+corepack enable
 pnpm install --frozen-lockfile
-pnpm verify
-pnpm build
-pnpm --filter @synapse-term/desktop start
 ```
 
-## 创建和准备 Session
+运行完整本地校验和构建：
 
-1. 点击顶栏“新建终端会话”。
-2. 输入名称并选择可用 Shell。界面不要求填写 working directory；Session 自动从当前用户 home 启动。
-3. 在终端中自行执行 SSH、堡垒机跳转、容器进入、WSL 或其他认证操作。
-4. 根据当前终端环境设置执行方言：
-   - PowerShell 本机环境选择 `PowerShell`。
-   - Git Bash、Linux、macOS、WSL 或 SSH 到 POSIX 远端后选择 `POSIX`。
-   - 不允许 Agent 执行结构化命令时选择 `仅观察`。
-5. 确认当前 Shell 已出现可用提示符，再提交 Agent 目标。
+```bash
+pnpm verify
+pnpm build
+```
 
-Agent 不知道也不需要知道连接拓扑。方言只决定 Command Transaction 协议，不创建 SSH、堡垒机、容器或服务器对象。人工输入、接管或方言切换会使旧 capability epoch 失效，下一次 `terminal_execute` 自动重新 Probe。
+启动 Mock Renderer：
 
-## 配置 Provider 与模型
+```bash
+pnpm dev
+```
 
-1. 打开顶层“模型”页面，切换到“Provider 连接”。
-2. 新建 Provider，选择协议，填写 base URL、API Key、额外 headers 和超时后保存。API Key 留空保存会保留已有凭据。
-3. 切换到“模型配置”，选择 Provider。点击“拉取模型”可从 Models API 获取模型 ID，也可以切换为手动输入。
-4. 配置 Context Window、最大输出、自动压缩阈值、支持和默认推理强度后保存。
-5. 点击“检测模型”。只有检测到连接、鉴权、具体模型、streaming 和指定 Tool Call 都可用时，状态才为 `available`。
-6. 启用模型，并按需设为默认。Agent 下拉框只显示 enabled + available 的模型。
+启动真实 Electron：
 
-一个 Provider 可以对应多个 Model Configuration。修改 Provider 协议、地址、凭据、headers 或超时会使引用它的所有模型回到 `unverified`，需要重新检测。详细字段和错误说明见 [模型配置](model-configuration.md)。
+```bash
+pnpm start
+```
 
-## 使用 Agent
+真实桌面端依赖已经构建好的 `apps/desktop/dist` 和可用的 Electron 运行时。必要时运行：
 
-Agent composer 提供模型、推理强度和权限模式：
+```bash
+node apps/desktop/node_modules/electron/install.js
+```
 
-- 普通问答可以直接回复，不调用 Tool、不 Probe、不取得终端 Lease。
-- 需要当前环境事实时，Agent 调用 `terminal_observe` 或本机只读文件 Tool。
-- 需要命令时，Agent 调用 `terminal_execute`，命令持续运行时使用 `terminal_wait`，必要时用 `terminal_interrupt`。
-- 本机文件 Tool 始终作用于本机当前用户 home；SSH 远端文件通过 Terminal Tool 处理。
+## 创建 Session
 
-时间线按稳定 item 聚合流式 Markdown，显示用户消息、模型回复、Tool 活动、审批、系统错误和最终状态。取消 Turn 只停止 Agent 调度；中断仍在运行的命令需要单独执行“中断”。
+1. 在工作区打开“新建终端会话”。
+2. 填写名称并选择 Shell；工作目录由应用使用当前用户 home 初始化，不在创建对话框中让用户输入。
+3. 等待 PTY 进入运行状态和 Shell 提示符可用状态。
+4. 在终端中自行完成 SSH、跳板机、容器、WSL 或其他认证。
+5. 根据当前 PTY 环境设置执行方言：POSIX、PowerShell 或仅观察。
+6. 进入嵌套远端/容器环境后重新选择或验证方言。
 
-## 权限模式
+方言决定命令事务如何被构造和确认，不代表远端主机类型。`observe_only` 只允许观察，不允许 Agent 或外部调用者执行结构化命令。
 
-- `人工审批`：普通修改、未知、高权限和破坏性操作均暂停确认。
-- `自动审批`：普通修改自动执行；未知、敏感、高权限和破坏性操作仍确认。
-- `完全权限`：不弹审批，但不会绕过 Tool、Session、home、Schema、哈希、Lease 或审计边界。
+## 配置 Provider 和模型
 
-审批内容必须核对完整命令或文件 Diff、风险、影响、路径和哈希。拒绝后 Agent 可以尝试只读替代方案，但不能复用旧授权执行修改后的参数。
+1. 打开“Provider 管理”，填写协议、Base URL、API Key、headers 和超时并保存。
+2. 打开“模型”，选择 Provider，点击“拉取模型”或手动填写模型 ID。
+3. 设置上下文窗口、最大输出、自动压缩、压缩阈值和推理强度。
+4. 保存后点击“检测模型”。
+5. 检测状态为 `available` 后再启用模型，并按需设为默认。
 
-## 资源快照
+Provider 的修改会使引用它的模型重新变为 `unverified`。详细字段、检测状态和错误处理见 [模型配置](model-configuration.md)。
 
-点击资源面板的刷新按钮后，Core 在当前 Session 中执行固定只读命令。刷新要求：
+## 使用内置 Agent
 
-- Session 正在运行且 UI 已连接
-- 没有活动命令、密码提示、TUI 或用户接管冲突
-- execution dialect 为 POSIX 或 PowerShell
+普通对话不会自动读取终端或文件，也不会取得 Session Lease。需要环境事实时，Agent 会显式请求：
 
-资源面板展示可确认的 host、OS、uptime、CPU/负载、内存、swap、磁盘和网络。某个命令不可用时显示“部分不可用”，其他指标仍保留。资源面板不自动轮询，也不代表持久监控。
+- `terminal_observe`：观察屏幕或增量输出。
+- `terminal_execute`：执行一条命令事务。
+- `terminal_wait`：等待命令结果。
+- `terminal_interrupt`：中断活动命令。
+- Local File Tool：访问当前用户 home 内的受限文件路径。
 
-## 常见诊断流程
+权限模式：
 
-- 状态分析：先让 Agent 观察提示符，再只读检查 uptime、CPU、内存、磁盘、网络和服务状态。
-- 日志排查：先限定服务与时间窗口；长输出使用 `terminal_wait` 增量读取，避免重复启动同一命令。
-- 问题修复：先取得只读证据，再提交最小修改；执行后用独立命令验证，不以“命令已发送”代替成功证据。
-- 交互流程：密码、OTP、host key、pager、编辑器、TUI 或安装器提示由用户接管；完成后重新观察再继续。
+- `manual`：变更、未知、特权和破坏性操作都需要审批。
+- `auto`：普通变更自动执行，高风险操作仍需审批。
+- `full_access`：不显示审批，但不扩大工具、Session、路径和 Schema 边界。
 
-## 故障排查
+看到密码、OTP、host key、pager、编辑器、TUI 或交互确认时，停止 Agent 并进行用户接管。完成交互后重新观察，再把控制权交还给 Agent。
 
-### Session 创建失败：File not found
+## 使用资源面板
 
-Shell 路径不再由 Renderer 写死。检查创建窗口中的 Shell 是否标记可用、解析来源是否正确，以及目标 executable 是否仍存在。Git Bash 可通过 PATH、Git 注册表或标准环境位置动态发现；不可用 Shell 不应提交给 Core。
+资源刷新是一次性的显式操作，不是后台轮询。刷新前确认：
 
-### 普通对话无响应
+- Session 的 PTY 正在运行，Shell 已就绪。
+- 当前没有活动 Command Transaction 或用户接管。
+- 方言为 POSIX 或 PowerShell。
 
-打开时间线查看明确的 system error。确认已选择 enabled + available 的模型，Provider 凭据仍存在，且模型检测未因 Provider 修改失效。普通对话不会运行 ShellProbe，因此终端没有额外输出是正常行为。
+Core 会通过当前 Session 的固定只读命令收集 host、OS、uptime、CPU/负载、内存、swap、磁盘和网络。命令不可用时快照可以是 `partial` 或 `unavailable`，不会用估算值填充。
 
-### 模型检测无反馈或失败
+## 启用 MCP
 
-界面会显示状态、checkedAt、attempt、streaming、Tool Call 和失败原因。重点检查：
+1. 在设置中打开 MCP 集成。
+2. 选择外部审批模式：`read_only` 或 `managed`。
+3. 复制连接地址和 Bearer token；token 只在桌面设置中显示。
+4. 在工作区将目标 Session 标记为共享，并复制该 Session ID。
+5. 让 MCP 客户端连接本机地址的 `/mcp` 端点。
 
-- base URL 的 `http://` / `https://` 是否与服务一致
-- API Key、额外 headers、代理和 TLS 证书
-- 模型 ID 是否存在并允许当前凭据访问
-- 兼容端点是否真正支持 streaming 和标准 Tool Call
-- 超时是否覆盖本地慢模型首次加载
+MCP 默认关闭，只监听 `127.0.0.1` 的随机端口。重新生成或吊销 token 会立即影响新请求。端点不提供 Session 枚举；调用者必须使用用户复制的 ID。
 
-### Agent 只能观察
+## 启用 ACP
 
-当前方言为 `observe_only`，或 ShellDriver Probe 未通过。确认当前终端实际环境后切换为 POSIX 或 PowerShell；如果刚完成人工输入或接管，下一次执行会自动重新 Probe。
+1. 确认 `opencode` 已安装，并能从启动 Electron 的环境中找到。
+2. 在 ACP 设置中打开“允许 ACP 集成”。
+3. 选择 `managed` 或 `manual` 审批模式。
+4. 返回工作区，在 Agent 面板选择 ACP 驱动者并开始任务。
+
+应用会按当前 Session 的工作目录启动 `opencode acp --pure --cwd <cwd>`。ACP 子进程自主管理模型和上下文；平台只提供终端和只读文件能力。关闭 ACP 开关、关闭 Conversation 或退出应用会结束该子进程。
+
+## 常见故障
+
+### Core 未连接
+
+1. 查看桌面端错误提示，确认 Node 和 Core 入口存在。
+2. 确认用户数据目录可写，尤其是 `core/`、`auth.token` 和 `upgrade-state.ini`。
+3. 使用 `TERMINAL_AGENT_DEBUG=1` 启动以查看桌面 Main/Core 的诊断输出。
+4. 不要先删除 `core.sqlite`；保留数据库有助于迁移和审计。
+
+### Shell 找不到
+
+Shell 由 `@synapse-term/terminal-service` 动态发现。检查 Shell 是否仍安装、路径是否在 PATH/系统标准位置、创建对话框是否把它标为可用。应用不应依赖固定用户名、盘符或开发机路径。
+
+### Agent 无法执行命令
+
+依次检查：
+
+1. Session PTY 是否为 `running`，Shell 是否为 `ready`。
+2. 方言是否与当前 PTY 环境一致；`observe_only` 会明确拒绝执行。
+3. 最近是否发生人工输入、接管或方言切换，导致旧 Lease epoch 失效。
+4. 命令是否被判为 unknown、privileged 或 destructive，并等待审批。
+5. 是否出现交互式提示；这时需要用户接管，而不是重复发送命令。
+
+### 普通对话失败
+
+确认模型同时满足 `enabled` 和 `available`，Provider 凭据仍存在，且 Provider 修改后已重新检测。查看 Agent 时间线中的稳定错误，不要把 API Key 或完整 Authorization header 粘贴到日志。
 
 ### 资源刷新失败
 
-确认没有活动命令或交互提示，方言与当前环境一致。`collection_timeout` 表示固定只读命令未在 30 秒内完成；`partial` 表示某些指标不可用但快照其余部分有效。
+停止活动命令，退出交互提示，确认执行方言为 POSIX 或 PowerShell。`collection_timeout` 表示固定采集事务超时；`partial` 只表示部分指标不可用，不代表整个 Session 失败。
 
-### Core protocol version is incompatible
+### Core 协议或认证失败
 
-旧 Core 仍在后台持有 Session。若要保留 Session，继续使用旧桌面端；准备升级时先结束 Session，在 Core actions 中选择“退出 Core”，再启动新版本。
+协议 major 不兼容时，使用与当前 Core 匹配的桌面端。认证失败时先退出桌面端和 Core，检查 `core/auth.token` 的当前用户权限，再重新启动；不要用第三方工具复制或上传该 token。
 
-### Core authentication failed
+### 输出出现 history gap
 
-不要删除数据库。退出全部 Synapse Term/Core 进程，检查用户数据目录下 `core/auth.token` 的访问权限是否仅限当前用户（Windows 检查 ACL，macOS 检查 POSIX 文件权限），再重启桌面端。
+Core 只保留有界原始输出。`historyGap` 表示请求游标早于保留窗口，UI 会使用最近快照恢复显示；缺失的原始输出不能当成完整审计记录。
 
-### 输出历史缺口
+## 升级、备份与恢复
 
-`history_gap` 表示请求 sequence 已被有界日志截断。UI 使用最近终端快照恢复可见屏幕；缺失历史不能视为完整审计记录。
+升级前：
 
-## 升级
+1. 完成或取消 Agent Turn 和活动命令。
+2. 在 Core 操作菜单中选择“退出 Core”，确认所有 PTY 结束。
+3. 备份用户数据目录，至少保留 `core/core.sqlite` 和 `core/backups/`。
 
-升级会终止 Core 持有的 PTY，不能恢复正在运行的远程 Shell：
+SQLite schema 迁移会在迁移前生成备份和 SHA-256 manifest。数据库版本高于当前 Core 支持版本时拒绝启动，不会覆盖数据库。Core 崩溃、升级或系统重启后的旧 PTY 会标记为 `interrupted`，不会自动重连远端环境。
 
-1. 完成或关闭活动 Session 和 Agent Turn。
-2. 在 Core actions 中选择“退出 Core”。
-3. Windows 运行新安装包，macOS 用新版替换“应用程序”中的应用。Windows 安装器会读取 `upgrade-state.ini`：若 Core 仍在运行，交互安装器显示 Session/Turn 数并允许 Retry 或 Cancel；静默安装返回错误码 32。
-4. 新 Core 启动时检查 SQLite schema。数据库高于当前 Core 支持版本时拒绝启动，不覆盖数据。
-5. 仅在 schema 迁移时创建版本化 SQLite 备份和 `.json` SHA-256 清单。
+维护命令的形式为：
 
-## 校验和回滚数据库
-
-先退出 Core，再使用安装目录中的固定 Runtime。
-
-Windows（PowerShell）：
-
-```powershell
-$core = '<install-dir>\resources\core'
-$manifest = "$env:APPDATA\Terminal Agent\core\backups\<backup>.sqlite.json"
-$database = "$env:APPDATA\Terminal Agent\core\core.sqlite"
-
-& "$core\node.exe" "$core\dist\core-maintenance.mjs" verify-backup $manifest
-& "$core\node.exe" "$core\dist\core-maintenance.mjs" restore-backup $manifest $database
+```text
+core-maintenance verify-backup <manifest.json>
+core-maintenance restore-backup <manifest.json> <core.sqlite>
 ```
 
-macOS（bash）：
+恢复前必须退出 Core。`restore-backup` 会先检查 `upgrade-state.ini`，Core 仍运行时返回退出码 `3`；恢复成功后会在数据库旁保留 rollback 前的救援副本。安装包中的固定 Node Runtime 和 `dist/core-maintenance.mjs` 是推荐的维护入口。
+
+## 本地打包
+
+Windows：
 
 ```bash
-core="/Applications/Terminal Agent.app/Contents/Resources/core"
-manifest="$HOME/Library/Application Support/Terminal Agent/core/backups/<backup>.sqlite.json"
-database="$HOME/Library/Application Support/Terminal Agent/core/core.sqlite"
-
-"$core/node" "$core/dist/core-maintenance.mjs" verify-backup "$manifest"
-"$core/node" "$core/dist/core-maintenance.mjs" restore-backup "$manifest" "$database"
+pnpm package:win:dir
+pnpm smoke:core-package
+pnpm smoke:maintenance-package
+pnpm package:win
 ```
 
-恢复成功会输出 `restoredSchemaVersion`，并在数据库旁保留 `.pre-rollback-<timestamp>.sqlite` 救援副本。维护 CLI 检测到对应 Core PID 仍存活时拒绝恢复。
+macOS：
 
-## 卸载
+```bash
+pnpm package:mac:dir
+pnpm smoke:core-package
+pnpm smoke:maintenance-package
+pnpm package:mac
+```
 
-Windows：通过“设置/控制面板”卸载或静默卸载，删除程序文件；macOS：将应用移到废纸篓。卸载默认保留用户数据目录。需要彻底删除本机数据时，应在确认不再需要 Provider 配置、审计和回滚备份后由用户单独处理；卸载不会替用户删除这些数据。
+产物位于 `release/`。文件名由 `electron-builder.yml` 决定：`Terminal-Agent-<version>-<arch>-Setup.exe` 或 `Terminal-Agent-<version>-<arch>.dmg`。当前安装器关闭自动删除用户数据；卸载默认保留 `%APPDATA%\synapse-term` 或 macOS 对应目录。
+
+Windows 安装生命周期检查：
+
+```bash
+pnpm test:installer
+```
+
+该脚本只应在 Windows 上运行，并会验证安装、活动 Core 阻断、升级状态、卸载和用户数据保留。
+
+## 真实环境验收
+
+真实 Provider、SSH 和外部模型验收默认跳过。只有在明确提供隔离数据目录、已保存模型配置和 SSH target 时才启用：
+
+```powershell
+$env:TERMINAL_AGENT_REAL_E2E = '1'
+$env:TERMINAL_AGENT_SSH_TARGET = '<ssh-target>'
+$env:TERMINAL_AGENT_REAL_USER_DATA_DIR = '<isolated-user-data>'
+pnpm test:e2e
+```
+
+脚本只执行固定的远端只读命令，不能把 API Key、SSH 凭据或鉴权 header 写入输出。真实验收结果不应作为无凭据 CI 的必要条件。

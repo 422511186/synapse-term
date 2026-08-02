@@ -1,3 +1,15 @@
-# 外部调用是具有外部审计身份的命令事务
+# ADR-0024：外部调用使用普通命令事务和独立审计身份
 
-每次外部执行都是普通命令事务：取得 JIT 租约、与同一会话上的用户和内置 Agent 输入互斥、并通过现有 epoch 机制保持用户可打断。审计将外部调用绑定到"外部调用者 + 会话"身份，而不是伪造 Agent 任务或轮次。
+状态：已实现
+
+## 决策
+
+MCP/ACP 的每次执行都走普通 Command Transaction：获取 JIT 外部租约，与用户和内置 Agent 输入互斥，执行相同的 ShellDriver/策略，并用外部调用者身份审计，而不是伪造 Agent Task 或 Turn。
+
+## 当前实现
+
+`ExternalToolPipeline`、`ExternalRequestHandler` 和 `CommandExecutor` 共同处理 `caller.kind = mcp | acp`、Lease epoch、审批、结果和审计。
+
+## 影响
+
+外部客户端和内置 Agent 共享终端安全语义，但外部调用不会自动拥有内置 Conversation 的模型上下文或历史。

@@ -1,141 +1,85 @@
-# OpenSpec 验证矩阵
+# 验证矩阵
 
-本矩阵对应活动 change `upgrade-terminal-agent-runtime-v2`。单元、性质、集成和安全测试由 `pnpm test` 执行；浏览器、Electron、打包程序和真实 SSH 验收由 Playwright 串行执行。真实外部凭据测试默认跳过，只有显式提供用户已有配置时运行，且不会读取或输出 API Key。
+本文档对应当前仓库的实际测试布局。它不引用历史 OpenSpec change、已删除的 Core 业务测试路径或未纳入仓库的证据文件。
 
-## Agent Execution
+## 命令级入口
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Session Conversation History | `packages/domain/src/agent-conversation.test.ts`；`apps/core/src/repositories.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/desktop/src/agent-history.test.ts` |
-| Text-Only Agent Turn | `apps/core/src/agent-coordinator.test.ts`；`scripts/verify-real-agent.mts` 普通中文与 Markdown 对话 |
-| Agent System Prompt Contract | `apps/core/src/context-builder.test.ts`；`apps/core/src/agent-runtime.test.ts` |
-| Recoverable Tool Feedback | `apps/core/src/agent-runtime.test.ts`；`apps/core/src/agent-runtime.integration.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Bounded Autonomous Loop | `apps/core/src/agent-runtime.test.ts`；`apps/core/src/agent-runtime.integration.test.ts` |
-| Post-Tool Completion Review | `apps/core/src/agent-runtime.test.ts`；`apps/core/src/agent-runtime.integration.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/desktop/e2e/packaged.spec.ts`；真实模型与 `example-host` 自包含最终答复断言 |
-| Just-in-Time Terminal Lease | `apps/core/src/agent-coordinator.test.ts`；`apps/core/src/tool-gateway.test.ts`；`apps/core/src/session-actor.test.ts` |
-| Configurable Context Budget | `apps/core/src/context-budget.test.ts`；`apps/core/src/context-builder.test.ts`；`apps/core/src/token-estimator.ts` |
-| Persisted Conversation Compaction | `apps/core/src/conversation-compactor.test.ts`；`apps/core/src/repositories.test.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Per-Turn Model Controls | `packages/domain/src/model-configuration.test.ts`；`apps/core/src/provider-adapters.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/desktop/e2e/workspace.spec.ts` |
-| Conversation Reset and Cancellation | `packages/domain/src/agent-conversation.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/desktop/e2e/workspace.spec.ts` |
-| Session-Bound Agent Task | `apps/core/src/agent-coordinator.test.ts`；`packages/protocol/src/tool-schemas.test.ts` |
-| Agent Concurrency Limits | `apps/core/src/agent-task-scheduler.test.ts`；`apps/core/src/performance-baseline.test.ts` |
-| Explicit Context Disclosure | `apps/core/src/context-builder.test.ts`；`apps/core/src/secret-protection.test.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Restricted Terminal Tools | `packages/protocol/src/tool-schemas.test.ts`；`apps/core/src/agent-runtime.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Goal-Oriented Tool Loop | `apps/core/src/agent-runtime.integration.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`scripts/verify-real-agent.mts` |
-| POSIX Shell Probe | `apps/core/src/shell-probe.test.ts`；`apps/core/src/command-executor.integration.test.ts`；真实 `example-host` POSIX E2E |
+| 命令                             | 覆盖范围                                       | 备注                                                |
+| -------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
+| `pnpm format:check`              | Prettier 格式                                  | 包含 apps、packages、scripts、docs 和根目录配置     |
+| `pnpm lint`                      | ESLint                                         | 全仓库 TypeScript/JavaScript                        |
+| `pnpm typecheck`                 | 各 workspace 的 TypeScript 检查                | 使用 `pnpm -r --if-present typecheck`               |
+| `pnpm test`                      | Vitest 单元、集成、协议和安全测试              | 排除 `e2e`，最大 worker 数为 1                      |
+| `pnpm verify`                    | 上述四项                                       | CI 的基础门槛                                       |
+| `pnpm test:e2e`                  | Playwright Renderer Mock 和条件式 Electron E2E | 单 worker；真实环境按条件跳过                       |
+| `pnpm smoke:core-package`        | 打包 Core Runtime                              | 需要先生成 `.packaging/core-runtime` 或安装包上下文 |
+| `pnpm smoke:maintenance-package` | 打包维护入口                                   | 校验固定 Node 与 maintenance CLI                    |
+| `pnpm test:installer`            | Windows 安装、升级、卸载生命周期               | 仅 Windows                                          |
 
-## Model Providers
+## 领域与协议
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Provider and Model Separation | `packages/domain/src/provider-model-separation.test.ts`；`packages/protocol/src/provider-model-separation.test.ts`；`apps/core/src/repositories.test.ts` |
-| Model Catalog Eligibility | `apps/core/src/model-catalog-service.test.ts`；`apps/core/src/core-request-router.provider.test.ts` |
-| Model Configuration Reference Integrity | `apps/core/src/model-catalog-service.test.ts`；`apps/core/src/repositories.test.ts` |
-| Provider Model Discovery | `apps/core/src/provider-model-discovery.test.ts`；`apps/core/src/provider-model-discovery-http.integration.test.ts` |
-| Quick Model ID Selection | `apps/core/src/model-catalog-service.test.ts`；`apps/desktop/e2e/workspace.spec.ts` |
-| Structured Tool Conversation Mapping | `apps/core/src/provider-adapters.test.ts`；`apps/core/src/model-adapter.test.ts`；`apps/core/src/tool-call-assembler.test.ts` |
-| Protocol-Safe Tool Names | `packages/protocol/src/tool-schemas.test.ts`；`apps/core/src/provider-adapters.test.ts` |
-| Model Validation Details | `apps/core/src/provider-validator.test.ts`；`apps/core/src/core-request-router.provider.test.ts`；真实模型 attempt/checkedAt/capability 证据 |
-| Context and Reasoning Configuration | `packages/domain/src/model-configuration.test.ts`；`apps/core/src/context-budget.test.ts`；`apps/core/src/provider-adapters.test.ts`；模型页 Playwright |
-| OpenAI Responses Support | `apps/core/src/provider-adapters.test.ts` |
-| OpenAI-Compatible Chat Completions Support | `apps/core/src/provider-adapters.test.ts`；`apps/core/src/provider-openai-http.integration.test.ts`；真实 `mimo-v2.5-pro` 验收 |
-| Anthropic Messages Support | `apps/core/src/provider-adapters.test.ts` |
-| Provider Capability Validation | `apps/core/src/provider-validator.test.ts`；`apps/core/src/provider-openai-http.integration.test.ts`；`scripts/verify-real-agent.mts` |
-| Normalized Model Events | `apps/core/src/model-adapter.test.ts`；`apps/core/src/tool-call-assembler.test.ts`；`apps/core/src/provider-adapters.test.ts` |
+| 能力                                     | 主要测试                                                                                                                                                                     |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session 状态、租约、方言和环境 epoch     | `packages/domain/src/session/session-state.test.ts`、`packages/domain/src/session/shared-session.test.ts`                                                                    |
+| Agent Conversation、Turn、Task 和 Driver | `packages/domain/src/agent/agent-conversation.test.ts`、`packages/domain/src/agent/agent-task.test.ts`、`packages/domain/src/module-contracts.test.ts`                       |
+| 精确审批授权和命令事务                   | `packages/domain/src/approval/approval-grant.test.ts`、`packages/domain/src/session/command-transaction.test.ts`、`packages/domain/src/session/command-hash.ts` 相关测试     |
+| Provider/Model 分离和配置不变量          | `packages/domain/src/provider-model-separation.test.ts`、`packages/domain/src/provider/provider-profile.test.ts`、`packages/domain/src/provider/model-configuration.test.ts` |
+| Tool Schema、Core API 和领域 Schema      | `packages/protocol/src/schemas/tool-schemas.test.ts`、`packages/protocol/src/core-api/core-api.test.ts`、`packages/protocol/src/schemas/domain-schemas.test.ts`              |
+| IPC 帧、协议版本和认证握手               | `packages/protocol/src/core-api/framing.test.ts`、`packages/protocol/src/core-api/version.test.ts`、`packages/protocol/src/core-api/handshake.test.ts`                       |
+| 包依赖方向和公共出口                     | `packages/domain/src/dependency-direction.test.ts`、`packages/domain/src/index.test.ts`、`packages/protocol/src/index.test.ts`                                               |
 
-## Terminal Sessions
+## Terminal Service
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Session Execution Dialect | `packages/domain/src/session-state.test.ts`；`apps/core/src/session-manager.test.ts`；`apps/desktop/e2e/workspace.spec.ts` |
-| ShellDriver Capability Probe | `apps/core/src/shell-driver.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/core/src/shell-probe.test.ts` |
-| PowerShell Command Transaction | `apps/core/src/shell-driver.test.ts`；`apps/core/src/command-executor.powershell.integration.test.ts` 对象输出/状态/流式/退出码/Ctrl+C；`apps/core/src/session-resource-service.powershell.integration.test.ts` |
-| Dynamic Local Runtime Paths | `apps/core/src/home-resolver.test.ts`；`apps/desktop/src/shell-locator.test.ts`；`apps/desktop/src/session-launch.test.ts` |
-| Default Home Launch | `apps/core/src/home-resolver.test.ts`；`apps/desktop/src/session-launch.test.ts`；`apps/desktop/e2e/packaged.spec.ts` |
-| Orthogonal Session State | `packages/domain/src/session-state.test.ts`；`apps/core/src/session-actor.test.ts` |
-| Exclusive Session Lease | `apps/core/src/session-actor.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/core/src/tool-gateway.test.ts` |
+| 能力                                     | 主要测试                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PTY、SessionActor、SessionManager 和重放 | `packages/terminal-service/src/shell/pty-adapter.test.ts`、`packages/terminal-service/src/session/session-actor.test.ts`、`packages/terminal-service/src/session/session-manager.test.ts`、`packages/terminal-service/src/session/session-replay.test.ts`                                                                                                                                                                         |
+| POSIX/PowerShell ShellDriver 和 Probe    | `packages/terminal-service/src/shell/shell-driver.test.ts`、`packages/terminal-service/src/shell/shell-probe.test.ts`、`packages/terminal-service/src/shell/environment-identification.test.ts`                                                                                                                                                                                                                                   |
+| 明文命令事务、退出码、流式输出和中断     | `packages/terminal-service/src/execution/command-executor.test.ts`、`packages/terminal-service/src/execution/command-executor.integration.test.ts`、`packages/terminal-service/src/execution/command-executor.powershell.integration.test.ts`、`packages/terminal-service/src/plaintext-protocol.e2e.test.ts`                                                                                                                     |
+| 交互检测和有界输出                       | `packages/terminal-service/src/execution/interaction-detector.test.ts`、`packages/terminal-service/src/execution/output-journal.test.ts`、`packages/terminal-service/src/execution/command-output-collector.test.ts`                                                                                                                                                                                                              |
+| 资源快照、解析和跨方言指标               | `packages/terminal-service/src/resources/session-resource-domain.test.ts`、`packages/terminal-service/src/resources/session-resource-parser.test.ts`、`packages/terminal-service/src/resources/session-resource-service.test.ts`、`packages/terminal-service/src/resources/session-resource-service.posix.integration.test.ts`、`packages/terminal-service/src/resources/session-resource-service.powershell.integration.test.ts` |
+| SSH/跳转场景的终端语义                   | `packages/terminal-service/src/ssh-hop-scenarios.test.ts`、`packages/terminal-service/src/unified-dispatch.integration.test.ts`                                                                                                                                                                                                                                                                                                   |
 
-## Local File Tools
+## Agent、策略与文件
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Dynamic Current User Home Root | `apps/core/src/home-resolver.test.ts`；`apps/core/src/local-file-service.test.ts` |
-| Canonical Relative Path Boundary | `apps/core/src/local-file-service.test.ts`；`apps/core/src/local-file-policy.test.ts`；`apps/core/src/authorization-policy.test.ts` |
-| Local File Listing | `apps/core/src/local-file-service.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Local File Search | `apps/core/src/local-file-service.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Local Text File Read | `apps/core/src/local-file-service.test.ts`；`apps/core/src/secret-protection.test.ts` |
-| Local File Write | `apps/core/src/local-file-service.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Local File Edit | `apps/core/src/local-file-service.test.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Local and Remote File Separation | `apps/core/src/local-file-service.test.ts`；`apps/core/src/context-builder.test.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| No Destructive Local File Tools | `packages/protocol/src/tool-schemas.test.ts`；`apps/core/src/tool-gateway.test.ts` |
+| 能力                                      | 主要测试                                                                                                                                                                                                                                                                         |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent Runtime 多轮、Tool Call、取消和挂起 | `packages/agent-service/src/runtime/agent-runtime.test.ts`、`packages/agent-service/src/runtime/agent-runtime.integration.test.ts`                                                                                                                                               |
+| 上下文预算、脱敏和对话压缩                | `packages/agent-service/src/context/context-builder.test.ts`、`packages/agent-service/src/context/context-budget.test.ts`、`packages/agent-service/src/context/conversation-compactor.test.ts`                                                                                   |
+| Tool Call 组装                            | `packages/agent-service/src/tools/tool-call-assembler.test.ts`                                                                                                                                                                                                                   |
+| Agent Coordinator、时间线、审批恢复       | `packages/application/src/agent/agent-coordinator.test.ts`、`packages/application/src/router/core-request-router.agent.test.ts`                                                                                                                                                  |
+| Tool Gateway、外部调用和任务调度          | `packages/platform-kernel/src/gateway/tool-gateway.test.ts`、`packages/platform-kernel/src/gateway/external-tool-pipeline.test.ts`、`packages/platform-kernel/src/gateway/core-tool-gateway-flow.test.ts`、`packages/platform-kernel/src/scheduler/agent-task-scheduler.test.ts` |
+| 权限模式、命令风险和 fail closed          | `packages/platform-kernel/src/policy/authorization-policy.test.ts`、`packages/platform-kernel/src/policy/local-file-policy.test.ts`、`packages/platform-kernel/src/policy/policy-engine.test.ts`、`packages/platform-kernel/src/gateway/static-execution-gate.test.ts`           |
+| 本机 home 路径和文件操作                  | `packages/tooling/src/files/local-file-service.test.ts`、`packages/infrastructure/src/paths/home-resolver.test.ts`                                                                                                                                                               |
+| 秘密检测、凭据存储和数据权限              | `packages/infrastructure/src/security/secret-protection.test.ts`、`packages/infrastructure/src/security/secret-store.test.ts`、`packages/infrastructure/src/security/data-security.test.ts`                                                                                      |
 
-## Terminal Safety and Audit
+## Provider、持久化与生命周期
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Local File Risk Classification | `apps/core/src/local-file-policy.test.ts`；`apps/core/src/authorization-policy.test.ts` |
-| Local File Approval Integrity | `packages/domain/src/approval-grant.test.ts`；`apps/core/src/approval-manager.test.ts`；`apps/core/src/tool-gateway.test.ts` |
-| Local File Audit Events | `apps/core/src/tool-gateway.test.ts`；`apps/core/src/audit-service.test.ts`；`apps/desktop/e2e/workspace.spec.ts` |
-| Conversation Permission Modes | `packages/domain/src/agent-conversation.test.ts`；`apps/core/src/authorization-policy.test.ts`；`apps/core/src/agent-coordinator.test.ts`；installed `apps/desktop/e2e/packaged.spec.ts` |
-| Cross-Dialect Terminal Command Risk | `apps/core/src/policy-engine.test.ts`；`apps/core/src/tool-gateway.test.ts`；真实 PowerShell ConPTY packaged 权限矩阵；`docs/evidence/powershell-permission-matrix.log` |
-| Non-Bypassable Boundaries | `apps/core/src/authorization-policy.test.ts`；`apps/core/src/local-file-service.test.ts`；`apps/core/src/tool-gateway.test.ts`；packaged home escape |
-| Permission Mode Audit | `apps/core/src/agent-coordinator.test.ts`；`apps/core/src/tool-gateway.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；packaged POSIX/PowerShell 权限矩阵与 SQLite 审计断言 |
-| Secret Redaction Before Disclosure | `apps/core/src/secret-protection.test.ts`；`apps/core/src/context-builder.test.ts`；`apps/core/src/local-file-service.test.ts` |
-| Structured Audit Events | `apps/core/src/audit-service.test.ts`；`apps/core/src/agent-coordinator.test.ts`；`apps/core/src/core-request-router.test.ts` |
-| Fail-Closed Authorization | `apps/core/src/policy-engine.test.ts`；`apps/core/src/authorization-policy.test.ts`；`apps/core/src/tool-gateway.test.ts` |
+| 能力                                      | 主要测试                                                                                                                                                                                                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 三种模型协议适配和事件归一化              | `packages/model-providers/src/adapter/provider-adapters.test.ts`、`packages/model-providers/src/adapter/model-adapter.test.ts`                                                                                                                 |
+| Provider 检测、模型发现和配置服务         | `packages/model-providers/src/adapter/provider-validator.test.ts`、`packages/model-providers/src/discovery/provider-model-discovery.test.ts`、`packages/model-providers/src/discovery/model-catalog-service.test.ts`                           |
+| Provider HTTP 集成                        | `packages/model-providers/src/discovery/provider-model-discovery-http.integration.test.ts`、`packages/model-providers/src/discovery/provider-openai-http.integration.test.ts`                                                                  |
+| SQLite Repository、迁移、备份和 retention | `packages/infrastructure/src/store/repositories.test.ts`、`packages/infrastructure/src/store/sqlite-store.test.ts`、`packages/infrastructure/src/migration-v7.test.ts`、`packages/infrastructure/src/store/retention.test.ts`                  |
+| Core IPC、Named Pipe 和生命周期           | `packages/infrastructure/src/ipc/core-ipc-server.test.ts`、`packages/infrastructure/src/ipc/named-pipe.test.ts`、`packages/infrastructure/src/lifecycle/core-lifecycle.test.ts`、`packages/infrastructure/src/lifecycle/upgrade-state.test.ts` |
+| Core Composition Root 和维护 CLI          | `apps/core/src/core-application.test.ts`、`apps/core/src/main-options.test.ts`、`apps/core/src/maintenance-cli.test.ts`                                                                                                                        |
 
-## Session Observability
+## Desktop 与 E2E
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Explicit Read-Only Resource Snapshot | `apps/core/src/session-resource-service.test.ts`；`apps/core/src/session-resource-service.powershell.integration.test.ts`；真实 `example-host` E2E |
-| Bounded Cross-Dialect Metrics | `apps/core/src/session-resource-parser.test.ts`；`apps/core/src/session-resource-domain.test.ts`；`apps/core/src/session-resource-service.test.ts` |
-| Resource Snapshot Audit | `apps/core/src/session-resource-service.test.ts`；真实 SSH 审计断言无 approval、无写操作 |
+| 能力                                            | 主要测试                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Preload、IPC 白名单、Core Supervisor 和安全窗口 | `apps/desktop/src/main/electron-security.test.ts`、`apps/desktop/src/main/desktop-core-bridge.test.ts`、`apps/desktop/src/main/core-supervisor.test.ts`、`apps/desktop/src/main/named-pipe-core-connector.test.ts`                                                                             |
+| Session 创建、Shell 发现和用户数据迁移          | `apps/desktop/src/renderer/session-launch.test.ts`、`apps/desktop/src/renderer/session-selection.test.ts`、`apps/desktop/src/main/user-data-migration.test.ts`                                                                                                                                 |
+| MCP 设置、端点、token 和工具翻译                | `apps/desktop/src/mcp/mcp-settings.test.ts`、`apps/desktop/src/mcp/mcp-controller.test.ts`、`apps/desktop/src/mcp/embedded-mcp-server.test.ts`                                                                                                                                                 |
+| ACP 设置、进程、权限和 Projection               | `apps/desktop/src/acp/acp-settings.test.ts`、`apps/desktop/src/acp/acp-controller.test.ts`                                                                                                                                                                                                     |
+| UI 时间线、Markdown、终端和中文文案             | `packages/ui-platform/src/agent/agent-history.test.ts`、`packages/ui-platform/src/agent/agent-timeline-state.test.ts`、`packages/ui-platform/src/markdown/markdown-content.test.tsx`、`packages/ui-platform/src/terminal/terminal-view.test.ts`、`packages/ui-platform/src/i18n/zh-cn.test.ts` |
+| Mock Renderer 工作区、Session tabs 和 UI 交互   | `apps/desktop/e2e/runtime-workspace.spec.ts`、`apps/desktop/e2e/workspace.spec.ts`、`apps/desktop/e2e/session-tabs.spec.ts`                                                                                                                                                                    |
+| 真实 Electron / Core / PTY                      | `apps/desktop/e2e/electron.spec.ts`、`apps/desktop/e2e/macos-session-lifecycle.spec.ts`、`apps/desktop/e2e/macos-runtime-failure.spec.ts`                                                                                                                                                      |
+| 打包应用、固定 Runtime、模型和 Local File Tool  | `apps/desktop/e2e/packaged.spec.ts`                                                                                                                                                                                                                                                            |
+| 真实 Provider 与 SSH 只读验收                   | `apps/desktop/e2e/real-environment.spec.ts`，仅在显式设置 `TERMINAL_AGENT_REAL_E2E=1` 等变量时运行                                                                                                                                                                                             |
 
-## Desktop Terminal
+## 覆盖边界
 
-| Requirement | 自动化或验收证据 |
-| --- | --- |
-| Simplified Chinese Product UI | `apps/desktop/src/zh-cn.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；中文视觉证据 |
-| Shell Availability and Dialect Controls | `apps/desktop/src/shell-locator.test.ts`；`apps/desktop/src/session-launch.test.ts`；工作区 Playwright |
-| Dedicated Model Management Page | `apps/desktop/src/model-management-page.tsx`；`apps/desktop/e2e/workspace.spec.ts` |
-| Model Discovery Workflow | `apps/desktop/e2e/workspace.spec.ts`；`apps/core/src/provider-model-discovery-http.integration.test.ts` |
-| Model Test Feedback | `apps/desktop/src/zh-cn.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；真实模型检测 |
-| Local File Tool Activity | `apps/desktop/e2e/workspace.spec.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Adaptive Workspace Theme | `apps/desktop/e2e/workspace.spec.ts`；`docs/evidence/desktop-1440x900.png`；`docs/evidence/mobile-390x844.png` |
-| Markdown Agent Timeline | `apps/desktop/src/agent-history.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；真实 Markdown 对话 |
-| Composer Runtime Controls | `apps/desktop/e2e/workspace.spec.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Simplified Session Dialog | `apps/desktop/src/session-launch.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；`apps/desktop/e2e/packaged.spec.ts` |
-| Session Resource View | `apps/desktop/e2e/workspace.spec.ts`；`apps/desktop/e2e/electron.spec.ts`；真实 SSH 截图 |
-| Top Session Tabs and Collapsible Right Panel | `apps/desktop/e2e/workspace.spec.ts`；桌面、最小与移动视觉证据 |
-| Launch Profiles | `apps/desktop/src/session-launch.test.ts`；真实 PowerShell ConPTY E2E |
-| Session-Scoped Agent Panel | `apps/desktop/e2e/workspace.spec.ts`；`apps/core/src/agent-coordinator.test.ts` |
-| Visible Failure States | `apps/desktop/src/zh-cn.test.ts`；`apps/desktop/e2e/workspace.spec.ts`；`apps/desktop/src/core-supervisor.test.ts` |
-
-## 基线 Session 与发布能力
-
-| 范围 | 自动化或验收证据 |
-| --- | --- |
-| Core-Owned PTY、顺序输出、replay、resize | `apps/core/src/pty-adapter.test.ts`；`apps/core/src/output-journal.test.ts`；`apps/core/src/session-replay.test.ts`；Electron reload E2E |
-| UI detach、Core restart、资源上限 | `apps/core/src/core-lifecycle.test.ts`；`apps/core/src/session-recovery.test.ts`；`apps/core/src/performance-baseline.test.ts` |
-| Renderer、IPC、凭据与数据隔离 | `apps/desktop/src/electron-security.test.ts`；`apps/core/src/core-ipc-server.test.ts`；`apps/core/src/data-security.test.ts`；`apps/core/src/secret-store.test.ts` |
-| schema v4 -> v8 迁移、备份和回滚 | `apps/core/src/repositories.test.ts`；`apps/core/src/migration-v7.test.ts`；`apps/core/src/sqlite-store.test.ts`；`apps/core/src/maintenance-cli.test.ts`；真实迁移备份 |
-| 固定 Node Runtime 与原生模块 | `scripts/stage-core-runtime.mjs`；`pnpm smoke:core-package` |
-| 升级活动 Session 阻断 | `apps/core/src/upgrade-state.test.ts`；`build/installer.nsh`；`scripts/verify-installer-lifecycle.ps1` 验证退出码 32 |
-| 打包桌面与真实 ConPTY | `apps/desktop/e2e/packaged.spec.ts`；`scripts/verify-installer-lifecycle.ps1` 从静默安装目录复跑 2/2 |
-| 备份、回滚与卸载保留 | `scripts/smoke-packaged-maintenance.ts`；`scripts/verify-installer-lifecycle.ps1` |
-
-## 真实只读验收
-
-| 验收 | 结果与证据 |
-| --- | --- |
-| 用户已保存模型配置 | `mimo-v2.5-pro` 检测为 available，streaming=true、toolCalls=true；`docs/evidence/real-agent-session.log`；密钥始终留在平台凭据存储 |
-| 无 Tool 普通对话 | `scripts/verify-real-agent.mts` 完成中文一句话和 Markdown 输出，未获取 terminal lease |
-| 自主 Tool Loop | 两次 `terminal_execute` 后完成独立复核，`Get-Date` 与 `Get-Location` Tool Result 均为 `completed/read_only/exitCode=0`，最终答复自包含 |
-| Electron -> SSH `example-host` | `apps/desktop/e2e/real-environment.spec.ts` 通过已有 SSH 配置连接，不创建主机资产对象 |
-| 远端只读命令 | 仅执行 `uname -a`、`uptime`、`free -b`、`df -P`、`cat /proc/loadavg`、`cat /proc/meminfo`、`cat /proc/net/dev` |
-| 风险与审批 | 七条命令各执行一次，全部 `risk=read_only`、`requiresApproval=true`，由验收流程逐条批准后 exitCode 0；Approval 请求与批准各 7 次，本机写 Tool 计数为 0，无远端写操作 |
-| 完成性复核 | 候选文本不进入复核上下文；最终答复不得引用隐藏候选，并包含 Linux、负载、容量、磁盘百分比等实际证据 |
-| 资源快照 | CPU、内存、磁盘、网络、host、OS、uptime 均有可确认值；日志 `docs/evidence/example-host-readonly-e2e.log`；截图 `docs/evidence/example-host-readonly-1440x900.png` |
-
-最终命令、测试数量、安装生命周期与 SHA-256 记录在 [发布报告](release-report.md)。
+- 默认 CI 不依赖真实 Provider、SSH、`opencode` 或用户凭据。
+- Electron、打包和安装器测试依赖对应平台；不适用的平台会跳过，而不是伪造成功。
+- `pnpm test:e2e` 的 WebServer 是 Mock Renderer；需要验证真实 Core/PTY 时运行 Electron 或 packaged 测试。
+- 通过测试不等于远端环境安全。执行真实验收时仍需使用隔离用户数据目录、最小权限凭据和固定只读命令。
