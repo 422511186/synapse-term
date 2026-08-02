@@ -1,0 +1,30 @@
+{
+  "name": "@terminal-agent/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "vite build --config vite.config.ts",
+    "spike:native": "node spikes/native-runtime.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@napi-rs/keyring": "^1.3.0",
+    "@terminal-agent/domain": "workspace:*",
+    "@terminal-agent/protocol": "workspace:*",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "openai": "^6.49.0",
+    "web-tree-sitter": "^0.26.11"
+  },
+  "devDependencies": {
+    "@terminal-agent/test-kit": "workspace:*",
+    "vite": "^8.1.5"
+  }
+}

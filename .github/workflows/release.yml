@@ -1,0 +1,164 @@
+name: 发布 Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24.12.0
+  PNPM_VERSION: 10.28.1
+
+jobs:
+  verify:
+    name: 发布前验证
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 运行发布前验证
+        run: pnpm verify
+
+  package-windows:
+    name: 发布 Windows x64
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装 Electron 运行时二进制
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: 构建 Windows 安装包
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm package:win
+
+      - name: 验证 Core 包
+        run: pnpm smoke:core-package
+
+      - name: 验证维护流程包
+        run: pnpm smoke:maintenance-package
+
+      - name: 上传 Windows Release 资产
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapse-term-windows-x64
+          path: release/Terminal-Agent-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  package-macos:
+    name: 发布 macOS arm64
+    needs: verify
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装 Electron 运行时二进制
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: 构建 macOS DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm package:mac
+
+      - name: 验证 Core 包
+        run: pnpm smoke:core-package
+
+      - name: 验证维护流程包
+        run: pnpm smoke:maintenance-package
+
+      - name: 上传 macOS Release 资产
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapse-term-macos-arm64
+          path: release/Terminal-Agent-*.dmg
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: 创建 GitHub Release
+    needs:
+      - package-windows
+      - package-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - name: 下载 Windows 和 macOS 产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: synapse-term-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: 生成 SHA256 校验文件
+        working-directory: release-assets
+        run: sha256sum *.exe *.dmg > SHA256SUMS.txt
+
+      - name: 创建正式 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Synapse Term $GITHUB_REF_NAME" \
+            --generate-notes

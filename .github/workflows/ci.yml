@@ -1,0 +1,153 @@
+name: 持续集成
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24.12.0
+  PNPM_VERSION: 10.28.1
+
+jobs:
+  verify:
+    name: 验证
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 运行格式、Lint、类型和单元测试
+        run: pnpm verify
+
+      - name: 安装 Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: 运行浏览器 E2E
+        run: pnpm test:e2e
+
+      - name: 上传 Playwright 失败报告
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  package-windows:
+    name: 构建 Windows x64
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装 Electron 运行时二进制
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: 构建 Windows 安装包
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm package:win
+
+      - name: 验证 Core 包
+        run: pnpm smoke:core-package
+
+      - name: 验证维护流程包
+        run: pnpm smoke:maintenance-package
+
+      - name: 上传 Windows 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapse-term-windows-x64
+          path: release/Terminal-Agent-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  package-macos:
+    name: 构建 macOS arm64
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: verify
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装 Electron 运行时二进制
+        run: node apps/desktop/node_modules/electron/install.js
+
+      - name: 构建 macOS DMG
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: pnpm package:mac
+
+      - name: 验证 Core 包
+        run: pnpm smoke:core-package
+
+      - name: 验证维护流程包
+        run: pnpm smoke:maintenance-package
+
+      - name: 上传 macOS 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapse-term-macos-arm64
+          path: release/Terminal-Agent-*.dmg
+          if-no-files-found: error
+          retention-days: 7

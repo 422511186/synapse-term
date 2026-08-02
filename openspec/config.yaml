@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  本项目的 OpenSpec artifacts 使用“兼容中文”写法：
+  - 面向人的正文内容使用简体中文，包括业务背景、问题描述、设计取舍、风险说明、任务描述和影响范围。
+  - OpenSpec CLI 或 schema 解析依赖的 Markdown 标题、前缀和规范关键字保持英文，不翻译成中文。
+  - 尤其保留 `## Why`、`## What Changes`、`## Capabilities`、`## Impact`、`## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements`、`## Purpose`、`## Requirements`、`### Requirement:`、`#### Scenario:`、`MUST`、`SHALL`、`WHEN`、`THEN`、`AND`。
+  - 目标是让文档便于中文团队阅读，同时继续兼容 `openspec status`、`openspec validate`、`openspec archive` 和 `/opsx:apply`。
+
+  本项目在显式 OpenSpec 流程中与 Superpowers 配合使用：
+  - 用户显式使用 `/opsx:explore`、`/opsx:propose`、`/opsx:apply`，或明确指定某个 OpenSpec change 时，OpenSpec 接管变更生命周期。
+  - `openspec/changes/<change>/proposal.md`、`design.md`、`specs/`、`tasks.md` 是该变更的唯一事实源。
+  - 有活跃 OpenSpec change 时，不要为同一件事再生成独立的 `docs/superpowers/specs/...` 或 `docs/superpowers/plans/...`，避免 proposal/design/tasks 双轨分叉。
+  - 在 `/opsx:apply` 实现阶段，OpenSpec 只负责提供任务账本；工程纪律仍必须使用 Superpowers：写功能或修 bug 前使用 `superpowers:test-driven-development`，遇到失败、异常或根因不明的问题时使用 `superpowers:systematic-debugging`，声称完成、修复或通过前使用 `superpowers:verification-before-completion`，需要代码审查或处理审查意见时使用对应的 Superpowers review skill。
+  - 简单理解：OpenSpec 管变更生命周期和任务清单，Superpowers 管 TDD、调试、验证和审查纪律。
+
+rules:
+  proposal:
+    - 保留模板要求的英文标题 `## Why`、`## What Changes`、`## Capabilities`、`## Impact`，标题下正文使用简体中文。
+    - Capabilities 中的能力标识仍使用 kebab-case 英文或拼音式稳定标识，说明文字使用简体中文。
+    - 不要把 OpenSpec 结构标题翻译为 `为什么`、`变更内容`、`能力` 或类似中文标题。
+  specs:
+    - delta spec 必须保留英文 delta 标题：`## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements`。
+    - 每条需求必须保留 `### Requirement:` 前缀，每个场景必须保留 `#### Scenario:` 前缀；前缀后可以使用英文稳定名称，需求正文和场景说明使用简体中文。
+    - 规范性句子必须继续包含 `MUST` 或 `SHALL`，场景步骤必须继续使用 `WHEN`、`THEN` 和可选 `AND` 标记。
+    - 不要把 `Requirement`、`Scenario`、`MUST`、`SHALL`、`WHEN`、`THEN` 翻译成中文。
+  design:
+    - 保留设计模板的英文 Markdown 章节标题；章节内容、背景、目标、决策、风险和迁移说明使用简体中文。
+  tasks:
+    - 保留可被 apply 阶段解析的 checkbox 格式 `- [ ] X.Y ...` 或 `- [x] X.Y ...`。
+    - 任务分组标题和任务描述使用简体中文，但命令、路径、标识符和测试名保持原文。
+    - 不要要求为同一个 OpenSpec change 额外生成 `docs/superpowers/plans/...`；如需体现工程纪律，应在 OpenSpec tasks 中直接安排测试、实现和验证步骤。
