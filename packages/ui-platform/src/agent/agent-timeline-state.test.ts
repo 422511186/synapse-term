@@ -170,6 +170,49 @@ describe('agent timeline state', () => {
     expect(merged).toContainEqual(streaming);
   });
 
+  it('keeps a newer streamed assistant update when history only contains its prefix', () => {
+    const streaming = item({
+      id: 'assistant-live',
+      kind: 'assistant',
+      status: 'streaming',
+      text: '先检查主机。发现缺少网络证据。',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+    });
+    const persistedPrefix = item({
+      id: 'history-assistant-1',
+      kind: 'assistant',
+      status: 'running',
+      text: '先检查主机。',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+    });
+
+    expect(mergeHydratedTimeline([streaming], 'session-1', [persistedPrefix])).toEqual([streaming]);
+  });
+
+  it('does not let a stale hydrated running tool call replace a live terminal state', () => {
+    const live = item({
+      id: 'tool-call-call-live',
+      kind: 'tool',
+      toolRole: 'call',
+      toolCallId: 'call-live',
+      status: 'completed',
+      text: 'terminal_execute\n{"command":"tasklist.exe"}',
+      toolResult: '{"ok":true,"result":{"status":"completed"}}',
+    });
+    const staleHistory = item({
+      id: 'history-call-live',
+      kind: 'tool',
+      toolRole: 'call',
+      toolCallId: 'call-live',
+      status: 'running',
+      text: live.text,
+    });
+
+    expect(mergeHydratedTimeline([live], 'session-1', [staleHistory])).toEqual([live]);
+  });
+
   it('preserves an interrupted command while history catches up', () => {
     const interrupted = item({
       id: 'transaction-1',

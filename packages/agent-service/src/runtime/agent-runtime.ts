@@ -452,6 +452,17 @@ export class AgentRuntime {
         );
       }
 
+      // Once a tool has been used, model events are buffered so a speculative
+      // completion candidate is not shown before the completion review. A
+      // turn that also contains tool calls is different: its text is the
+      // model's progress/update message and should remain visible in the
+      // Agent timeline before the tools run.
+      if (deferModelEvents) {
+        for (const event of modelEvents) {
+          if (event.type === 'text_delta') this.#options.onModelEvent?.(event);
+        }
+      }
+
       if (turnText.length > 0 && !deferModelEvents) {
         const item = { role: 'assistant' as const, content: turnText };
         items.push(item);

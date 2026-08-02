@@ -65,6 +65,34 @@ describe('ShellLocator', () => {
       });
     });
 
+    it('keeps Windows shell startup profiles available', () => {
+      const gitCmd = win32.join('D:\\Portable', 'Git', 'cmd');
+      const gitBash = win32.join('D:\\Portable', 'Git', 'bin', 'bash.exe');
+      const systemRoot = 'R:\\Windows';
+      const powershell = win32.join(
+        systemRoot,
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      );
+      const wsl = win32.join(systemRoot, 'System32', 'wsl.exe');
+      const existing = new Set([win32.join(gitCmd, 'git.exe'), gitBash, powershell, wsl]);
+      const locator = new ShellLocator({
+        environment: { PATH: gitCmd, SystemRoot: systemRoot },
+        exists: (p) => existing.has(p),
+        registryInstallPaths: () => [],
+      });
+
+      expect(locator.list()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'bash', args: ['--login', '-i'] }),
+          expect.objectContaining({ kind: 'powershell', args: ['-NoLogo'] }),
+          expect.objectContaining({ kind: 'wsl', args: [] }),
+        ]),
+      );
+    });
+
     it('reports unavailable shells without inventing executable paths', () => {
       const locator = new ShellLocator({
         environment: {},
@@ -86,6 +114,30 @@ describe('ShellLocator', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('macOS shells', () => {
+    it('starts zsh as a login interactive shell so GUI sessions load user PATH', () => {
+      const locator = new ShellLocator({
+        environment: {},
+        exists: (p) => p === '/bin/zsh',
+        registryInstallPaths: () => [],
+      });
+
+      expect(locator.list().find((shell) => shell.kind === 'zsh')).toMatchObject({
+        args: ['-l', '-i'],
+      });
+    });
+
+    it('starts bash as a login interactive shell so GUI sessions load user PATH', () => {
+      const locator = new ShellLocator({
+        environment: {},
+        exists: (p) => p === '/bin/bash',
+        registryInstallPaths: () => [],
+      });
+
+      expect(locator.list().find((shell) => shell.kind === 'bash')).toMatchObject({
+        args: ['-l', '-i'],
+      });
+    });
+
     it('discovers zsh and bash on macOS', () => {
       const locator = new ShellLocator({
         environment: {},

@@ -122,6 +122,7 @@ describe('AgentRuntime', () => {
         })),
     ).toEqual([
       { text: '先检查主机。', replaceAssistantText: false },
+      { text: '发现缺少网络证据。', replaceAssistantText: false },
       { text: '已验证主机与网络诊断均完成。', replaceAssistantText: true },
     ]);
     expect(persistedItems.filter((item) => 'role' in item && item.role === 'assistant')).toEqual([

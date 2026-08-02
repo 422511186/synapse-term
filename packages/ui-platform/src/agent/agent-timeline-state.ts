@@ -331,7 +331,14 @@ function mergeSessionTimeline(
     if (hydratedIndex !== undefined) {
       const replacement = hydrated[hydratedIndex];
       if (replacement !== undefined && !emittedHydratedIds.has(replacement.id)) {
-        entries.push({ item: replacement, hydratedIndex });
+        if (
+          shouldRetainNewerAssistantUpdate(item, replacement) ||
+          shouldRetainNewerLiveState(item, replacement)
+        ) {
+          entries.push({ item });
+        } else {
+          entries.push({ item: replacement, hydratedIndex });
+        }
         emittedHydratedIds.add(replacement.id);
       }
       continue;
@@ -346,6 +353,30 @@ function mergeSessionTimeline(
   });
 
   return entries.map(({ item }) => item);
+}
+
+function shouldRetainNewerAssistantUpdate(
+  live: AgentTimelineItem,
+  hydrated: AgentTimelineItem,
+): boolean {
+  return (
+    live.kind === 'assistant' &&
+    live.status === 'streaming' &&
+    hydrated.kind === 'assistant' &&
+    live.turnId !== undefined &&
+    live.turnId === hydrated.turnId &&
+    live.text.length > hydrated.text.length &&
+    live.text.startsWith(hydrated.text)
+  );
+}
+
+function shouldRetainNewerLiveState(live: AgentTimelineItem, hydrated: AgentTimelineItem): boolean {
+  if (live.kind === 'tool' && live.toolResult !== undefined && hydrated.toolResult === undefined) {
+    return true;
+  }
+  const liveStatus = timelineItemStatus(live);
+  const hydratedStatus = timelineItemStatus(hydrated);
+  return isTerminalTimelineStatus(liveStatus) && !isTerminalTimelineStatus(hydratedStatus);
 }
 
 function findHydratedIndex(

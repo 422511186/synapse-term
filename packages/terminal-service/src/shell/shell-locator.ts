@@ -74,13 +74,7 @@ export class ShellLocator {
         source: 'environment',
       });
     }
-    return descriptor(
-      'bash',
-      'Git Bash',
-      ['--noprofile', '--norc', '-i'],
-      'posix',
-      this.#find(candidates),
-    );
+    return descriptor('bash', 'Git Bash', ['--login', '-i'], 'posix', this.#find(candidates));
   }
 
   #powerShell(): LocalShellDescriptor {
@@ -128,14 +122,14 @@ export class ShellLocator {
       descriptor(
         'zsh',
         'Zsh',
-        ['--no-rcs'],
+        ['-l', '-i'],
         'posix',
         zsh && this.#exists(zsh.path) ? zsh : undefined,
       ),
       descriptor(
         'bash',
         'Bash',
-        ['--noprofile', '--norc', '-i'],
+        ['-l', '-i'],
         'posix',
         bash && this.#exists(bash.path) ? bash : undefined,
       ),
