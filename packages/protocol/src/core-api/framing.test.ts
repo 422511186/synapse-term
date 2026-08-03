@@ -5,6 +5,7 @@ import {
   FramingError,
   encodeControlFrame,
   encodeTerminalOutputFrame,
+  splitUtf8Text,
 } from './framing.js';
 
 describe('IPC framing', () => {
@@ -64,6 +65,40 @@ describe('IPC framing', () => {
       expect(error).toBeInstanceOf(FramingError);
       expect(error).toMatchObject({ code: 'frame_too_large' });
     }
+  });
+
+  it('rejects an oversized terminal output frame before writing it', () => {
+    expect(() =>
+      encodeTerminalOutputFrame({
+        sessionId: 'session-1',
+        sequence: 1,
+        data: Buffer.alloc(8 * 1024 * 1024),
+      }),
+    ).toThrow(FramingError);
+  });
+
+  it('rejects an oversized control frame before writing it', () => {
+    expect(() =>
+      encodeControlFrame({
+        kind: 'request',
+        id: 'request-large',
+        protocolVersion: { major: 1, minor: 0 },
+        sentAt: '2026-07-27T15:00:00.000Z',
+        method: 'core.status',
+        payload: { output: 'x'.repeat(8 * 1024 * 1024) },
+      }),
+    ).toThrow(FramingError);
+  });
+
+  it('splits UTF-8 text without changing its encoded bytes', () => {
+    const value = 'abc你好吗'.repeat(8);
+    const chunks = splitUtf8Text(value, 8);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk, 'utf8') <= 8)).toBe(true);
+    expect(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk, 'utf8')))).toEqual(
+      Buffer.from(value, 'utf8'),
+    );
   });
 
   it('signals transport backpressure while an incomplete frame crosses the pause boundary', () => {

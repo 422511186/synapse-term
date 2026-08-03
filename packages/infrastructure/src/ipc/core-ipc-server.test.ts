@@ -457,4 +457,54 @@ describe('CoreIpcServer', () => {
       await transport.close();
     }
   });
+
+  it('returns a bounded error for an oversized result and keeps the connection open', async () => {
+    const token = 'local-auth-token-with-at-least-32-bytes';
+    let statusCalls = 0;
+    const ipc = new CoreIpcServer({
+      coreInstanceId: 'core-1',
+      token,
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      handleRequest: async (method) => {
+        if (method !== 'core.status') return {};
+        statusCalls += 1;
+        return statusCalls === 1 ? { output: 'x'.repeat(8 * 1024 * 1024) } : { connected: true };
+      },
+    });
+    const transport = new NamedPipeServer();
+    const pipeName = buildUserScopedPipeName(`ipc-${randomUUID()}`, 'current-user');
+    await transport.listen(pipeName, (socket) => ipc.accept(socket));
+    const socket = createConnection(pipeName);
+    await once(socket, 'connect');
+    const inbox = new FrameInbox(socket);
+
+    try {
+      await authenticateClient(socket, inbox, token);
+      socket.write(encodeControlFrame(request('large', 'core.status', {})));
+      await expect(inbox.next()).resolves.toMatchObject({
+        kind: 'control',
+        envelope: {
+          kind: 'response',
+          requestId: 'large',
+          ok: false,
+          error: { code: 'resource_exhausted' },
+        },
+      });
+
+      socket.write(encodeControlFrame(request('status', 'core.status', {})));
+      await expect(inbox.next()).resolves.toMatchObject({
+        kind: 'control',
+        envelope: {
+          kind: 'response',
+          requestId: 'status',
+          ok: true,
+          result: { connected: true },
+        },
+      });
+    } finally {
+      socket.destroy();
+      await ipc.close();
+      await transport.close();
+    }
+  });
 });

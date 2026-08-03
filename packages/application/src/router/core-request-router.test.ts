@@ -9,6 +9,7 @@ import { CoreRequestRouter } from './core-request-router.js';
 import { OutputJournal } from '@synapse-term/terminal-service';
 import { SessionManager } from '@synapse-term/terminal-service';
 import { SqliteStore } from '@synapse-term/infrastructure';
+import { MAX_TERMINAL_OUTPUT_CHUNK_BYTES, MAX_TERMINAL_REPLAY_BYTES } from '@synapse-term/protocol';
 
 class FakeSpawner implements PtySpawner {
   readonly ptys: FakePty[] = [];
@@ -192,6 +193,52 @@ describe('CoreRequestRouter terminal methods', () => {
       expect(replay).toMatchObject({
         events: [{ sequence: 1, data: 'early prompt$ ' }],
       });
+    });
+  });
+
+  it('splits large PTY output into ordered events and paged replay', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const spawner = new FakeSpawner();
+      const journal = new OutputJournal();
+      const sessions = new SessionManager(spawner);
+      const outputs: Array<{ sessionId: string; sequence: number; data: string }> = [];
+      const router = new CoreRequestRouter({
+        sessions,
+        journal,
+        repositories,
+        emitTerminalOutput: (event) => outputs.push(event),
+      });
+
+      const created = await router.handle('session.create', launch, 'connection-1');
+      const sessionId = (created as { id: string }).id;
+      const pty = spawner.ptys[0]!;
+      const largeOutput = '界'.repeat(
+        Math.ceil((MAX_TERMINAL_REPLAY_BYTES + MAX_TERMINAL_OUTPUT_CHUNK_BYTES + 1) / 3),
+      );
+      pty.emitData(largeOutput);
+      await router.idle();
+
+      expect(outputs.length).toBeGreaterThan(1);
+      expect(outputs.map((event) => event.sequence)).toEqual(outputs.map((_, index) => index + 1));
+      expect(outputs.map((event) => event.data).join('')).toBe(largeOutput);
+      expect(
+        outputs.every(
+          (event) => Buffer.byteLength(event.data, 'utf8') <= MAX_TERMINAL_OUTPUT_CHUNK_BYTES,
+        ),
+      ).toBe(true);
+
+      const replay = await router.handle(
+        'terminal.replay',
+        { sessionId, afterSequence: 0 },
+        'connection-1',
+      );
+      expect(replay).toMatchObject({ hasMore: true });
+      expect((replay as { nextAfterSequence: number }).nextAfterSequence).toBeGreaterThan(0);
+      await router.closeAll();
+      await store.close();
     });
   });
 });

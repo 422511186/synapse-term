@@ -29,6 +29,8 @@ export interface TerminalReplay {
   events: Array<{ sequence: number; data: string }>;
   oldestSequence?: number;
   nextSequence: number;
+  hasMore?: boolean;
+  nextAfterSequence?: number;
 }
 
 export interface AgentTimelineItem {

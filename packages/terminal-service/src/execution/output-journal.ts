@@ -18,6 +18,8 @@ export interface JournalReadResult {
   historyGap: boolean;
   oldestSequence: number | undefined;
   nextSequence: number;
+  hasMore: boolean;
+  nextAfterSequence: number;
 }
 
 export interface OutputJournalOptions {
@@ -94,11 +96,26 @@ export class OutputJournal {
     sessionId: string,
     afterSequence: number,
     limit = Number.MAX_SAFE_INTEGER,
+    maxBytes = Number.MAX_SAFE_INTEGER,
   ): JournalReadResult {
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new RangeError('replay limit must be a positive safe integer');
+    }
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+      throw new RangeError('replay maxBytes must be a positive safe integer');
+    }
     const buffer = this.#getSession(sessionId);
     const available = buffer.events.filter((event) => event.sequence > afterSequence);
-    const events = available.slice(0, limit).map((event) => this.#cloneEvent(event));
+    const events: JournalEvent[] = [];
+    let selectedBytes = 0;
+    for (const event of available) {
+      if (events.length >= limit) break;
+      if (events.length > 0 && selectedBytes + event.data.byteLength > maxBytes) break;
+      events.push(this.#cloneEvent(event));
+      selectedBytes += event.data.byteLength;
+    }
     const oldestSequence = buffer.events[0]?.sequence;
+    const nextAfterSequence = events.at(-1)?.sequence ?? afterSequence;
     return {
       events,
       historyGap:
@@ -107,6 +124,8 @@ export class OutputJournal {
           : buffer.nextSequence > afterSequence + 1,
       oldestSequence,
       nextSequence: buffer.nextSequence,
+      hasMore: available.some((event) => event.sequence > nextAfterSequence),
+      nextAfterSequence,
     };
   }
 
