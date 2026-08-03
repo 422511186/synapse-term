@@ -35,7 +35,9 @@ export class ConversationCompactor {
 
     const turns = groupByTurn(remaining);
     const kept: ModelItem[][] = [];
-    let keptTokens = 0;
+    // H-11: keptTokens 初始值计入已有摘要的 token 数，使 while 循环在已有摘要
+    // 本身已超阈值时正确退出（不把全部新 turn 都放入 kept）。
+    let keptTokens = estimateModelItemsTokens(existingSummary);
     while (turns.length > 0) {
       const candidate = turns.at(-1)!;
       const candidateTokens = estimateModelItemsTokens(candidate.map(modelItemToInput));
@@ -43,8 +45,31 @@ export class ConversationCompactor {
       kept.unshift(turns.pop()!);
       keptTokens += candidateTokens;
     }
-    const compactedItems = turns.flat();
-    if (compactedItems.length === 0) return { history: [...existingSummary, ...exact] };
+    let compactedItems = turns.flat();
+    // H-11: 当 compactedItems 为空（所有新 turn 都 fit target）但已有摘要本身超阈值时，
+    // 强制把 kept 最早的 turn 移入 compactedItems 参与重新摘要，避免返回超限历史。
+    if (compactedItems.length === 0 && kept.length > 0) {
+      const moved = kept.shift()!;
+      compactedItems = moved;
+    }
+    if (compactedItems.length === 0) {
+      // 极端情况：无任何新条目可压缩，但已有摘要仍超阈值。
+      // 将已有摘要本身作为唯一内容重新摘要，产出更短的摘要。
+      const summary = summarizeItems(input.existing?.summary, [], this.#redactor);
+      const compaction: ConversationCompaction = {
+        id: this.#idFactory(),
+        conversationId: input.conversationId,
+        throughSequence: input.existing?.throughSequence ?? 0,
+        summary,
+        sourceItemCount: input.existing?.sourceItemCount ?? 0,
+        estimatedTokensBefore: estimateModelItemsTokens(existingSummary),
+        createdAt: input.createdAt,
+      };
+      return {
+        history: [{ role: 'system', content: `对话摘要：\n${summary}` }],
+        compaction,
+      };
+    }
     const throughSequence = compactedItems.at(-1)!.sequence;
     const summary = summarizeItems(input.existing?.summary, compactedItems, this.#redactor);
     const compaction: ConversationCompaction = {

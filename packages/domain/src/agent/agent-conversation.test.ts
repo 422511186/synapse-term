@@ -98,7 +98,7 @@ describe('agent conversation domain', () => {
     });
   });
 
-  it('defaults new turns to low reasoning effort', () => {
+  it('defaults new turns to the model default reasoning effort', () => {
     const turn = createAgentTurn({
       id: 'turn-default-reasoning',
       conversationId: 'conversation-1',
@@ -108,7 +108,7 @@ describe('agent conversation domain', () => {
       userMessage: '检查服务',
     });
 
-    expect(turn.reasoningEffort).toBe('low');
+    expect(turn.reasoningEffort).toBe(modelSelection.defaultReasoningEffort);
   });
 
   it('creates external driver turns without a model selection or reasoning effort', () => {

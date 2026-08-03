@@ -52,7 +52,10 @@ export function PendingButton({
   const handleClick = (): void => {
     if (busy || disabled) return;
     setInternalPhase('busy');
-    void Promise.resolve(onClick())
+    // 用 Promise.resolve().then(...) 而非 Promise.resolve(onClick())：
+    // 后者会在 .then 链接管前先求值 onClick()，若 onClick 同步抛出，异常逃逸出 .catch。
+    void Promise.resolve()
+      .then(() => onClick())
       .then(() => {
         setInternalPhase('success');
         revertTimer.current = globalThis.setTimeout(() => {
