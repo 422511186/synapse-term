@@ -72,16 +72,42 @@ export class NodeCoreProcessLauncher {
     }
 
     await new Promise<void>((resolve) => {
+      // 声明必须位于 finish 之前：finish 闭包引用 sigkillTimer，若在声明前被调用
+      // （例如子进程在监听器注册前已退出）会触发 TDZ ReferenceError。
+      let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (): void => {
         child.off('exit', finish);
         child.off('error', finish);
+        if (sigkillTimer !== undefined) clearTimeout(sigkillTimer);
         if (this.#child === child) this.#child = undefined;
         resolve();
+      };
+      // SIGTERM 升级 SIGKILL：子进程忽略 SIGTERM 或事件循环卡死时，强制终止以避免 stop() 永久挂起。
+      // 使用与优雅超时相同的窗口（至少 1s）作为 SIGKILL 升级阈值。
+      const escalationMs = Math.max(this.#gracefulStopTimeoutMs, 1_000);
+      const scheduleSigkill = (): void => {
+        sigkillTimer = setTimeout(() => {
+          if (child.exitCode === null && !child.killed) {
+            try {
+              child.kill('SIGKILL');
+            } catch {
+              /* ignore — 进程可能已退出 */
+            }
+          }
+        }, escalationMs);
+        sigkillTimer.unref?.();
       };
       child.once('exit', finish);
       child.once('error', finish);
       if (child.exitCode !== null || child.killed) finish();
-      else child.kill();
+      else {
+        try {
+          child.kill();
+        } catch {
+          /* ignore — 进程可能已退出，finish 会被 exit 事件触发 */
+        }
+        scheduleSigkill();
+      }
     });
   }
 }

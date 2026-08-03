@@ -41,7 +41,15 @@ export function createApprovalGrant(input: ApprovalGrant): ApprovalGrant {
   return input;
 }
 
-export function matchesApprovalGrant(grant: ApprovalGrant, candidate: ApprovalCandidate): boolean {
+export function matchesApprovalGrant(
+  grant: ApprovalGrant,
+  candidate: ApprovalCandidate,
+  now: Date = new Date(),
+): boolean {
+  // 防御性过期检查：即使调用方遗漏，也不会让已过期 grant 匹配成功。
+  if (grant.expiresAt !== undefined && now.getTime() >= Date.parse(grant.expiresAt)) {
+    return false;
+  }
   if (
     grant.sessionId !== candidate.sessionId ||
     grant.taskId !== candidate.taskId ||

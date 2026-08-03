@@ -2,7 +2,6 @@
 
 ## Purpose
 规定 Electron Preload、Core 通道和 Renderer 工作区之间的运行时契约，以及真实桌面运行时的可识别失败边界。
-
 ## Requirements
 ### Requirement: Complete DesktopApi Contract
 Electron Preload MUST 仅暴露声明的 `DesktopApi`，且每个公开请求方法 MUST 映射到经过 schema 校验的 Desktop Main/Core 操作；Session、终端输出、资源和 Agent Timeline 的运行时事件 MUST 以窄 IPC 通道送达 Renderer。
@@ -40,3 +39,34 @@ Electron Preload MUST 仅暴露声明的 `DesktopApi`，且每个公开请求方
 #### Scenario: Browser regression environment
 - **WHEN** Renderer 在没有 Electron preload 的浏览器测试环境加载
 - **THEN** 系统 MAY 使用同接口的测试替身，并且测试 MUST 能验证对该接口的实际调用
+
+### Requirement: Core Connection Handshake Resource Release
+CoreSupervisor 在获取连接后若 handshake 抛出异常，MUST 关闭该连接并向上传播错误，MUST NOT 泄漏 socket 与文件描述符。当连接来自本变更自启的 Core 进程时，handshake 失败后 MUST 同时停止 launcher，MUST NOT 留下无人管理的 Core 子进程；当连接来自已存在的 Core 时，MUST NOT 停止 launcher。
+
+#### Scenario: Handshake throws after existing core connection
+- **WHEN** `connector.connect()` 成功获取到已有 Core 的连接，但 `handshake()` 抛出异常
+- **THEN** Supervisor MUST 调用 `connection.close()` 释放连接后重新抛出，MUST NOT 停止 launcher
+
+#### Scenario: Handshake fails after self-started core
+- **WHEN** Supervisor 因无可用连接而 `launcher.start()` 启动 Core，随后 handshake 抛异常或返回失败
+- **THEN** Supervisor MUST 关闭连接并调用 `launcher.stop()` 停止自启的 Core 子进程
+
+### Requirement: Core Process Stop on Exit Failure
+CoreSupervisor 的 `requestExit('terminate_all')` 在 `core.shutdown` 请求抛错或超时后，MUST 仍关闭连接并停止 launcher，MUST NOT 让 Core 子进程在无人管理下继续运行。
+
+#### Scenario: Shutdown request rejects
+- **WHEN** `core.shutdown` 请求因 Core 挂起而超时 reject
+- **THEN** Supervisor MUST 在 finally 中执行 `#closeConnection()` 与 `launcher.stop()`，错误向上传播但资源已释放
+
+### Requirement: Oversized IPC Payload Isolation
+Core 和 Desktop MUST 对控制帧及终端输出帧执行统一的最大长度校验。单个输出或响应超过预算时，发送端 MUST 分片或返回有界的 `resource_exhausted` 错误，不得写出超限帧、半帧或因该错误销毁整个已认证连接。
+
+#### Scenario: Large terminal output arrives while closing a Session
+- **WHEN** 用户调用 `sessions:close`，同时任一 Session 产生超过单帧预算的 PTY 输出
+- **THEN** Desktop/Core IPC 连接 MUST 保持可用，关闭请求 MUST 收到成功响应或可识别的业务错误
+- **AND** 系统 MUST NOT 仅将底层 `FramingError` 作为 `sessions:close` 的唯一错误说明
+
+#### Scenario: Control response exceeds the frame budget
+- **WHEN** 某个 Core 请求结果序列化后超过控制帧预算
+- **THEN** Core MUST 返回有界的 `resource_exhausted` 协议错误或分段结果
+- **AND** 后续只读请求 MUST 仍可通过同一 IPC 连接执行

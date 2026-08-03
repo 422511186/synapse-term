@@ -5,7 +5,9 @@ const CONTROL_FRAME_TYPE = 1;
 const TERMINAL_OUTPUT_FRAME_TYPE = 2;
 const SESSION_ID_LENGTH_BYTES = 2;
 const SEQUENCE_BYTES = 8;
-const DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024;
+export const MAX_TERMINAL_OUTPUT_CHUNK_BYTES = 256 * 1024;
+export const MAX_TERMINAL_REPLAY_BYTES = 512 * 1024;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 export type FramingErrorCode = 'invalid_frame' | 'frame_too_large' | 'resource_exhausted';
@@ -18,6 +20,32 @@ export class FramingError extends Error {
     this.name = 'FramingError';
     this.code = code;
   }
+}
+
+export function splitUtf8Text(value: string, maxBytes = MAX_TERMINAL_OUTPUT_CHUNK_BYTES): string[] {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new RangeError('maxBytes must be a positive safe integer');
+  }
+  if (value.length === 0) return [];
+
+  const chunks: string[] = [];
+  let current = '';
+  let currentBytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (characterBytes > maxBytes) {
+      throw new RangeError('maxBytes is smaller than one UTF-8 code point');
+    }
+    if (current.length > 0 && currentBytes + characterBytes > maxBytes) {
+      chunks.push(current);
+      current = '';
+      currentBytes = 0;
+    }
+    current += character;
+    currentBytes += characterBytes;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
 
 export interface FrameDecoderOptions {
@@ -40,6 +68,7 @@ export function encodeControlFrame(envelope: ControlEnvelope): Uint8Array {
   const validated = controlEnvelopeSchema.parse(envelope);
   const payload = Buffer.from(JSON.stringify(validated), 'utf8');
   const frameLength = 1 + payload.length;
+  assertFrameLength(frameLength);
   const frame = Buffer.allocUnsafe(LENGTH_PREFIX_BYTES + frameLength);
   frame.writeUInt32BE(frameLength, 0);
   frame[LENGTH_PREFIX_BYTES] = CONTROL_FRAME_TYPE;
@@ -58,6 +87,7 @@ export function encodeTerminalOutputFrame(output: TerminalOutputFrame): Uint8Arr
 
   const data = Buffer.from(output.data.buffer, output.data.byteOffset, output.data.byteLength);
   const frameLength = 1 + SESSION_ID_LENGTH_BYTES + sessionId.length + SEQUENCE_BYTES + data.length;
+  assertFrameLength(frameLength);
   const frame = Buffer.allocUnsafe(LENGTH_PREFIX_BYTES + frameLength);
   frame.writeUInt32BE(frameLength, 0);
   let offset = LENGTH_PREFIX_BYTES;
@@ -71,6 +101,15 @@ export function encodeTerminalOutputFrame(output: TerminalOutputFrame): Uint8Arr
   offset += SEQUENCE_BYTES;
   data.copy(frame, offset);
   return frame;
+}
+
+function assertFrameLength(frameLength: number): void {
+  if (frameLength > DEFAULT_MAX_FRAME_BYTES) {
+    throw new FramingError(
+      'frame_too_large',
+      `frame length ${String(frameLength)} exceeds ${String(DEFAULT_MAX_FRAME_BYTES)}`,
+    );
+  }
 }
 
 export class FrameDecoder {

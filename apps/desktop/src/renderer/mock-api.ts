@@ -268,7 +268,13 @@ export function createMockDesktopApi(): DesktopApi {
         }
       },
       resize: async () => undefined,
-      replay: async () => ({ historyGap: false, events: [], nextSequence: sequence + 1 }),
+      replay: async () => ({
+        historyGap: false,
+        events: [],
+        nextSequence: sequence + 1,
+        hasMore: false,
+        nextAfterSequence: sequence,
+      }),
       onOutput: (listener) => {
         outputListeners.add(listener);
         return () => outputListeners.delete(listener);

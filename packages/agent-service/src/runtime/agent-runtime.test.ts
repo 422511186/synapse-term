@@ -130,6 +130,75 @@ describe('AgentRuntime', () => {
     ]);
   });
 
+  it('redacts secrets in onItem emissions while executing tool calls with raw arguments (H-14)', async () => {
+    const secretToken = 'sk_live_abcdefghijklmnop';
+    const rawArguments = {
+      command: `curl -H 'Authorization: Bearer ${secretToken}' https://example.com`,
+    };
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-secret', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-secret',
+          name: 'terminal_execute',
+          argumentsJson: JSON.stringify(rawArguments),
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '已获取结果。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '检查完成。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const executedArguments: unknown[] = [];
+    const persistedItems: ModelRequest['items'][number][] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async (_name, argumentsValue) => {
+          executedArguments.push(argumentsValue);
+          return {
+            ok: true,
+            result: { status: 'completed', output: { text: `secret=${secretToken}` } },
+          };
+        },
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '检查密钥脱敏' },
+      onItem: (item) => persistedItems.push(item),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'completed' });
+
+    // 执行仍使用原始参数，脱敏只影响对外发射/持久化。
+    expect(executedArguments).toEqual([rawArguments]);
+    // 第二轮请求包含 tool call 与 tool_result，二者都不得携带原始密钥。
+    expect(
+      adapter.requests[1]?.items.some((item) => JSON.stringify(item).includes(secretToken)),
+    ).toBe(false);
+
+    const callItem = persistedItems.find(
+      (item): item is Extract<ModelRequest['items'][number], { type: 'assistant_tool_call' }> =>
+        !('role' in item) && item.type === 'assistant_tool_call',
+    );
+    expect(callItem?.argumentsJson).not.toContain(secretToken);
+    expect(callItem?.argumentsJson).toContain('[REDACTED]');
+
+    const resultItem = persistedItems.find(
+      (item): item is Extract<ModelRequest['items'][number], { type: 'tool_result' }> =>
+        !('role' in item) && item.type === 'tool_result',
+    );
+    expect(resultItem?.content).not.toContain(secretToken);
+    expect(resultItem?.content).toContain('[REDACTED]');
+  });
+
   it('fails closed when the completion review limit is exhausted', async () => {
     const toolTurn = (id: string, command: string): ModelEvent[] => [
       { type: 'tool_call_started', id, name: 'terminal_execute' },
@@ -707,6 +776,156 @@ describe('AgentRuntime', () => {
       toolCallId: 'call-1',
       isError: true,
     });
+  });
+
+  it('emits placeholder tool results for calls skipped after a recoverable error', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-1', name: 'local_read_file' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-1',
+          name: 'local_read_file',
+          argumentsJson: '{"path":"a.txt"}',
+        },
+        { type: 'tool_call_started', id: 'call-2', name: 'local_read_file' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-2',
+          name: 'local_read_file',
+          argumentsJson: '{"path":"b.txt"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '文件不存在，请确认路径。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '文件不存在，请确认路径。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const persistedItems: ModelRequest['items'][number][] = [];
+    const skippedResults: Array<{
+      toolCallId: string;
+      result: { ok: false; error: string; message?: string; recoverable?: boolean };
+    }> = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => ({
+          ok: false,
+          error: 'local_file_not_found',
+          message: 'missing.txt not found',
+          recoverable: true,
+        }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '读取文件' },
+      onItem: (item) => persistedItems.push(item),
+      onSkippedToolResult: (toolCallId, result) => skippedResults.push({ toolCallId, result }),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({
+      status: 'completed',
+      answer: '文件不存在，请确认路径。',
+    });
+    const secondRequest = adapter.requests[1]!.items;
+    const calls = secondRequest.filter(
+      (item): item is Extract<ModelRequest['items'][number], { type: 'assistant_tool_call' }> =>
+        !('role' in item) && item.type === 'assistant_tool_call',
+    );
+    const results = secondRequest.filter(
+      (item): item is Extract<ModelRequest['items'][number], { type: 'tool_result' }> =>
+        !('role' in item) && item.type === 'tool_result',
+    );
+    expect(calls.map((item) => item.toolCallId).sort()).toEqual(['call-1', 'call-2']);
+    expect(results.map((item) => item.toolCallId).sort()).toEqual(['call-1', 'call-2']);
+    expect(results.find((item) => item.toolCallId === 'call-2')).toMatchObject({
+      isError: true,
+      content: expect.stringContaining('skipped_due_to_prior_failure'),
+    });
+    expect(
+      persistedItems.some(
+        (item) =>
+          !('role' in item) &&
+          item.type === 'tool_result' &&
+          item.toolCallId === 'call-2' &&
+          item.isError,
+      ),
+    ).toBe(true);
+    expect(skippedResults).toEqual([
+      {
+        toolCallId: 'call-2',
+        result: expect.objectContaining({
+          ok: false,
+          error: 'skipped_due_to_prior_failure',
+          message: 'tool call skipped: skipped_due_to_prior_failure',
+        }),
+      },
+    ]);
+  });
+
+  it('emits placeholder tool results for unexecuted calls when cancelled mid-batch', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-a', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-a',
+          name: 'terminal_execute',
+          argumentsJson: '{"command":"first"}',
+        },
+        { type: 'tool_call_started', id: 'call-b', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-b',
+          name: 'terminal_execute',
+          argumentsJson: '{"command":"second"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+    ]);
+    const persistedItems: ModelRequest['items'][number][] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => {
+          // 模拟用户在第一个 call 执行期间取消任务。
+          runtime.cancel();
+          return { ok: true, result: { status: 'completed', exitCode: 0 } };
+        },
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '检查' },
+      onItem: (item) => persistedItems.push(item),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'cancelled' });
+    const callIds = persistedItems
+      .filter(
+        (item): item is Extract<ModelRequest['items'][number], { type: 'assistant_tool_call' }> =>
+          !('role' in item) && item.type === 'assistant_tool_call',
+      )
+      .map((item) => item.toolCallId);
+    const resultIds = persistedItems
+      .filter(
+        (item): item is Extract<ModelRequest['items'][number], { type: 'tool_result' }> =>
+          !('role' in item) && item.type === 'tool_result',
+      )
+      .map((item) => item.toolCallId);
+    expect(callIds).toEqual(['call-a', 'call-b']);
+    expect(resultIds).toEqual(expect.arrayContaining(callIds));
+    expect(
+      persistedItems.find(
+        (item) => !('role' in item) && item.type === 'tool_result' && item.toolCallId === 'call-b',
+      ),
+    ).toMatchObject({ isError: true, content: expect.stringContaining('cancelled') });
   });
 
   it('feeds a recoverable invalid tool call back to the model instead of failing the turn', async () => {

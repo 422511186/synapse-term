@@ -152,6 +152,8 @@ export const terminalReplaySchema = z.strictObject({
   ),
   oldestSequence: z.number().int().nonnegative().optional(),
   nextSequence: z.number().int().nonnegative(),
+  hasMore: z.boolean().default(false),
+  nextAfterSequence: z.number().int().nonnegative().default(0),
 });
 
 export const localFileChangeSchema = z.strictObject({

@@ -23,7 +23,7 @@ export function AllSessionsPopover({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleSessions = sessions.filter((session) =>
     [session.title, session.terminalType, session.pty, session.shell].some((value) =>
-      value.toLocaleLowerCase().includes(normalizedQuery),
+      (value ?? '').toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
 

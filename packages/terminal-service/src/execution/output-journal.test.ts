@@ -37,4 +37,21 @@ describe('OutputJournal', () => {
     const globalGap = journal.replay('session-1', 1);
     expect(globalGap.historyGap).toBe(true);
   });
+
+  it('returns byte-bounded replay pages with a continuation cursor', () => {
+    const journal = new OutputJournal();
+    journal.append('session-1', Buffer.from('1234'));
+    journal.append('session-1', Buffer.from('5678'));
+    journal.append('session-1', Buffer.from('90ab'));
+
+    const first = journal.replay('session-1', 0, Number.MAX_SAFE_INTEGER, 8);
+    expect(first.events.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextAfterSequence).toBe(2);
+
+    const second = journal.replay('session-1', first.nextAfterSequence, Number.MAX_SAFE_INTEGER, 8);
+    expect(second.events.map((event) => event.sequence)).toEqual([3]);
+    expect(second.hasMore).toBe(false);
+    expect(second.nextAfterSequence).toBe(3);
+  });
 });

@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import type { SessionSummary, TerminalOutputEvent, TerminalViewApi } from '../contracts.js';
 import { prototypeTerminalMetrics, prototypeTerminalOptions } from './prototype-terminal.js';
-import { reconcileTerminalReplay } from './terminal-stream.js';
+import { reconcileTerminalReplayPages } from './terminal-stream.js';
 import { containsTerminalClearSequence } from './terminal-output-state.js';
 
 export function TerminalView({
@@ -56,10 +56,17 @@ export function TerminalView({
       if (replaying || disposed) return;
       replaying = true;
       try {
-        const replay = await api.terminal.replay(session.id, lastSequence);
+        const replays = [];
+        let cursor = lastSequence;
+        while (true) {
+          const replay = await api.terminal.replay(session.id, cursor);
+          replays.push(replay);
+          if (replay.hasMore !== true) break;
+          cursor = replay.nextAfterSequence ?? Math.max(0, replay.nextSequence - 1);
+        }
         if (disposed) return;
-        const reconciled = reconcileTerminalReplay(replay, pending.splice(0));
-        if (replay.snapshot !== undefined) terminal.reset();
+        const reconciled = reconcileTerminalReplayPages(replays, pending.splice(0));
+        if (replays.some((replay) => replay.snapshot !== undefined)) terminal.reset();
         const replayData = reconciled.chunks.join('');
         if (replayData.length > 0) {
           await new Promise<void>((resolve) => writeTerminalData(replayData, resolve));

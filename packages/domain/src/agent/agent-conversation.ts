@@ -90,7 +90,7 @@ export function createAgentTurn(input: CreateAgentTurnInput): AgentTurn {
     ...input,
     driver,
     model,
-    reasoningEffort: input.reasoningEffort ?? (model === undefined ? undefined : 'low'),
+    reasoningEffort: input.reasoningEffort ?? model?.defaultReasoningEffort,
     permissionMode: input.permissionMode ?? 'auto',
     status: 'queued',
     revision: 0,

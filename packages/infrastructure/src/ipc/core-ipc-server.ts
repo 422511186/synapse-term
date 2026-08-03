@@ -69,7 +69,13 @@ export class CoreIpcServer {
   }
 
   broadcastTerminalOutput(sessionId: string, sequence: number, data: Uint8Array): void {
-    const frame = encodeTerminalOutputFrame({ sessionId, sequence, data });
+    let frame: Uint8Array;
+    try {
+      frame = encodeTerminalOutputFrame({ sessionId, sequence, data });
+    } catch (error) {
+      if (isFrameTooLarge(error)) return;
+      throw error;
+    }
     for (const connection of this.#connections) connection.sendTerminalOutput(frame);
   }
 
@@ -141,18 +147,23 @@ class CoreIpcConnection {
 
   sendEvent(streamId: string, sequence: number, event: string, payload: unknown): void {
     if (!this.#authenticated) return;
-    this.#write(
-      encodeControlFrame({
-        kind: 'event',
-        id: randomUUID(),
-        protocolVersion: this.#protocolVersion,
-        sentAt: new Date().toISOString(),
-        streamId,
-        sequence,
-        event,
-        payload: payload as never,
-      }),
-    );
+    try {
+      this.#write(
+        encodeControlFrame({
+          kind: 'event',
+          id: randomUUID(),
+          protocolVersion: this.#protocolVersion,
+          sentAt: new Date().toISOString(),
+          streamId,
+          sequence,
+          event,
+          payload: payload as never,
+        }),
+      );
+    } catch (error) {
+      // 广播事件没有可回复的 request，超大事件只能丢弃，不能让异常逃逸到 Core。
+      if (!isFrameTooLarge(error)) this.#socket.destroy();
+    }
   }
 
   sendTerminalOutput(frame: Uint8Array): void {
@@ -289,13 +300,18 @@ function protocolError(code: ProtocolError['code'], message: string): ProtocolEr
 
 function normalizeError(error: unknown): ProtocolError {
   const candidate = error as { code?: unknown; message?: unknown; retryable?: unknown };
-  const code =
+  const rawCode =
     typeof candidate.code === 'string' && ERROR_CODES.includes(candidate.code as never)
       ? (candidate.code as ProtocolError['code'])
       : 'internal_error';
+  const code = rawCode === 'frame_too_large' ? 'resource_exhausted' : rawCode;
   return {
     code,
     message: typeof candidate.message === 'string' ? candidate.message : String(error),
     retryable: candidate.retryable === true,
   };
+}
+
+function isFrameTooLarge(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'frame_too_large';
 }

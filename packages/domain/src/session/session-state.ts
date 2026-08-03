@@ -332,7 +332,9 @@ export function transitionSessionShell(
     shellCapabilityEpoch:
       nextState === 'ready' ? session.shellCapabilityEpoch + 1 : session.shellCapabilityEpoch,
   };
-  // Auto-verify environment when transitioning to ready (probe has confirmed dialect)
+  // 当 shell 转为 ready 时自动标记环境为 verified。这是 shell probe 流程的预期机制：
+  // probe 完成方言指纹识别后通过 transition 到 'ready' 来标记环境已验证。
+  // capabilityEpoch 递增以失效基于旧环境签发的 approval grant。
   if (nextState === 'ready' && session.environment.verificationStatus !== 'verified') {
     return {
       ok: true,

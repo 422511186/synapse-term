@@ -52,7 +52,12 @@ export class ApprovalAwareGateway implements RuntimeToolGateway {
       toolCallId,
     });
     this.#onToolResult(toolCallId, result);
-    if (!result.ok) return result;
+    if (!result.ok) {
+      // 失败路径同样清空 grant：否则后续相同命令的工具调用会被命中而静默放行，
+      // 违反"一次性审批"语义（H-5）。
+      if (this.#grant !== undefined) this.#grant = undefined;
+      return result;
+    }
     if (isWaitingApproval(result.result)) {
       const args = argumentsValue as { command?: unknown };
       const decision = result.result.decision as {

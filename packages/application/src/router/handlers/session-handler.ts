@@ -8,12 +8,14 @@ import { randomUUID } from 'node:crypto';
 
 import { isSessionShared, type SessionState } from '@synapse-term/domain';
 import type { AuditRecordInput, CoreRepositories } from '@synapse-term/infrastructure';
-import type {
-  CoreServiceEvent,
-  SessionLaunch,
-  SessionLaunchMetadata,
-  SessionSummary,
-  TerminalReplay,
+import {
+  MAX_TERMINAL_REPLAY_BYTES,
+  splitUtf8Text,
+  type CoreServiceEvent,
+  type SessionLaunch,
+  type SessionLaunchMetadata,
+  type SessionSummary,
+  type TerminalReplay,
 } from '@synapse-term/protocol';
 import type {
   OutputJournal,
@@ -288,7 +290,13 @@ export class SessionRequestHandler {
 
   replayTerminal(sessionId: string, afterSequence: number): TerminalReplay {
     const actor = this.#sessions.get(sessionId);
-    const replay = this.#journal.replay(sessionId, afterSequence);
+    const replay = this.#journal.replay(
+      sessionId,
+      afterSequence,
+      Number.MAX_SAFE_INTEGER,
+      MAX_TERMINAL_REPLAY_BYTES,
+    );
+    const snapshotAvailable = replay.historyGap && actor !== undefined;
     return {
       historyGap: replay.historyGap,
       ...(replay.historyGap && actor === undefined
@@ -296,23 +304,29 @@ export class SessionRequestHandler {
         : replay.historyGap
           ? { snapshot: actor?.terminalSnapshot() }
           : {}),
-      events: replay.events.map((event) => ({
+      events: (snapshotAvailable ? [] : replay.events).map((event) => ({
         sequence: event.sequence,
         data: Buffer.from(event.data).toString('utf8'),
       })),
       ...(replay.oldestSequence === undefined ? {} : { oldestSequence: replay.oldestSequence }),
       nextSequence: replay.nextSequence,
+      hasMore: snapshotAvailable ? false : replay.hasMore,
+      nextAfterSequence: snapshotAvailable
+        ? Math.max(afterSequence, replay.nextSequence - 1)
+        : replay.nextAfterSequence,
     };
   }
 
   #handleSessionEvent(sessionId: string, actor: SessionActor, event: SessionActorEvent): void {
     if (event.type === 'pty_output' && event.data.length > 0) {
-      const journalEvent = this.#journal.append(sessionId, Buffer.from(event.data, 'utf8'));
-      this.#emitTerminalOutput({
-        sessionId,
-        sequence: journalEvent.sequence,
-        data: event.data,
-      });
+      for (const chunk of splitUtf8Text(event.data)) {
+        const journalEvent = this.#journal.append(sessionId, Buffer.from(chunk, 'utf8'));
+        this.#emitTerminalOutput({
+          sessionId,
+          sequence: journalEvent.sequence,
+          data: chunk,
+        });
+      }
     }
     this.#save(actor);
     this.#emitChanged(

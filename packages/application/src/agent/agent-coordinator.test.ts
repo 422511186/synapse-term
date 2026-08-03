@@ -46,6 +46,41 @@ class ScriptedAdapter implements ModelAdapter {
   }
 }
 
+class TwoCallFailFirstAdapter implements ModelAdapter {
+  readonly requests: ModelRequest[] = [];
+  #turn = 0;
+
+  constructor(readonly failedCommand: string) {}
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    this.#turn += 1;
+    if (this.#turn > 1) {
+      yield {
+        type: 'text_delta',
+        delta: this.#turn === 2 ? '第一个命令失败，已跳过第二个。' : '检查已完成。',
+      };
+      yield { type: 'turn_completed', stopReason: 'stop' };
+      return;
+    }
+    yield { type: 'tool_call_started', id: 'call-1', name: 'terminal_execute' };
+    yield {
+      type: 'tool_call_completed',
+      id: 'call-1',
+      name: 'terminal_execute',
+      argumentsJson: JSON.stringify({ command: this.failedCommand }),
+    };
+    yield { type: 'tool_call_started', id: 'call-2', name: 'terminal_execute' };
+    yield {
+      type: 'tool_call_completed',
+      id: 'call-2',
+      name: 'terminal_execute',
+      argumentsJson: JSON.stringify({ command: 'printf ok' }),
+    };
+    yield { type: 'turn_completed', stopReason: 'tool_call' };
+  }
+}
+
 class PartialCompletionAdapter implements ModelAdapter {
   readonly requests: ModelRequest[] = [];
   #turn = 0;
@@ -739,6 +774,129 @@ describe('AgentCoordinator', () => {
     });
   });
 
+  it('takes over the environment when approving with a stale environment epoch', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      const actor = await sessions.create({
+        id: 'session-stale-epoch',
+        executionDialect: 'posix',
+        launch: configLaunch('bash.exe'),
+      });
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+      await actor.verifyCurrentEnvironment('posix', 'unix', 'linux');
+      saveAvailableModel(repositories, 'provider-stale-epoch');
+      const adapter = new ApprovalAdapter();
+      const timeline: AgentTimelineItem[] = [];
+      const auditRecords: Array<{ type: string }> = [];
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        createAdapter: () => adapter,
+        emitTimeline: (item) => timeline.push(item),
+        audit: {
+          record: (input: { type: string }) => auditRecords.push(input),
+          recordCommand: () => undefined,
+        },
+      });
+
+      try {
+        const started = await coordinator.start('session-stale-epoch', 'stale epoch approval', {
+          modelConfigurationId: 'provider-stale-epoch',
+          permissionMode: 'manual',
+        });
+        await coordinator.idle();
+        const approval = timeline.find((item) => item.kind === 'approval');
+        expect(approval).toMatchObject({ status: 'waiting_approval' });
+
+        // 环境在审批待决期间发生变化（capability epoch 提升），但 lease 仍归 agent。
+        await actor.verifyCurrentEnvironment('powershell', 'windows', 'windows');
+
+        await expect(
+          coordinator.approve('session-stale-epoch', approval!.id, false),
+        ).rejects.toThrow(/no longer current/);
+        await coordinator.idle();
+
+        expect(coordinator.hasActiveTask('session-stale-epoch')).toBe(false);
+        expect(repositories.getAgentTask(started.taskId)?.status).toBe('cancelled');
+        // H-3: hadPendingApproval 为 true 时 #finish 走 takeoverUser（invalidateShellCapability），
+        // shell 不再是 ready；若走 returnAgentLeaseToUser（bug 路径），shell 会保持 ready。
+        expect(actor.snapshot.shell).not.toBe('ready');
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('rolls back a running task when start fails before state is registered', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      const actor = await sessions.create({
+        id: 'session-start-failure',
+        executionDialect: 'posix',
+        launch: configLaunch('bash.exe'),
+      });
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+      await actor.verifyCurrentEnvironment('posix', 'unix', 'linux');
+      saveAvailableModel(repositories, 'provider-start-failure');
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        // H-4: createAdapter 抛错模拟 state 入表前的失败。
+        createAdapter: () => {
+          throw new Error('adapter creation failed');
+        },
+        emitTimeline: () => undefined,
+      });
+
+      try {
+        await expect(
+          coordinator.start('session-start-failure', 'trigger failure', {
+            modelConfigurationId: 'provider-start-failure',
+          }),
+        ).rejects.toThrow('adapter creation failed');
+
+        // task 应回滚为 failed，而非遗留为 running。
+        const tasks = repositories.listAgentTasks('session-start-failure');
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0]?.status).toBe('failed');
+        expect(coordinator.hasActiveTask('session-start-failure')).toBe(false);
+        expect(coordinator.activeTaskCount).toBe(0);
+        // H-4 补全：已持久化的 running Turn 也应回滚为 failed，避免历史残留永远 running 的 Turn。
+        const conversation = [...repositories.listAgentConversations('session-start-failure')].at(
+          -1,
+        );
+        expect(conversation).toBeDefined();
+        const turns =
+          conversation === undefined ? [] : repositories.listAgentTurns(conversation.id);
+        expect(turns.at(-1)?.status).toBe('failed');
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
   it('cancels a turn while the current PTY environment probe is pending', async () => {
     await withTemporaryDirectory(async (directory) => {
       const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
@@ -1175,6 +1333,80 @@ describe('AgentCoordinator', () => {
             status: 'recoverable_error',
           }),
         ]);
+        expect(repositories.getAgentTask(started.taskId)?.status).toBe('completed');
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('finalizes skipped tool call records when later calls are skipped after a failure', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      await sessions.create({
+        id: 'session-skipped-record',
+        executionDialect: 'posix',
+        launch: {
+          executable: 'bash.exe',
+          args: ['-i'],
+          cwd: 'C:/work',
+          env: {},
+          columns: 80,
+          rows: 24,
+        },
+      });
+      const failedCommand = 'cat /definitely/missing/path';
+      completePlaintextPosixCommands(pty, failedCommand);
+      saveAvailableModel(repositories, 'provider-skipped-record', {
+        protocol: 'openai_responses',
+        declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+      });
+      const adapter = new TwoCallFailFirstAdapter(failedCommand);
+      const timeline: AgentTimelineItem[] = [];
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({
+          async parse() {
+            return { hasError: false, tree: 'program' };
+          },
+        }),
+        contextBuilder: new ContextBuilder(),
+        createAdapter: () => adapter,
+        emitTimeline: (item) => timeline.push(item),
+      });
+
+      try {
+        const started = await coordinator.start('session-skipped-record', '检查两个文件');
+        await coordinator.idle();
+
+        const conversation = repositories.listAgentConversations('session-skipped-record')[0]!;
+        const turn = repositories.listAgentTurns(conversation.id)[0]!;
+        expect(repositories.listToolCalls(turn.id)).toEqual([
+          expect.objectContaining({ id: 'call-1', status: 'recoverable_error' }),
+          // call-2 未执行，占位结果应把记录从 validating 推进到终态，而不是悬挂。
+          expect.objectContaining({ id: 'call-2', status: 'fatal_error' }),
+        ]);
+        expect(timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'tool',
+              toolRole: 'result',
+              toolCallId: 'call-2',
+              status: 'failed',
+              text: expect.stringContaining('skipped_due_to_prior_failure'),
+            }),
+          ]),
+        );
         expect(repositories.getAgentTask(started.taskId)?.status).toBe('completed');
       } finally {
         await coordinator.closeAll();
