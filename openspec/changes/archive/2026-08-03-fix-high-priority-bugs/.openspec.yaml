@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-03
+goal: 修复 BUG_REPORT.md 中 2 个 Critical 与 16 个 High 级别缺陷（C-1/C-2/H-1~H-9/H-11~H-13/H-15/H-17/H-18；H-10/H-16 注释澄清，H-14 由检修分支实现）
