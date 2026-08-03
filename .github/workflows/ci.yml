@@ -41,6 +41,9 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      - name: 检查 OpenSpec 技能镜像一致性
+        run: pnpm check:skills-mirror
+
       - name: 运行格式、Lint、类型和单元测试
         run: pnpm verify
 

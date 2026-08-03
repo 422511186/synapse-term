@@ -17,6 +17,7 @@
     "format:check": "prettier --check \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
     "lint": "eslint .",
     "postinstall": "node scripts/ensure-node-pty-helper.mjs",
+    "check:skills-mirror": "node scripts/check-openspec-skill-mirror.mjs",
     "package:core": "node scripts/stage-core-runtime.mjs",
     "package:win": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --win nsis --publish never",
     "package:win:dir": "pnpm build && pnpm package:core && electron-builder --config electron-builder.yml --win dir --publish never",
