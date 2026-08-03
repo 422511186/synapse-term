@@ -34,7 +34,12 @@ describe('model configuration', () => {
       name: 'GPT-5',
       providerProfileId: 'provider-openai',
       modelId: 'gpt-5',
-      declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+      declaredCapabilities: {
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        multimodal: false,
+      },
       contextWindowTokens: 128_000,
       maxOutputTokens: 8_192,
       autoCompact: true,
@@ -241,6 +246,85 @@ describe('model configuration', () => {
       protocol: 'openai_chat_completions',
       capabilities: { responses: false, streaming: true, toolCalls: true },
     });
+    expect(selection.capabilities.multimodal).toBe(false);
     expect(selection).not.toHaveProperty('credentialRef');
+  });
+
+  it('normalizes legacy models and preserves multimodal declarations in selections', () => {
+    const provider = domain.createProviderProfile({
+      id: 'provider-1',
+      name: 'Provider 1',
+      protocol: 'openai_responses',
+      baseUrl: 'https://api.example.test/v1',
+      credentialRef: 'credential:provider-1',
+      extraHeaders: {},
+      timeoutMs: 30_000,
+    });
+    const legacy = domain.createModelConfiguration({
+      id: 'model-legacy',
+      name: 'Legacy',
+      providerProfileId: provider.id,
+      modelId: 'legacy-v1',
+      declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+    });
+    expect(legacy.declaredCapabilities.multimodal).toBe(false);
+    const legacyEnabled = domain.setModelConfigurationEnabled(legacy, true);
+    if (!legacyEnabled.ok) throw new Error('expected legacy model to enable');
+    expect(
+      domain.createAgentModelSelection(provider, legacyEnabled.value).capabilities,
+    ).toMatchObject({
+      multimodal: false,
+    });
+
+    const vision = domain.createModelConfiguration({
+      id: 'model-vision',
+      name: 'Vision',
+      providerProfileId: provider.id,
+      modelId: 'vision-v1',
+      declaredCapabilities: {
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        multimodal: true,
+      },
+    });
+    const visionEnabled = domain.setModelConfigurationEnabled(vision, true);
+    if (!visionEnabled.ok) throw new Error('expected vision model to enable');
+    expect(
+      domain.createAgentModelSelection(provider, visionEnabled.value).capabilities,
+    ).toMatchObject({
+      multimodal: true,
+    });
+  });
+
+  it('resets validation when multimodal declaration changes', () => {
+    const model = domain.createModelConfiguration({
+      id: 'model-1',
+      name: 'Model 1',
+      providerProfileId: 'provider-1',
+      modelId: 'model-1',
+      declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+    });
+    const validating = domain.beginModelValidation(model);
+    if (!validating.ok) throw new Error('expected validation to start');
+    const available = domain.finishModelValidation(validating.value, {
+      status: 'available',
+      checkedAt: '2026-01-01T00:00:00.000Z',
+      capabilities: { responses: true, streaming: true, toolCalls: true },
+    });
+    if (!available.ok) throw new Error('expected validation to finish');
+
+    const updated = domain.updateModelConfiguration(available.value, {
+      declaredCapabilities: {
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        multimodal: true,
+      },
+    });
+
+    expect(updated.validation.status).toBe('unverified');
+    expect(updated.declaredCapabilities.multimodal).toBe(true);
+    expect(updated.revision).toBe(3);
   });
 });

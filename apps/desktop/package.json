@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@synapse-term/domain": "workspace:*",
     "@synapse-term/infrastructure": "workspace:*",
     "@synapse-term/protocol": "workspace:*",
     "@synapse-term/terminal-service": "workspace:*",

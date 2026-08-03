@@ -1,8 +1,23 @@
 import type { ReasoningEffort } from '@synapse-term/domain';
 
+export type ModelImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+
+export interface ModelTextContentPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ModelImageContentPart {
+  type: 'image';
+  mimeType: ModelImageMimeType;
+  dataBase64: string;
+}
+
+export type ModelContentPart = ModelTextContentPart | ModelImageContentPart;
+
 export interface ModelMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | readonly ModelContentPart[];
 }
 
 export type ModelInputItem =

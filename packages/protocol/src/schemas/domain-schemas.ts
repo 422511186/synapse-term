@@ -5,11 +5,29 @@ const epochSchema = z.number().int().nonnegative();
 export const permissionModeSchema = z.enum(['manual', 'auto', 'full_access']);
 export const reasoningEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh']);
 export const agentDriverKindSchema = z.enum(['builtin', 'acp']);
+export const agentAttachmentKindSchema = z.enum(['image', 'file']);
+export const agentAttachmentInputSchema = z.strictObject({
+  id: idSchema,
+  name: z.string().min(1),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
+  kind: agentAttachmentKindSchema,
+  sourcePath: z.string().min(1),
+});
+export const agentAttachmentMetadataSchema = z.strictObject({
+  id: idSchema,
+  name: z.string().min(1),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
+  kind: agentAttachmentKindSchema,
+  relativePath: z.string().min(1).optional(),
+});
 export const modelCapabilitiesSchema = z.strictObject({
   responses: z.boolean(),
   streaming: z.boolean(),
   toolCalls: z.boolean(),
   reasoning: z.boolean().optional(),
+  multimodal: z.boolean().optional(),
 });
 
 const leaseOwnerSchema = z.discriminatedUnion('kind', [
@@ -118,7 +136,12 @@ const modelItemBaseShape = {
 
 export const modelItemSchema = z.discriminatedUnion('type', [
   z.strictObject({ ...modelItemBaseShape, type: z.literal('system_text'), content: z.string() }),
-  z.strictObject({ ...modelItemBaseShape, type: z.literal('user_text'), content: z.string() }),
+  z.strictObject({
+    ...modelItemBaseShape,
+    type: z.literal('user_text'),
+    content: z.string(),
+    attachments: z.array(agentAttachmentMetadataSchema).max(8).optional(),
+  }),
   z.strictObject({ ...modelItemBaseShape, type: z.literal('assistant_text'), content: z.string() }),
   z.strictObject({
     ...modelItemBaseShape,
@@ -347,6 +370,8 @@ export type SessionStateMessage = z.infer<typeof sessionStateSchema>;
 export type AgentConversationMessage = z.infer<typeof agentConversationSchema>;
 export type AgentTurnMessage = z.infer<typeof agentTurnSchema>;
 export type AgentModelSelectionMessage = z.infer<typeof agentModelSelectionSchema>;
+export type AgentAttachmentInputMessage = z.infer<typeof agentAttachmentInputSchema>;
+export type AgentAttachmentMetadataMessage = z.infer<typeof agentAttachmentMetadataSchema>;
 export type ModelItemMessage = z.infer<typeof modelItemSchema>;
 export type ToolCallRecordMessage = z.infer<typeof toolCallRecordSchema>;
 export type ConversationCompactionMessage = z.infer<typeof conversationCompactionSchema>;

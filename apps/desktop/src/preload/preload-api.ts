@@ -1,5 +1,7 @@
 import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
 
+import type { DesktopAttachmentKind, PickedAgentAttachment } from '../shared/desktop-attachment.js';
+
 import type {
   AgentHistoryView,
   AgentTimelineItem,
@@ -18,6 +20,8 @@ export type {
   AgentHistoryView,
   AgentModelSelectionView,
   AgentTimelineItem,
+  AgentAttachmentKind,
+  AgentAttachmentMetadata,
   DiscoveredModel,
   ModelCapabilities,
   ModelConfigurationInput,
@@ -30,6 +34,8 @@ export type {
   TerminalOutputEvent,
   TerminalReplay,
 } from '@synapse-term/ui-platform';
+
+export type { DesktopAttachmentKind, PickedAgentAttachment } from '../shared/desktop-attachment.js';
 
 export interface RendererIpc {
   invoke(channel: string, ...argumentsValue: unknown[]): Promise<unknown>;
@@ -200,11 +206,18 @@ export interface DesktopApi {
     refresh(sessionId: string): Promise<SessionResourceRefreshResult>;
     onSnapshot(listener: (event: SessionResourceEvent) => void): () => void;
   };
+  attachments: {
+    pick(options: {
+      kind: DesktopAttachmentKind;
+      currentCount?: number;
+    }): Promise<PickedAgentAttachment[]>;
+  };
   agent: {
     start(
       sessionId: string,
       goal: string,
       options?: {
+        attachments?: PickedAgentAttachment[];
         modelConfigurationId?: string;
         reasoningEffort?: ReasoningEffort;
         permissionMode?: 'manual' | 'auto' | 'full_access';
@@ -306,6 +319,9 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
       refresh: (sessionId) => invoke('resources:refresh', sessionId),
       onSnapshot: (listener) =>
         ipc.on('session:resources', (payload) => listener(payload as SessionResourceEvent)),
+    },
+    attachments: {
+      pick: (options) => invoke('attachments:pick', options),
     },
     agent: {
       start: (sessionId, goal, options) => invoke('agent:start', sessionId, goal, options),

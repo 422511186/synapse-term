@@ -1,8 +1,13 @@
 import { join } from 'node:path';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-import { createModelConfiguration, createProviderProfile } from '@synapse-term/domain';
+import {
+  createModelConfiguration,
+  createProviderProfile,
+  type AgentAttachmentInput,
+  type ModelItem,
+} from '@synapse-term/domain';
 import type { AgentTimelineItem } from '@synapse-term/protocol';
 import { FakePty, withTemporaryDirectory } from '@synapse-term/test-kit';
 
@@ -183,6 +188,45 @@ class SensitiveLocalFileAdapter implements ModelAdapter {
   }
 }
 
+class AttachmentTurnAdapter implements ModelAdapter {
+  readonly requests: ModelRequest[] = [];
+  #turn = 0;
+
+  constructor(
+    readonly relativePath: string,
+    readonly unsafePath?: string,
+  ) {}
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    this.#turn += 1;
+    if (this.#turn === 1) {
+      yield { type: 'tool_call_started', id: 'call-relative', name: 'local_read_file' };
+      yield {
+        type: 'tool_call_completed',
+        id: 'call-relative',
+        name: 'local_read_file',
+        argumentsJson: JSON.stringify({ path: this.relativePath }),
+      };
+      yield { type: 'turn_completed', stopReason: 'tool_call' };
+      return;
+    }
+    if (this.#turn === 2 && this.unsafePath !== undefined) {
+      yield { type: 'tool_call_started', id: 'call-unsafe', name: 'local_read_file' };
+      yield {
+        type: 'tool_call_completed',
+        id: 'call-unsafe',
+        name: 'local_read_file',
+        argumentsJson: JSON.stringify({ path: this.unsafePath }),
+      };
+      yield { type: 'turn_completed', stopReason: 'tool_call' };
+      return;
+    }
+    yield { type: 'text_delta', delta: '附件分析完成。' };
+    yield { type: 'turn_completed', stopReason: 'stop' };
+  }
+}
+
 class ObserveOutputAdapter implements ModelAdapter {
   readonly requests: ModelRequest[] = [];
   #turn = 0;
@@ -245,6 +289,32 @@ class MemorySecrets {
   }
 }
 
+const ATTACHMENT_PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function fileAttachmentInput(overrides: Partial<AgentAttachmentInput> = {}): AgentAttachmentInput {
+  return {
+    id: 'file-1',
+    name: 'notes.txt',
+    mimeType: 'text/plain',
+    sizeBytes: 5,
+    kind: 'file',
+    sourcePath: 'C:/tmp/notes.txt',
+    ...overrides,
+  };
+}
+
+function imageAttachmentInput(overrides: Partial<AgentAttachmentInput> = {}): AgentAttachmentInput {
+  return {
+    id: 'image-1',
+    name: 'shot.png',
+    mimeType: 'image/png',
+    sizeBytes: ATTACHMENT_PNG_BYTES.length,
+    kind: 'image',
+    sourcePath: 'C:/tmp/shot.png',
+    ...overrides,
+  };
+}
+
 function saveAvailableModel(
   repositories: CoreRepositories,
   id: string,
@@ -258,6 +328,7 @@ function saveAvailableModel(
       responses: boolean;
       streaming: boolean;
       toolCalls: boolean;
+      multimodal?: boolean;
     };
   }> = {},
 ): void {
@@ -597,6 +668,219 @@ describe('AgentCoordinator', () => {
             expect.objectContaining({ role: 'user', content: expect.stringContaining('继续') }),
           ]),
         );
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('rejects attachments before task state is created when multimodal or limits are violated', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      await sessions.create({
+        id: 'session-attachment-validation',
+        executionDialect: 'powershell',
+        launch: configLaunch('powershell.exe'),
+      });
+      saveAvailableModel(repositories, 'provider-attachment-validation');
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        createAdapter: () => new ChatAdapter(),
+        emitTimeline: () => undefined,
+      });
+
+      try {
+        await expect(
+          coordinator.start('session-attachment-validation', '分析图片', {
+            attachments: [imageAttachmentInput()],
+          }),
+        ).rejects.toMatchObject({ code: 'multimodal_unsupported' });
+        await expect(
+          coordinator.start('session-attachment-validation', '超量附件', {
+            attachments: Array.from({ length: 9 }, (_, index) =>
+              fileAttachmentInput({ id: `file-${index}` }),
+            ),
+          }),
+        ).rejects.toMatchObject({ code: 'agent_attachment_limit' });
+        await expect(
+          coordinator.start('session-attachment-validation', '超大文件', {
+            attachments: [fileAttachmentInput({ sizeBytes: 50 * 1024 * 1024 + 1 })],
+          }),
+        ).rejects.toMatchObject({ code: 'attachment_too_large' });
+        await expect(
+          coordinator.start('session-attachment-validation', '文件缺失', {
+            attachments: [fileAttachmentInput({ sourcePath: join(directory, 'missing.txt') })],
+          }),
+        ).rejects.toMatchObject({ code: 'attachment_source_missing' });
+
+        expect(coordinator.hasActiveTask('session-attachment-validation')).toBe(false);
+        expect(coordinator.activeTaskCount).toBe(0);
+        expect(repositories.listAgentConversations('session-attachment-validation')).toHaveLength(
+          0,
+        );
+        expect(
+          repositories
+            .listAgentTasks('session-attachment-validation')
+            .every((task) => task.status === 'failed'),
+        ).toBe(true);
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('stages attachments into model context, history, attachment-local tools, and reset cleanup', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      const actor = await sessions.create({
+        id: 'session-attachments',
+        executionDialect: 'powershell',
+        launch: configLaunch('powershell.exe'),
+      });
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+      await actor.verifyCurrentEnvironment('powershell', 'windows', 'windows');
+      saveAvailableModel(repositories, 'provider-attachments', {
+        declaredCapabilities: {
+          responses: false,
+          streaming: true,
+          toolCalls: true,
+          multimodal: true,
+        },
+      });
+
+      const attachmentRoot = join(directory, 'attachment-root');
+      const sourceRoot = join(directory, 'source');
+      await mkdir(attachmentRoot);
+      await mkdir(sourceRoot);
+      const notesPath = join(sourceRoot, 'notes.txt');
+      const imagePath = join(sourceRoot, 'shot.png');
+      await writeFile(notesPath, 'hello');
+      await writeFile(imagePath, ATTACHMENT_PNG_BYTES);
+      const localFiles = await LocalFileService.create({ root: attachmentRoot });
+
+      const attachmentAdapter = new AttachmentTurnAdapter('0-notes.txt', 'C:/outside/secret.txt');
+      let currentAdapter: ModelAdapter = attachmentAdapter;
+      const timeline: AgentTimelineItem[] = [];
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        localFiles,
+        localFilePolicy: new LocalFilePolicy(),
+        createAdapter: () => currentAdapter,
+        emitTimeline: (item) => timeline.push(item),
+      });
+
+      try {
+        await coordinator.start('session-attachments', '分析附件', {
+          modelConfigurationId: 'provider-attachments',
+          attachments: [
+            fileAttachmentInput({ sourcePath: notesPath }),
+            imageAttachmentInput({ sourcePath: imagePath }),
+          ],
+        });
+        await coordinator.idle();
+
+        expect(attachmentAdapter.requests[0]?.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: 'user',
+              content: [
+                { type: 'text', text: expect.stringContaining('用户附件') },
+                {
+                  type: 'image',
+                  mimeType: 'image/png',
+                  dataBase64: ATTACHMENT_PNG_BYTES.toString('base64'),
+                },
+              ],
+            }),
+          ]),
+        );
+        expect(attachmentAdapter.requests[1]?.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'tool_result',
+              toolCallId: 'call-relative',
+              content: expect.stringContaining('hello'),
+            }),
+          ]),
+        );
+        const history = await coordinator.history('session-attachments');
+        expect(history.items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'user_text',
+              attachments: expect.arrayContaining([
+                expect.objectContaining({
+                  id: 'file-1',
+                  kind: 'file',
+                  relativePath: '0-notes.txt',
+                }),
+                expect.objectContaining({ id: 'image-1', kind: 'image' }),
+              ]),
+            }),
+            expect.objectContaining({
+              type: 'tool_result',
+              toolCallId: 'call-unsafe',
+              isError: true,
+              content: expect.stringContaining('invalid_tool_call'),
+            }),
+          ]),
+        );
+        expect(timeline).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'user',
+              attachments: expect.arrayContaining([
+                expect.objectContaining({ id: 'file-1' }),
+                expect.objectContaining({ id: 'image-1' }),
+              ]),
+            }),
+          ]),
+        );
+
+        const conversation = repositories.listAgentConversations('session-attachments')[0]!;
+        await coordinator.resetConversation('session-attachments', conversation.id);
+        const sessionRoot = join(
+          attachmentRoot,
+          '.synapse-term-attachments',
+          'session-attachments',
+        );
+        await expect(readdir(sessionRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+
+        currentAdapter = new ChatAdapter();
+        await coordinator.start('session-attachments', '新对话');
+        await coordinator.idle();
+        const nextConversation = [
+          ...repositories.listAgentConversations('session-attachments'),
+        ].find((candidate) => candidate.status === 'active')!;
+        const nextUserItems = repositories
+          .listModelItems(nextConversation.id)
+          .filter(
+            (item): item is Extract<ModelItem, { type: 'user_text' }> => item.type === 'user_text',
+          );
+        expect(nextUserItems[0]?.attachments).toBeUndefined();
       } finally {
         await coordinator.closeAll();
         await store.close();

@@ -23,6 +23,7 @@ describe('desktop IPC contract', () => {
       'terminal:replay',
       'resources:get',
       'resources:refresh',
+      'attachments:pick',
       'agent:start',
       'agent:cancel',
       'agent:history',

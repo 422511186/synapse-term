@@ -9,6 +9,7 @@ import type { ContextBuildInput, ContextBuilder } from '../context/context-build
 import { SecretRedactor } from '@synapse-term/infrastructure';
 import type {
   ModelAdapter,
+  ModelContentPart,
   ModelEvent,
   ModelInputItem,
   ModelToolDefinition,
@@ -770,7 +771,9 @@ export class AgentRuntime {
   }
 
   #redactItem(item: ModelInputItem): ModelInputItem {
-    if ('role' in item) return { ...item, content: this.#redactor.redact(item.content).text };
+    if ('role' in item) {
+      return { ...item, content: redactContent(item.content, this.#redactor) };
+    }
     if (item.type === 'assistant_tool_call') {
       return { ...item, argumentsJson: this.#redactor.redact(item.argumentsJson).text };
     }
@@ -838,6 +841,16 @@ export class AgentRuntime {
       ...(error === undefined ? {} : { error }),
     };
   }
+}
+
+function redactContent(
+  content: string | readonly ModelContentPart[],
+  redactor: SecretRedactor,
+): string | readonly ModelContentPart[] {
+  if (typeof content === 'string') return redactor.redact(content).text;
+  return content.map((part) =>
+    part.type === 'text' ? { ...part, text: redactor.redact(part.text).text } : part,
+  );
 }
 
 function tool(

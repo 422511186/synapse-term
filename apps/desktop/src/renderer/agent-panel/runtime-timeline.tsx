@@ -1,6 +1,6 @@
 /** Agent 实时时间线（自 app.tsx 拆分）：用户/助手/审批/命令卡片展示 */
 import { useState, type JSX } from 'react';
-import { Check, Clock, Command, FileText, Play, XCircle } from 'lucide-react';
+import { Check, Clock, Command, FileText, Image as ImageIcon, Play, XCircle } from 'lucide-react';
 
 import {
   groupAgentTimelineItems,
@@ -64,6 +64,42 @@ export function RuntimeTimeline({
               </div>
               <div className="bg-secondary/40 border border-border/50 px-4 py-3 rounded-xl rounded-tl-sm text-[13px] text-foreground/90 leading-relaxed shadow-sm">
                 {event.text}
+                {event.attachments?.map((attachment) => (
+                  <div
+                    className="mt-2 flex items-center gap-2 rounded-lg border border-border/60 bg-[#121214] px-3 py-2 text-[11px]"
+                    key={attachment.id}
+                  >
+                    {attachment.kind === 'image' ? (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-12 h-12 shrink-0 rounded-md bg-secondary/80 border border-border/70 flex items-center justify-center text-primary">
+                          <ImageIcon size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground/90">
+                            {attachment.name}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {attachment.mimeType} · {formatAttachmentSize(attachment.sizeBytes)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText size={15} className="shrink-0 text-primary" />
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground/90">
+                            {attachment.name}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {attachment.mimeType} · {formatAttachmentSize(attachment.sizeBytes)}
+                            {attachment.relativePath !== undefined &&
+                              ` · ${attachment.relativePath}`}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           );
@@ -208,4 +244,15 @@ function ThinkingBubble(): JSX.Element {
       </div>
     </div>
   );
+}
+
+function formatAttachmentSize(sizeBytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = sizeBytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${Math.round(value * 10) / 10} ${units[unit]}`;
 }

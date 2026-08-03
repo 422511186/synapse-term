@@ -175,4 +175,81 @@ describe('mock desktop API', () => {
       ]),
     );
   });
+
+  it('round-trips renderer-safe attachments into Agent timeline history', async () => {
+    vi.useFakeTimers();
+    const api = createMockDesktopApi();
+    const picked = await api.attachments.pick({ kind: 'file' });
+    expect(picked[0]).toMatchObject({
+      attachmentId: expect.any(String),
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 2_048,
+      kind: 'file',
+    });
+    expect(picked[0]).not.toHaveProperty('sourcePath');
+
+    const timeline: AgentTimelineItem[] = [];
+    api.agent.onTimeline((item) => timeline.push(item));
+    await api.agent.start('session-local', '分析 notes.txt', {
+      modelConfigurationId: 'model-openai',
+      attachments: picked,
+    });
+
+    expect(timeline[0]).toMatchObject({
+      kind: 'user',
+      attachments: [
+        {
+          id: picked[0]!.attachmentId,
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 2_048,
+          kind: 'file',
+          relativePath: 'notes.txt',
+        },
+      ],
+    });
+    const history = await api.agent.history('session-local');
+    expect(history.items[0]).toMatchObject({
+      type: 'user_text',
+      content: '分析 notes.txt',
+      attachments: [
+        {
+          id: picked[0]!.attachmentId,
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 2_048,
+          kind: 'file',
+          relativePath: 'notes.txt',
+        },
+      ],
+    });
+  });
+
+  it('rejects image submissions when the selected model is not multimodal', async () => {
+    const api = createMockDesktopApi();
+    const image = await api.attachments.pick({ kind: 'image' });
+    await api.models.setEnabled('model-fast', true);
+
+    await expect(
+      api.agent.start('session-local', '查看截图', {
+        modelConfigurationId: 'model-fast',
+        attachments: image,
+      }),
+    ).rejects.toThrow('当前模型不支持图片输入');
+    await expect(
+      api.agent.start('session-local', '查看截图', {
+        modelConfigurationId: 'model-openai',
+        attachments: image,
+      }),
+    ).resolves.toMatchObject({ turnId: expect.any(String) });
+  });
+
+  it('enforces the renderer attachment count budget in mock mode', async () => {
+    const api = createMockDesktopApi();
+
+    await expect(api.attachments.pick({ kind: 'file', currentCount: 8 })).rejects.toThrow(
+      '一次任务最多可携带 8 个附件',
+    );
+  });
 });

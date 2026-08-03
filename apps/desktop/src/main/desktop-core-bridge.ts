@@ -6,6 +6,7 @@ import {
 } from '@synapse-term/protocol';
 
 import type { CoreSupervisor, CoreTerminalOutput } from './core-supervisor.js';
+import type { DesktopAttachmentController } from './desktop-attachment-controller.js';
 
 export interface DesktopCoreBridge {
   invoke(channel: string, ...argumentsValue: unknown[]): Promise<unknown>;
@@ -20,6 +21,7 @@ export function createDesktopCoreBridge(
   getSessionEnvironment?: () => unknown | Promise<unknown>,
   emitResources: (event: unknown) => void = () => undefined,
   emitSessionChanged: (event: unknown) => void = () => undefined,
+  attachmentController?: DesktopAttachmentController,
 ): DesktopCoreBridge {
   const inheritedEnvironment = Object.fromEntries(
     Object.entries(environment).filter(
@@ -110,12 +112,22 @@ export function createDesktopCoreBridge(
           return request(supervisor, 'resources.refresh', {
             sessionId: stringAt(argumentsValue, 0),
           });
-        case 'agent:start':
+        case 'attachments:pick':
+          if (attachmentController === undefined) throw new Error('附件服务不可用');
+          return attachmentController.pick(objectAt(argumentsValue, 0));
+        case 'agent:start': {
+          const options = objectAt(argumentsValue, 2, {});
+          const forwarded = { ...options };
+          if (forwarded.attachments !== undefined) {
+            if (attachmentController === undefined) throw new Error('附件服务不可用');
+            forwarded.attachments = await attachmentController.resolve(forwarded.attachments);
+          }
           return request(supervisor, 'agent.start', {
             sessionId: stringAt(argumentsValue, 0),
             goal: stringAt(argumentsValue, 1),
-            ...objectAt(argumentsValue, 2, {}),
+            ...forwarded,
           });
+        }
         case 'agent:cancel':
           await request(supervisor, 'agent.cancel', {
             sessionId: stringAt(argumentsValue, 0),

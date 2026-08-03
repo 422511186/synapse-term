@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentConversationSchema,
+  agentAttachmentInputSchema,
+  agentAttachmentMetadataSchema,
   agentTurnSchema,
   agentTaskSchema,
   approvalGrantSchema,
   commandTransactionSchema,
   conversationCompactionSchema,
+  modelCapabilitiesSchema,
   modelConfigurationSchema,
   modelItemSchema,
   providerProfileSchema,
@@ -130,6 +133,47 @@ describe('domain schemas', () => {
     });
     expect(agentTurnSchema.parse(turn)).toEqual(turn);
     expect(modelItemSchema.parse(toolItem)).toEqual(toolItem);
+    const attachment = {
+      id: 'attachment-1',
+      name: '截图.png',
+      mimeType: 'image/png',
+      sizeBytes: 1_024,
+      kind: 'image' as const,
+      relativePath: '0-截图.png',
+    };
+    expect(agentAttachmentMetadataSchema.parse(attachment)).toEqual(attachment);
+    expect(
+      agentAttachmentInputSchema.parse({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        kind: attachment.kind,
+        sourcePath: 'C:/tmp/a.png',
+      }),
+    ).toMatchObject({
+      id: 'attachment-1',
+      kind: 'image',
+      sourcePath: 'C:/tmp/a.png',
+    });
+    expect(
+      modelItemSchema.parse({
+        id: 'item-user-attachments',
+        conversationId: conversation.id,
+        turnId: turn.id,
+        sequence: toolItem.sequence,
+        type: 'user_text',
+        content: '请分析附件',
+        attachments: [attachment],
+      }),
+    ).toMatchObject({ type: 'user_text', attachments: [attachment] });
+    expect(
+      agentAttachmentInputSchema.safeParse({
+        ...attachment,
+        sourcePath: 'C:/tmp/a.png',
+        unknown: true,
+      }).success,
+    ).toBe(false);
     expect(toolCallRecordSchema.parse(call)).toEqual(call);
     const compaction = {
       id: 'compaction-1',
@@ -342,5 +386,24 @@ describe('domain schemas', () => {
     expect(
       modelConfigurationSchema.safeParse({ ...model, enabled: false, isDefault: true }).success,
     ).toBe(false);
+    const legacyCapabilities = modelCapabilitiesSchema.parse({
+      responses: true,
+      streaming: true,
+      toolCalls: true,
+    });
+    expect(legacyCapabilities).toMatchObject({
+      responses: true,
+      streaming: true,
+      toolCalls: true,
+    });
+    expect(legacyCapabilities).not.toHaveProperty('multimodal');
+    expect(
+      modelCapabilitiesSchema.parse({
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        multimodal: true,
+      }),
+    ).toMatchObject({ multimodal: true });
   });
 });

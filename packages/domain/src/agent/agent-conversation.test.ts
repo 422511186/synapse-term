@@ -209,6 +209,47 @@ describe('agent conversation domain', () => {
     ).toMatchObject({ type: 'tool_result', toolCallId: 'call-1', isError: false });
   });
 
+  it('keeps attachment metadata on user text model items', () => {
+    const attachments = [
+      {
+        id: 'attachment-1',
+        name: '截图.png',
+        mimeType: 'image/png',
+        sizeBytes: 1_024,
+        kind: 'image' as const,
+        relativePath: '0-截图.png',
+      },
+      {
+        id: 'attachment-2',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 256,
+        kind: 'file' as const,
+        relativePath: '1-notes.txt',
+      },
+    ];
+    const item = createModelItem({
+      id: 'item-user-attachments',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+      sequence: 1,
+      type: 'user_text',
+      content: '请分析附件',
+      attachments,
+    });
+
+    expect(item).toMatchObject({
+      type: 'user_text',
+      content: '请分析附件',
+      attachments: expect.arrayContaining([
+        expect.objectContaining({ id: 'attachment-1', kind: 'image' }),
+        expect.objectContaining({ id: 'attachment-2', kind: 'file' }),
+      ]),
+    });
+    if (item.type !== 'user_text') throw new Error('expected a user_text model item');
+    expect(item.attachments).not.toBe(attachments);
+  });
+
   it('tracks recoverable and fatal tool outcomes separately', () => {
     const call = createToolCallRecord({
       id: 'call-1',

@@ -155,6 +155,7 @@ describe('Electron security boundary', () => {
     await api.terminal.replay('session-1', 0);
     await api.resources.get('session-1');
     await api.resources.refresh('session-1');
+    await api.attachments.pick({ kind: 'file' });
     await api.agent.start('session-1', 'check status', { permissionMode: 'manual' });
     await api.agent.cancel('session-1', 'turn-1');
     await api.agent.history('session-1');
@@ -194,6 +195,7 @@ describe('Electron security boundary', () => {
       'terminal:replay',
       'resources:get',
       'resources:refresh',
+      'attachments:pick',
       'agent:start',
       'agent:cancel',
       'agent:history',
