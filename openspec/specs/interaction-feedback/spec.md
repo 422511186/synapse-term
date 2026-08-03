@@ -2,7 +2,6 @@
 
 ## Purpose
 规定桌面端统一的交互反馈机制：toast 轻提示、异步按钮三态、防连点/防抖、破坏性操作确认与运行状态指示器。
-
 ## Requirements
 ### Requirement: Toast Notification System
 桌面端 MUST 提供统一的 toast 轻提示系统，用于展示非阻塞的操作结果：成功提示 MUST 在 3 秒内自动消失，错误提示 MUST 保持到用户手动关闭；同一时间最多展示 3 条，重复同类消息 MUST 合并更新；toast 区域 MUST 使用 `aria-live` 以便屏幕阅读器感知。
@@ -74,3 +73,15 @@
 #### Scenario: ACP integration is stopping
 - **WHEN** 用户关闭 ACP 集成且存在外部 Agent 子进程
 - **THEN** 状态行 MUST 显示"正在停止…"直到子进程终止，随后显示"未运行"
+
+### Requirement: Untrusted Markdown Rendering
+Renderer 在渲染来自模型输出或外部 Agent 的 assistant 文本时 MUST 使用不执行原始 HTML 的 Markdown 渲染路径（如 `react-markdown`），MUST NOT 使用 `dangerouslySetInnerHTML` 直接注入未净化文本；链接 MUST 强制 `rel="noreferrer"` 与 `target="_blank"`。
+
+#### Scenario: Assistant text contains a script tag
+- **WHEN** 模型或外部 Agent 输出的 assistant 文本包含 `<script>` 标签
+- **THEN** Renderer MUST 将其作为转义文本渲染，MUST NOT 执行该脚本或写入全局对象
+
+#### Scenario: Assistant text contains a markdown link
+- **WHEN** assistant 文本包含 `[click](https://evil.example)`
+- **THEN** 渲染出的锚点 MUST 携带 `rel="noreferrer"` 与 `target="_blank"`，不得在同源上下文导航
+

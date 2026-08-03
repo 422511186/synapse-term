@@ -2,9 +2,7 @@
 
 ## Purpose
 规定 ACP 外部 Agent 作为受控 CLI 子进程接入 Synapse Term 的生命周期、能力声明、权限请求、Turn 映射和会话投影边界。
-
 ## Requirements
-
 ### Requirement: External Agent Subprocess Lifecycle
 平台 MUST 以 CLI 子进程形态启动 ACP 外部 Agent，且仅当用户显式完成两级动作（设置页允许 ACP 集成 + 在面板选择驱动者并开始任务）后才 spawn。一个 Agent Conversation MUST 对应一个长驻子进程；Conversation 关闭或应用退出 MUST 终止该进程。
 
@@ -62,3 +60,15 @@ Agent Conversation MUST 携带 driver 维度（builtin | acp）；内置与外�
 #### Scenario: Timeline renders external agent progress
 - **WHEN** 外部 Agent 发送文本增量与工具调用更新
 - **THEN** 平台追加对应投影项，面板 timeline 正常渲染且审计可见
+
+### Requirement: Approval Request Entry Lifecycle
+ACP 控制器维护的全局审批请求表 MUST 在审批请求达到终态时清理对应条目：`respondApproval` 成功消费后 MUST 删除该条目；会话取消、进程终止或 Agent 退出时 MUST 批量清理该会话相关的全部未决审批条目，MUST NOT 产生永不释放的累积条目。
+
+#### Scenario: Approval is responded
+- **WHEN** 用户对某 approvalId 做出批准或拒绝
+- **THEN** 控制器 MUST 在消费后从全局表中删除该条目
+
+#### Scenario: Session is cancelled or process exits
+- **WHEN** 会话被取消、外部 Agent 子进程退出或被终止
+- **THEN** 控制器 MUST 清理该会话下所有未决审批条目，全局表不得残留孤立条目
+
