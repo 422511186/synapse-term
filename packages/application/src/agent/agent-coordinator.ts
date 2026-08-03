@@ -11,6 +11,7 @@ import {
   setConversationPermissionMode,
   transitionToolCall,
   type AgentTask,
+  type AgentTurn,
   type AgentTurnStatus,
   type ToolCallRecord,
   type ToolCallStatus,
@@ -43,6 +44,7 @@ import {
   CommandExecutor,
   ShellProbe,
   type CommandExecutorEvent,
+  type SessionActor,
   type SessionManager,
 } from '@synapse-term/terminal-service';
 import type { LocalFileService } from '@synapse-term/tooling';
@@ -187,6 +189,50 @@ export class AgentCoordinator {
     });
     const running = this.#scheduler.start(task.id);
     this.#repositories.saveAgentTask(running);
+    // H-4: task 已持久化为 running，但 state 尚未入表；此区间抛错需回滚 task 为 failed，
+    // 否则 cancel 找不到 state 而遗留孤立 running task，污染 activeTaskCount。
+    try {
+      this.#buildAndStartAgentState(
+        sessionId,
+        running,
+        profile,
+        model,
+        secret,
+        actor,
+        goal,
+        options,
+        reasoningEffort,
+      );
+    } catch (error) {
+      try {
+        const failed = this.#scheduler.transition(running.id, 'failed');
+        this.#repositories.saveAgentTask(failed);
+      } catch {
+        /* 回滚失败不应掩盖原始错误 */
+      }
+      // H-4 补全：task 回滚之外，同时清理已持久化的 running turn / 半成品 state，
+      // 避免历史中残留永远 running 的 Turn 或污染 activeTaskCount。
+      this.#rollbackPartialStart(sessionId);
+      throw error;
+    }
+    return {
+      taskId: running.id,
+      conversationId: this.#states.get(sessionId)!.conversation.id,
+      turnId: this.#states.get(sessionId)!.turn.id,
+    };
+  }
+
+  #buildAndStartAgentState(
+    sessionId: string,
+    running: AgentTask,
+    profile: ProviderProfile,
+    model: ModelConfiguration,
+    secret: string,
+    actor: SessionActor,
+    goal: string,
+    options: AgentStartOptions,
+    reasoningEffort: ReasoningEffort | undefined,
+  ): void {
     let conversation = [...this.#repositories.listAgentConversations(sessionId)]
       .reverse()
       .find((candidate) => candidate.status === 'active');
@@ -374,11 +420,6 @@ export class AgentCoordinator {
 
     const run = this.#runModel(state);
     this.#track(run);
-    return {
-      taskId: running.id,
-      conversationId: conversation.id,
-      turnId: runningTurn.value.id,
-    };
   }
 
   async cancel(sessionId: string, expectedTurnId?: string): Promise<void> {
@@ -465,7 +506,7 @@ export class AgentCoordinator {
     }
     const pending = state.pendingApproval;
     if (state.actor.snapshot.environment.capabilityEpoch !== pending.environmentEpoch) {
-      state.pendingApproval = undefined;
+      // H-3: 不提前清空 pendingApproval，让 #finish 通过 hadPendingApproval 判定走强制 takeover 路径。
       this.#emitApprovalTimeline(state, pending, 'cancelled');
       state.runtime?.cancel();
       await this.#finish(state, 'cancelled');
@@ -584,6 +625,10 @@ export class AgentCoordinator {
       onModelEvent: (event, delivery) =>
         this.#handleModelEvent(state, event, delivery?.replaceAssistantText === true),
       onItem: (item) => this.#persistRuntimeItem(state, item),
+      // 被跳过的 call 不会经过 gateway，占位结果需显式推进 ToolCallRecord，
+      // 否则记录会停留在 validating（H-13 数据一致性）。
+      onSkippedToolResult: (toolCallId, result) =>
+        this.#recordToolCallResult(state, toolCallId, result),
     });
     state.runtime = runtime;
     await this.#consumeRuntime(state, runtime, runtime.run());
@@ -707,6 +752,49 @@ export class AgentCoordinator {
     });
   }
 
+  /**
+   * start() 失败时回滚 #buildAndStartAgentState 已写入的部分数据：
+   * - state 已入表（极端路径）：移除 state、取消 runtime、释放 executor 订阅并回滚 Turn；
+   * - state 未入表：回滚该会话最新一个 running Turn（如 createAdapter 抛错路径）。
+   */
+  #rollbackPartialStart(sessionId: string): void {
+    const partial = this.#states.get(sessionId);
+    if (partial !== undefined) {
+      this.#states.delete(sessionId);
+      partial.runtime?.cancel();
+      partial.executorSubscription.dispose();
+      this.#rollbackRunningTurn(partial.turn);
+      this.#onActivityChange({
+        sessions: this.#sessions.activeCount,
+        agentTasks: this.activeTaskCount,
+      });
+      return;
+    }
+    const conversation = [...this.#repositories.listAgentConversations(sessionId)]
+      .reverse()
+      .find((candidate) => candidate.status === 'active');
+    if (conversation === undefined) return;
+    const turn = [...this.#repositories.listAgentTurns(conversation.id)].at(-1);
+    if (turn !== undefined) this.#rollbackRunningTurn(turn);
+  }
+
+  #rollbackRunningTurn(turn: AgentTurn): void {
+    // waiting_* / suspended → cancelled 分支在当前实现下为防御性死代码：
+    // #buildAndStartAgentState 是同步路径，start 失败瞬间 turn 必为 running。
+    // 保留该分支以防未来 async 化后出现半成品 waiting turn，但不为其编写白盒测试。
+    const target: AgentTurnStatus =
+      turn.status === 'running'
+        ? 'failed'
+        : turn.status === 'waiting_approval' ||
+            turn.status === 'waiting_user' ||
+            turn.status === 'suspended'
+          ? 'cancelled'
+          : turn.status;
+    if (target === turn.status) return;
+    const failed = transitionAgentTurn(turn, target);
+    if (failed.ok) this.#repositories.saveAgentTurn(failed.value);
+  }
+
   #emitApprovalTimeline(
     state: AgentState,
     approval: PendingApproval,
@@ -731,9 +819,17 @@ export class AgentCoordinator {
   #syncTask(state: AgentState, next: AgentTask): AgentTask {
     const current = this.#scheduler.get(next.id);
     if (current !== undefined && current.status !== next.status) {
-      const transitioned = this.#scheduler.transition(next.id, next.status);
-      this.#repositories.saveAgentTask(transitioned);
-      return transitioned;
+      // 终态（如 cancelled）不允许转换；runtime 在 cancel 后仍可能回传 failed/running 等
+      // 旧状态。此处兜底捕获非法转换，避免 unhandled rejection 破坏 #consumeRuntime/idle。
+      try {
+        const transitioned = this.#scheduler.transition(next.id, next.status);
+        this.#repositories.saveAgentTask(transitioned);
+        return transitioned;
+      } catch {
+        // 保留 current（已是终态），仅同步 next 的其他字段
+        this.#repositories.saveAgentTask(current);
+        return current;
+      }
     }
     this.#repositories.saveAgentTask(next);
     return next;

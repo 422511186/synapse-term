@@ -90,6 +90,34 @@ describe('approval grant', () => {
     ).toBe(false);
   });
 
+  it('rejects an expired grant even when every other attribute matches', () => {
+    const commands = [
+      {
+        sequence: 0,
+        command: 'systemctl restart api',
+        commandHash: 'sha256:command-1',
+        risk: { level: 'mutating' as const, reasons: ['restarts a service'] },
+      },
+    ];
+    const grant = createApprovalGrant({
+      id: 'grant-expired',
+      sessionId: 'session-1',
+      taskId: 'task-1',
+      commands,
+      grantedAt: '2026-07-27T15:00:00.000Z',
+      expiresAt: '2026-07-27T15:00:01.000Z',
+    });
+    const candidate = { sessionId: 'session-1', taskId: 'task-1', commands };
+
+    expect(matchesApprovalGrant(grant, candidate, new Date('2026-07-27T15:00:00.500Z'))).toBe(true);
+    expect(matchesApprovalGrant(grant, candidate, new Date('2026-07-27T15:00:01.000Z'))).toBe(
+      false,
+    );
+    expect(matchesApprovalGrant(grant, candidate, new Date('2026-07-28T00:00:00.000Z'))).toBe(
+      false,
+    );
+  });
+
   it('binds a grant to the exact conversation, turn, and tool call', () => {
     const commands = [
       {

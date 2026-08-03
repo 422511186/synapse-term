@@ -370,9 +370,11 @@ export class AcpController {
         const pending = conversation.pendingApprovals.get(approvalId);
         if (pending === undefined) continue;
         conversation.pendingApprovals.delete(approvalId);
+        // H-15: 先读取 request 再从全局表删除，避免累积泄漏。
+        const request = approvalRequests.get(approvalId);
+        approvalRequests.delete(approvalId);
         pending.resolve(approved);
         // 更新审批卡片终态：completed / cancelled
-        const request = approvalRequests.get(approvalId);
         // 批准即授予该命令一次执行许可，供后续实际执行请求消费（ACP 权限与执行分离）
         if (approved && request !== undefined) {
           conversation.approvedOnceCommands.add(request.command);
@@ -603,6 +605,8 @@ export class AcpController {
   #cancelPendingApprovals(conversation: AcpConversation): void {
     for (const approvalId of conversation.pendingApprovals.keys()) {
       const request = approvalRequests.get(approvalId);
+      // H-15: 取消时也从全局表清理，避免孤立条目泄漏。
+      approvalRequests.delete(approvalId);
       this.#emitTimeline({
         id: approvalId,
         sessionId: conversation.platformSessionId,

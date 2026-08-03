@@ -293,7 +293,12 @@ export class CoreRequestRouter {
   }
 
   async closeAll(): Promise<void> {
-    await this.#agentHandler.closeAllIfConfigured();
+    // H-6: agent 关闭失败不应阻断 session PTY 关闭与活动状态通知。
+    try {
+      await this.#agentHandler.closeAllIfConfigured();
+    } catch (error) {
+      console.error('[CoreRequestRouter] agent closeAll failed during closeAll:', error);
+    }
     for (const session of [...this.#sessions.list()])
       await this.#sessions.close(session.snapshot.id);
     this.#onActivityChange({ sessions: this.#sessions.activeCount, agentTasks: 0 });

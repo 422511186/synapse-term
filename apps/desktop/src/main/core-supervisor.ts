@@ -128,21 +128,40 @@ export class CoreSupervisor {
   async #connectInternal(): Promise<CoreConnectResult> {
     this.#state = 'starting';
     let connection: CoreConnection;
+    let selfStarted = false;
     try {
       connection = await this.#options.connector.connect();
     } catch {
       await this.#options.launcher.start();
+      selfStarted = true;
       try {
         connection = await this.#connectWithRetries();
       } catch (error) {
         this.#state = 'disconnected';
+        // H-9: 自启 Core 后连接失败时停止 launcher，避免遗留无人管理的子进程。
+        await this.#options.launcher.stop();
         throw error;
       }
     }
 
-    const handshake = await connection.handshake();
+    // H-8: handshake 抛异常时关闭连接，避免 socket/fd 泄漏。
+    let handshake: Awaited<ReturnType<CoreConnection['handshake']>>;
+    try {
+      handshake = await connection.handshake();
+    } catch (error) {
+      // 连接关闭失败也不应跳过 launcher 停止（嵌套 finally 保证两段清理都尽力执行）。
+      try {
+        await connection.close();
+      } finally {
+        if (selfStarted) await this.#options.launcher.stop();
+      }
+      this.#state = 'disconnected';
+      throw error;
+    }
     if (!handshake.ok) {
       await connection.close();
+      // H-9: 自启 Core 后 handshake 失败时停止 launcher。
+      if (selfStarted) await this.#options.launcher.stop();
       if (handshake.error === 'authentication_failed') {
         this.#state = 'authentication_failed';
         return { ok: false, state: 'authentication_failed', error: 'authentication_failed' };
@@ -153,6 +172,7 @@ export class CoreSupervisor {
     const negotiated = negotiateProtocolVersion(this.#options.protocolVersion, handshake.version);
     if (!negotiated.ok) {
       await connection.close();
+      if (selfStarted) await this.#options.launcher.stop();
       this.#state = 'version_conflict';
       return { ok: false, state: 'version_conflict', error: 'incompatible_protocol' };
     }
@@ -252,10 +272,19 @@ export class CoreSupervisor {
     }
 
     if (this.#connection !== undefined) {
-      await this.#connection.request('core.shutdown', { mode: 'terminate_all' });
+      // H-7: core.shutdown 失败时仍需关闭连接与停止 launcher，避免子进程泄漏。
+      try {
+        await this.#connection.request('core.shutdown', { mode: 'terminate_all' });
+      } finally {
+        try {
+          await this.#closeConnection();
+        } finally {
+          await this.#options.launcher.stop();
+        }
+      }
+    } else {
+      await this.#options.launcher.stop();
     }
-    await this.#closeConnection();
-    await this.#options.launcher.stop();
     this.#state = 'closed';
     return { ok: true, state: 'closed' };
   }

@@ -6,6 +6,7 @@ import {
 } from '@synapse-term/domain';
 
 import type { ContextBuildInput, ContextBuilder } from '../context/context-builder.js';
+import { SecretRedactor } from '@synapse-term/infrastructure';
 import type {
   ModelAdapter,
   ModelEvent,
@@ -151,9 +152,18 @@ export interface AgentRuntimeOptions {
   maxOutputTokens?: number;
   reasoningEffort?: ReasoningEffort;
   maxInputTokens?: number;
+  redactor?: SecretRedactor;
   onTaskChange?: (task: AgentTask) => void;
   onModelEvent?: (event: ModelEvent, delivery?: { replaceAssistantText?: boolean }) => void;
   onItem?: (item: ModelInputItem) => void;
+  /**
+   * 批次中未实际执行（被跳过）的 tool call 的占位结果（H-13 补全）。
+   * 宿主可用它把 ToolCallRecord 从 validating 推进到终态，避免记录悬挂。
+   */
+  onSkippedToolResult?: (
+    toolCallId: string,
+    result: { ok: false; error: string; message?: string; recoverable?: boolean },
+  ) => void;
 }
 
 export interface AgentRuntimeResult {
@@ -184,6 +194,7 @@ type CallOutcome =
 
 export class AgentRuntime {
   readonly #options: AgentRuntimeOptions;
+  readonly #redactor: SecretRedactor;
   readonly #controller = new AbortController();
   readonly #maxTurns: number;
   readonly #maxToolCalls: number;
@@ -205,6 +216,7 @@ export class AgentRuntime {
 
   constructor(options: AgentRuntimeOptions) {
     this.#options = options;
+    this.#redactor = options.redactor ?? new SecretRedactor();
     this.#task = structuredClone(options.task);
     this.#maxTurns = options.maxTurns ?? 24;
     this.#maxToolCalls = options.maxToolCalls ?? 40;
@@ -466,7 +478,7 @@ export class AgentRuntime {
       if (turnText.length > 0 && !deferModelEvents) {
         const item = { role: 'assistant' as const, content: turnText };
         items.push(item);
-        this.#options.onItem?.(structuredClone(item));
+        this.#emitItem(item);
       }
       for (const call of calls) {
         const item = {
@@ -476,7 +488,7 @@ export class AgentRuntime {
           argumentsJson: JSON.stringify(call.arguments),
         } as const;
         items.push(item);
-        this.#options.onItem?.(structuredClone(item));
+        this.#emitItem(item);
       }
       hasUsedTool = true;
       const outcome = await this.#executeCalls(
@@ -515,6 +527,8 @@ export class AgentRuntime {
     for (let index = 0; index < calls.length; index += 1) {
       const call = calls[index]!;
       if (this.#cancelRequested) {
+        // H-13 补全：取消时本批次所有未执行 call 同样缺 tool_result，需补占位结果。
+        this.#appendSkippedToolResults(calls, index, items, toolResults, 'cancelled');
         return { kind: 'paused', result: this.#finish('cancelled', answer, toolResults, turn) };
       }
       const callSignature = stableJson({ name: call.name, arguments: call.arguments });
@@ -533,7 +547,14 @@ export class AgentRuntime {
           isError: true,
         };
         items.push(item);
-        this.#options.onItem?.(structuredClone(item));
+        this.#emitItem(item);
+        this.#appendSkippedToolResults(
+          calls,
+          index + 1,
+          items,
+          toolResults,
+          'agent_loop_limit_reached',
+        );
         return {
           kind: 'paused',
           result: this.#finish('failed', answer, toolResults, turn, repeatedResult.message),
@@ -560,8 +581,15 @@ export class AgentRuntime {
         toolResults.push(result);
         const item = { type: 'tool_result' as const, toolCallId: call.id, content, isError: true };
         items.push(item);
-        this.#options.onItem?.(structuredClone(item));
+        this.#emitItem(item);
         if (this.#recordNoProgress(call, result)) {
+          this.#appendSkippedToolResults(
+            calls,
+            index + 1,
+            items,
+            toolResults,
+            'agent_loop_limit_reached',
+          );
           return {
             kind: 'paused',
             result: this.#finish(
@@ -575,8 +603,18 @@ export class AgentRuntime {
         }
         if (result.recoverable === true) {
           if (result.error === 'terminal_busy') continue;
+          // 为批次中剩余未执行的 call 生成占位 tool_result（H-13）：
+          // 否则 items 里已有 assistant_tool_call 但缺 tool_result，违反模型 API 契约。
+          this.#appendSkippedToolResults(calls, index + 1, items, toolResults);
           return { kind: 'continue' };
         }
+        this.#appendSkippedToolResults(
+          calls,
+          index + 1,
+          items,
+          toolResults,
+          result.error ?? 'tool_call_failed',
+        );
         return {
           kind: 'paused',
           result: this.#finish('failed', answer, toolResults, turn, result.message ?? result.error),
@@ -584,6 +622,15 @@ export class AgentRuntime {
       }
       if (this.#cancelRequested) {
         toolResults.push(result);
+        const item = {
+          type: 'tool_result',
+          toolCallId: call.id,
+          content: JSON.stringify(result),
+          isError: false,
+        } as const;
+        items.push(item);
+        this.#emitItem(item);
+        this.#appendSkippedToolResults(calls, index + 1, items, toolResults, 'cancelled');
         return { kind: 'paused', result: this.#finish('cancelled', answer, toolResults, turn) };
       }
       if (isCommandUnavailableResult(result.result)) {
@@ -602,7 +649,9 @@ export class AgentRuntime {
           isError: true,
         };
         items.push(item);
-        this.#options.onItem?.(structuredClone(item));
+        this.#emitItem(item);
+        // 同 H-13：为剩余未执行 call 生成占位 tool_result。
+        this.#appendSkippedToolResults(calls, index + 1, items, toolResults);
         return { kind: 'continue' };
       }
       const status = resultStatus(result.result);
@@ -613,7 +662,10 @@ export class AgentRuntime {
           answer,
           turn,
           calls: structuredClone(calls.slice(index)),
-          toolCallCount,
+          // 包含本批次中审批前已执行的 call（0..index-1）：
+          // 恢复时 toolCallCount += checkpoint.calls.length 只加剩余 call 数，
+          // 若不补 index 会低估计数，可绕过 maxToolCalls 限制（H-12）。
+          toolCallCount: toolCallCount + index,
           completionReviewCount,
           hasUsedTool,
         };
@@ -630,8 +682,15 @@ export class AgentRuntime {
         isError: false,
       } as const;
       items.push(item);
-      this.#options.onItem?.(structuredClone(item));
+      this.#emitItem(item);
       if (this.#recordNoProgress(call, result)) {
+        this.#appendSkippedToolResults(
+          calls,
+          index + 1,
+          items,
+          toolResults,
+          'agent_loop_limit_reached',
+        );
         return {
           kind: 'paused',
           result: this.#finish(
@@ -644,6 +703,13 @@ export class AgentRuntime {
         };
       }
       if (this.#durationExceeded) {
+        this.#appendSkippedToolResults(
+          calls,
+          index + 1,
+          items,
+          toolResults,
+          'agent_loop_limit_reached',
+        );
         return {
           kind: 'paused',
           result: this.#finish(
@@ -656,12 +722,20 @@ export class AgentRuntime {
         };
       }
       if (status === 'interaction_required') {
+        this.#appendSkippedToolResults(
+          calls,
+          index + 1,
+          items,
+          toolResults,
+          'interaction_required',
+        );
         return {
           kind: 'paused',
           result: this.#finish('waiting_user', answer, toolResults, turn),
         };
       }
       if (this.#disconnectRequested) {
+        this.#appendSkippedToolResults(calls, index + 1, items, toolResults, 'disconnected');
         return {
           kind: 'paused',
           result: this.#finish('suspended', answer, toolResults, turn),
@@ -682,6 +756,59 @@ export class AgentRuntime {
       this.#repeatedNoProgress = 1;
     }
     return this.#repeatedNoProgress >= this.#maxRepeatedNoProgress;
+  }
+
+  /**
+   * H-14：对外发射 item 前先脱敏。
+   *
+   * onItem 只用于 UI 持久化与时间线展示；模型请求由 ContextBuilder 统一脱敏，
+   * 工具执行则始终使用装配阶段的原始 arguments。这里脱敏只阻止密钥进入
+   * 持久化存储与时间线，不会改变实际执行的命令。
+   */
+  #emitItem(item: ModelInputItem): void {
+    this.#options.onItem?.(structuredClone(this.#redactItem(item)));
+  }
+
+  #redactItem(item: ModelInputItem): ModelInputItem {
+    if ('role' in item) return { ...item, content: this.#redactor.redact(item.content).text };
+    if (item.type === 'assistant_tool_call') {
+      return { ...item, argumentsJson: this.#redactor.redact(item.argumentsJson).text };
+    }
+    return { ...item, content: this.#redactor.redact(item.content).text };
+  }
+
+  /**
+   * 为批次中因前序可恢复错误而未执行的 tool call 生成占位 tool_result（H-13）。
+   *
+   * 模型 API 契约要求每个 assistant_tool_call 都有对应的 tool_result；
+   * 缺失会导致 provider 返回错误。这里为剩余 call 补一个 isError=true 的占位结果，
+   * 让模型在下一轮能看到"这些 call 因前序失败被跳过"的明确信号。
+   */
+  #appendSkippedToolResults(
+    calls: readonly AssembledToolCall[],
+    startIndex: number,
+    items: ModelInputItem[],
+    toolResults: unknown[],
+    reason = 'skipped_due_to_prior_failure',
+  ): void {
+    for (let i = startIndex; i < calls.length; i += 1) {
+      const skipped = calls[i]!;
+      const placeholder = {
+        ok: false as const,
+        error: reason,
+        message: `tool call skipped: ${reason}`,
+      };
+      toolResults.push(placeholder);
+      const item = {
+        type: 'tool_result' as const,
+        toolCallId: skipped.id,
+        content: JSON.stringify(placeholder),
+        isError: true,
+      };
+      items.push(item);
+      this.#emitItem(item);
+      this.#options.onSkippedToolResult?.(skipped.id, placeholder);
+    }
   }
 
   #setStatus(status: AgentTaskStatus): void {
