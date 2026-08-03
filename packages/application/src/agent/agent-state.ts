@@ -12,6 +12,7 @@ import type {
   CommandRisk,
   ModelConfiguration,
   ProviderProfile,
+  StagedAgentAttachment,
 } from '@synapse-term/domain';
 import type { ModelInputItem } from '@synapse-term/model-providers';
 import type { ModelAdapter } from '@synapse-term/model-providers';
@@ -58,6 +59,7 @@ export interface AgentState {
   pendingApproval: PendingApproval | undefined;
   executorSubscription: PtyDisposable;
   history: ModelInputItem[];
+  attachments: readonly StagedAgentAttachment[];
   nextModelSequence: number;
   assistantTimelineId: string;
   assistantText: string;

@@ -550,6 +550,7 @@ function modelCapabilities(value: unknown): {
   streaming: boolean;
   toolCalls: boolean;
   reasoning?: boolean;
+  multimodal: boolean;
 } {
   const input = record(value);
   return {
@@ -557,6 +558,7 @@ function modelCapabilities(value: unknown): {
     streaming: input.streaming === true,
     toolCalls: input.toolCalls === true,
     ...(typeof input.reasoning === 'boolean' ? { reasoning: input.reasoning } : {}),
+    multimodal: input.multimodal === true,
   };
 }
 

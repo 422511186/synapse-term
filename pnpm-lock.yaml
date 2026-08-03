@@ -120,6 +120,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)
+      '@synapse-term/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@synapse-term/infrastructure':
         specifier: workspace:*
         version: link:../../packages/infrastructure

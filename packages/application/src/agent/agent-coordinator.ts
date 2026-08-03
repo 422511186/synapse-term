@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentAttachmentInput,
+  type AgentAttachmentMetadata,
+  type StagedAgentAttachment,
   createAgentConversation,
   createAgentModelSelection,
   createAgentTurn,
@@ -30,7 +33,7 @@ import {
 } from '@synapse-term/agent-service';
 import type { AuditService } from '@synapse-term/infrastructure';
 import type { CoreRepositories } from '@synapse-term/infrastructure';
-import type { ModelEvent, ModelInputItem } from '@synapse-term/model-providers';
+import type { ModelContentPart, ModelEvent, ModelInputItem } from '@synapse-term/model-providers';
 import {
   ApprovalManager,
   hashCommand,
@@ -63,6 +66,11 @@ import {
   commandTimelineStatus,
   nextModelSequence,
 } from './agent-timeline-projector.js';
+import {
+  cleanupAgentAttachmentSession,
+  stageAgentAttachments,
+  type StagedAgentAttachmentBundle,
+} from './agent-attachment-staging.js';
 
 export interface AgentCoordinatorOptions {
   sessions: SessionManager;
@@ -90,6 +98,7 @@ export interface AgentCoordinatorOptions {
 }
 
 export interface AgentStartOptions {
+  attachments?: readonly AgentAttachmentInput[];
   modelConfigurationId?: string;
   reasoningEffort?: ReasoningEffort;
   permissionMode?: AgentPermissionMode;
@@ -189,9 +198,17 @@ export class AgentCoordinator {
     });
     const running = this.#scheduler.start(task.id);
     this.#repositories.saveAgentTask(running);
+    let staging: StagedAgentAttachmentBundle | undefined;
     // H-4: task 已持久化为 running，但 state 尚未入表；此区间抛错需回滚 task 为 failed，
     // 否则 cancel 找不到 state 而遗留孤立 running task，污染 activeTaskCount。
     try {
+      staging = await stageAgentAttachments({
+        sessionId,
+        taskId: running.id,
+        attachments: options.attachments ?? [],
+        multimodal: model.declaredCapabilities.multimodal === true,
+        ...(this.#localFiles === undefined ? {} : { localFiles: this.#localFiles }),
+      });
       this.#buildAndStartAgentState(
         sessionId,
         running,
@@ -202,8 +219,10 @@ export class AgentCoordinator {
         goal,
         options,
         reasoningEffort,
+        staging,
       );
     } catch (error) {
+      await staging?.dispose();
       try {
         const failed = this.#scheduler.transition(running.id, 'failed');
         this.#repositories.saveAgentTask(failed);
@@ -232,6 +251,7 @@ export class AgentCoordinator {
     goal: string,
     options: AgentStartOptions,
     reasoningEffort: ReasoningEffort | undefined,
+    staging: StagedAgentAttachmentBundle | undefined,
   ): void {
     let conversation = [...this.#repositories.listAgentConversations(sessionId)]
       .reverse()
@@ -298,6 +318,9 @@ export class AgentCoordinator {
       sequence: nextModelSequence(priorItems),
       type: 'user_text',
       content: goal,
+      ...(staging === undefined || staging.attachments.length === 0
+        ? {}
+        : { attachments: staging.attachments.map(toAttachmentMetadata) }),
     });
     this.#repositories.saveModelItem(userItem);
     this.#audit?.record({
@@ -314,6 +337,8 @@ export class AgentCoordinator {
     const adapter = this.#createAdapter(profile, model, secret);
     const approvals = new ApprovalManager();
     const executor = new CommandExecutor(actor);
+    const stagedAttachments = staging?.attachments ?? [];
+    const stateLocalFiles = stagedAttachments.length > 0 ? staging!.localFiles : this.#localFiles;
     const state: AgentState = {
       task: running,
       conversation,
@@ -332,6 +357,7 @@ export class AgentCoordinator {
       pendingApproval: undefined,
       executorSubscription: undefined as never,
       history: compacted.history,
+      attachments: stagedAttachments,
       nextModelSequence: userItem.sequence + 1,
       assistantTimelineId: randomUUID(),
       assistantText: '',
@@ -351,7 +377,7 @@ export class AgentCoordinator {
       permissionMode: conversation.permissionMode,
       ...(this.#journal === undefined ? {} : { journal: this.#journal }),
       ...(this.#audit === undefined ? {} : { audit: this.#audit }),
-      ...(this.#localFiles === undefined ? {} : { localFiles: this.#localFiles }),
+      ...(stateLocalFiles === undefined ? {} : { localFiles: stateLocalFiles }),
       ...(this.#localFilePolicy === undefined ? {} : { localFilePolicy: this.#localFilePolicy }),
     });
     state.gateway = gateway;
@@ -409,6 +435,9 @@ export class AgentCoordinator {
       sessionId,
       kind: 'user',
       text: goal,
+      ...(stagedAttachments.length === 0
+        ? {}
+        : { attachments: stagedAttachments.map(toAttachmentMetadata) }),
       conversationId: conversation.id,
       turnId: runningTurn.value.id,
       occurredAt: new Date().toISOString(),
@@ -469,6 +498,10 @@ export class AgentCoordinator {
     if (conversation === undefined || conversation.id !== expectedConversationId) {
       throw coordinatorError('agent_task_conflict', 'Conversation changed before reset');
     }
+    await cleanupAgentAttachmentSession({
+      sessionId,
+      ...(this.#localFiles === undefined ? {} : { localFiles: this.#localFiles }),
+    });
     this.#repositories.saveAgentConversation(resetAgentConversation(conversation));
     this.#audit?.record({
       actor: { kind: 'user' },
@@ -612,6 +645,20 @@ export class AgentCoordinator {
         goal: state.task.goal,
         sessionSummary: buildSessionSummary(currentSnapshot),
         history: state.history,
+        ...(state.attachments.length === 0
+          ? {}
+          : { attachments: state.attachments.map(toAttachmentMetadata) }),
+        ...(state.attachments.filter((attachment) => attachment.kind === 'image').length === 0
+          ? {}
+          : {
+              imageParts: state.attachments
+                .filter((attachment) => attachment.kind === 'image')
+                .map((attachment) => ({
+                  type: 'image' as const,
+                  mimeType: attachment.mimeType,
+                  dataBase64: attachment.dataBase64,
+                })),
+            }),
       },
       ...(this.#maxTurns === undefined ? {} : { maxTurns: this.#maxTurns }),
       maxOutputTokens: state.model.maxOutputTokens,
@@ -861,7 +908,7 @@ export class AgentCoordinator {
           turnId: state.turn.id,
           sequence: state.nextModelSequence++,
           type: 'assistant_text',
-          content: item.content,
+          content: modelContentText(item.content),
         }),
       );
       return;
@@ -1066,6 +1113,22 @@ function chooseModel(
 ): ModelConfiguration | undefined {
   if (requestedId !== undefined) return models.find((model) => model.id === requestedId);
   return models.find((model) => model.isDefault) ?? models[0];
+}
+
+function toAttachmentMetadata(attachment: StagedAgentAttachment): AgentAttachmentMetadata {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    kind: attachment.kind,
+    ...(attachment.relativePath === undefined ? {} : { relativePath: attachment.relativePath }),
+  };
+}
+
+function modelContentText(content: string | readonly ModelContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content.map((part) => (part.type === 'text' ? part.text : '[图片附件]')).join('');
 }
 
 function transitionToolCallRecord(record: ToolCallRecord, status: ToolCallStatus): ToolCallRecord {

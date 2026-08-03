@@ -10,7 +10,9 @@ import type {
 import {
   streamWithPreEventRetry,
   type ModelAdapter,
+  type ModelContentPart,
   type ModelEvent,
+  type ModelImageMimeType,
   type ModelInputItem,
   type ModelRequest,
 } from './model-adapter.js';
@@ -26,6 +28,7 @@ interface AdapterOptions {
   headers?: Readonly<Record<string, string>>;
   timeoutMs?: number;
   maxAttempts?: number;
+  multimodal?: boolean;
   supportedReasoningEfforts?: readonly ModelReasoningEffort[];
 }
 
@@ -47,6 +50,7 @@ export function createProviderAdapter(
       : {
           supportedReasoningEfforts:
             model.declaredCapabilities.reasoning === true ? model.supportedReasoningEfforts : [],
+          multimodal: model.declaredCapabilities.multimodal === true,
         }),
   };
   switch (profile.protocol) {
@@ -63,14 +67,17 @@ export class OpenAIResponsesAdapter implements ModelAdapter {
   readonly #client: StreamingClient;
   readonly #maxAttempts: number;
   readonly #supportedReasoningEfforts: readonly ModelReasoningEffort[] | undefined;
+  readonly #multimodal: boolean;
 
   constructor(options: AdapterOptions = {}) {
     this.#client = options.client ?? createOpenAIResponsesClient(options);
     this.#maxAttempts = options.maxAttempts ?? 2;
     this.#supportedReasoningEfforts = options.supportedReasoningEfforts;
+    this.#multimodal = options.multimodal === true;
   }
 
   async *stream(request: ModelRequest, signal?: AbortSignal): AsyncIterable<ModelEvent> {
+    assertMultimodalRequest(request, this.#multimodal);
     const calls = new Map<string, { id: string; name: string }>();
     try {
       const events = streamWithPreEventRetry(
@@ -142,14 +149,17 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
   readonly #client: StreamingClient;
   readonly #maxAttempts: number;
   readonly #supportedReasoningEfforts: readonly ModelReasoningEffort[] | undefined;
+  readonly #multimodal: boolean;
 
   constructor(options: AdapterOptions = {}) {
     this.#client = options.client ?? createOpenAIChatClient(options);
     this.#maxAttempts = options.maxAttempts ?? 8;
     this.#supportedReasoningEfforts = options.supportedReasoningEfforts;
+    this.#multimodal = options.multimodal === true;
   }
 
   async *stream(request: ModelRequest, signal?: AbortSignal): AsyncIterable<ModelEvent> {
+    assertMultimodalRequest(request, this.#multimodal);
     const calls = new Map<
       number,
       { id: string; name: string; argumentsJson: string; completed: boolean }
@@ -230,14 +240,17 @@ export class AnthropicMessagesAdapter implements ModelAdapter {
   readonly #client: StreamingClient;
   readonly #maxAttempts: number;
   readonly #supportedReasoningEfforts: readonly ModelReasoningEffort[] | undefined;
+  readonly #multimodal: boolean;
 
   constructor(options: AdapterOptions = {}) {
     this.#client = options.client ?? createAnthropicClient(options);
     this.#maxAttempts = options.maxAttempts ?? 2;
     this.#supportedReasoningEfforts = options.supportedReasoningEfforts;
+    this.#multimodal = options.multimodal === true;
   }
 
   async *stream(request: ModelRequest, signal?: AbortSignal): AsyncIterable<ModelEvent> {
+    assertMultimodalRequest(request, this.#multimodal);
     const calls = new Map<number, { id: string; name: string; argumentsJson: string }>();
     let inputTokens = 0;
     let outputTokens = 0;
@@ -424,7 +437,12 @@ function buildAnthropicRequest(
 ): Record<string, unknown> {
   const system = request.items
     .filter((item) => 'role' in item && item.role === 'system')
-    .map((item) => ('role' in item ? item.content : ''))
+    .map((item) => {
+      if (!('role' in item) || typeof item.content === 'string') {
+        return 'role' in item && typeof item.content === 'string' ? item.content : '';
+      }
+      return item.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+    })
     .join('\n');
   return {
     model: request.model,
@@ -465,7 +483,7 @@ function anthropicThinking(
 }
 
 function responseInputItem(item: ModelInputItem): Record<string, unknown> {
-  if ('role' in item) return { role: item.role, content: item.content };
+  if ('role' in item) return { role: item.role, content: responseMessageContent(item.content) };
   if (item.type === 'assistant_tool_call') {
     return {
       type: 'function_call',
@@ -482,7 +500,7 @@ function responseInputItem(item: ModelInputItem): Record<string, unknown> {
 }
 
 function chatInputItem(item: ModelInputItem): Record<string, unknown> {
-  if ('role' in item) return { role: item.role, content: item.content };
+  if ('role' in item) return { role: item.role, content: chatMessageContent(item.content) };
   if (item.type === 'assistant_tool_call') {
     return {
       role: 'assistant',
@@ -505,7 +523,10 @@ function notSystemItem(item: ModelInputItem): boolean {
 
 function anthropicInputItem(item: ModelInputItem): Record<string, unknown> {
   if ('role' in item) {
-    return { role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content };
+    return {
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: anthropicMessageContent(item.content),
+    };
   }
   if (item.type === 'assistant_tool_call') {
     return {
@@ -531,6 +552,68 @@ function anthropicInputItem(item: ModelInputItem): Record<string, unknown> {
       },
     ],
   };
+}
+
+function responseMessageContent(content: string | readonly ModelContentPart[]): unknown {
+  if (typeof content === 'string') return content;
+  return content.map((part) =>
+    part.type === 'image'
+      ? { type: 'input_image', image_url: imageDataUrl(part) }
+      : { type: 'input_text', text: part.text },
+  );
+}
+
+function chatMessageContent(content: string | readonly ModelContentPart[]): unknown {
+  if (typeof content === 'string') return content;
+  return content.map((part) =>
+    part.type === 'image'
+      ? { type: 'image_url', image_url: { url: imageDataUrl(part) } }
+      : { type: 'text', text: part.text },
+  );
+}
+
+function anthropicMessageContent(content: string | readonly ModelContentPart[]): unknown {
+  if (typeof content === 'string') return content;
+  return content.map((part) =>
+    part.type === 'image'
+      ? {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: part.mimeType,
+            data: part.dataBase64,
+          },
+        }
+      : { type: 'text', text: part.text },
+  );
+}
+
+function imageDataUrl(part: Extract<ModelContentPart, { type: 'image' }>): string {
+  return `data:${part.mimeType};base64,${part.dataBase64}`;
+}
+
+function assertMultimodalRequest(request: ModelRequest, multimodal: boolean): void {
+  const supportedImageMimes = new Set<ModelImageMimeType>([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+  ]);
+  for (const item of request.items) {
+    if (!('role' in item) || typeof item.content === 'string') continue;
+    for (const part of item.content) {
+      if (part.type !== 'image') continue;
+      if (!multimodal) {
+        throw new Error('multimodal_unsupported: 当前模型不支持图片输入。');
+      }
+      if (!supportedImageMimes.has(part.mimeType)) {
+        throw new Error(`unsupported_image_mime: ${part.mimeType}`);
+      }
+      if (typeof part.dataBase64 !== 'string' || part.dataBase64.length === 0) {
+        throw new Error('image_data_missing: 图片内容缺少 base64 数据。');
+      }
+    }
+  }
 }
 
 function parseArguments(value: string): unknown {

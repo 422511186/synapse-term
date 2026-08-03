@@ -1,6 +1,6 @@
 /** 模型配置页（自 app.tsx 拆分）：乐观启用/停用、检测三态、删除确认与防连点 */
 import { useState, type JSX } from 'react';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Check, Plus, X } from 'lucide-react';
 
 import { errorMessageZh } from '@synapse-term/ui-platform';
 import type { DesktopApi, ModelConfigurationView } from '../../preload/preload-api.js';
@@ -117,7 +117,9 @@ export function ModelSettings({
               <tr>
                 <th className="px-5 py-4 font-medium">模型名称</th>
                 <th className="px-5 py-4 font-medium">服务商</th>
-                <th className="px-5 py-4 font-medium">运行状态</th>
+                <th className="px-5 py-4 font-medium">启用/停用</th>
+                <th className="px-5 py-4 font-medium">检测结果</th>
+                <th className="px-5 py-4 font-medium">多模态</th>
                 <th className="px-5 py-4 font-medium">默认</th>
                 <th className="px-5 py-4 text-right font-medium">操作</th>
               </tr>
@@ -147,13 +149,50 @@ export function ModelSettings({
                         onClick={() => void toggleEnabled(model)}
                         type="button"
                       >
-                        {model.enabled ? '已启用' : '已停用'} ·{' '}
+                        {model.enabled ? '已启用' : '已停用'}
+                      </button>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                          model.status === 'available'
+                            ? 'text-emerald-500'
+                            : model.status === 'unavailable'
+                              ? 'text-red-400'
+                              : model.status === 'validating'
+                                ? 'text-amber-400'
+                                : 'text-muted-foreground'
+                        }`}
+                        title={
+                          model.validation.status === 'unavailable'
+                            ? model.validation.reason
+                            : undefined
+                        }
+                      >
                         {model.status === 'available'
                           ? '可用'
                           : model.status === 'unavailable'
                             ? '不可用'
-                            : '待检测'}
-                      </button>
+                            : model.status === 'validating'
+                              ? '检测中'
+                              : '待检测'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                          model.declaredCapabilities.multimodal === true
+                            ? 'text-emerald-500'
+                            : 'text-muted-foreground'
+                        }`}
+                      >
+                        {model.declaredCapabilities.multimodal === true ? (
+                          <Check size={13} />
+                        ) : (
+                          <X size={13} />
+                        )}
+                        {model.declaredCapabilities.multimodal === true ? '支持' : '不支持'}
+                      </span>
                     </td>
                     <td className="px-5 py-4">
                       <button

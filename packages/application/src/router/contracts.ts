@@ -5,6 +5,7 @@
  * 这些类型保持从 core-request-router.ts 重新导出，公共 API 不因拆分而改变。
  */
 import type {
+  AgentAttachmentInput,
   AgentPermissionMode,
   ModelConfiguration,
   ProviderProfile,
@@ -45,6 +46,7 @@ export interface AgentCoordinatorLike {
     sessionId: string,
     goal: string,
     options?: {
+      attachments?: readonly AgentAttachmentInput[];
       modelConfigurationId?: string;
       reasoningEffort?: ReasoningEffort;
       permissionMode?: AgentPermissionMode;

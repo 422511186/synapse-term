@@ -1,4 +1,4 @@
-import type { AgentHistoryView, AgentTimelineItem } from '../contracts.js';
+import type { AgentAttachmentMetadata, AgentHistoryView, AgentTimelineItem } from '../contracts.js';
 
 export function historyToTimeline(history: AgentHistoryView): AgentTimelineItem[] {
   const turns = new Map(history.turns.map((turn) => [turn.id, turn]));
@@ -18,7 +18,12 @@ export function historyToTimeline(history: AgentHistoryView): AgentTimelineItem[
     const turn = turns.get(turnId ?? '');
     switch (item.type) {
       case 'user_text':
-        timeline.push({ ...base, kind: 'user', text: stringValue(item.content) ?? '' });
+        timeline.push({
+          ...base,
+          kind: 'user',
+          text: stringValue(item.content) ?? '',
+          ...timelineAttachmentMetadata(item.attachments),
+        });
         break;
       case 'assistant_text':
         timeline.push({
@@ -102,4 +107,40 @@ function commandFromToolCall(name: string, argumentsJson: string): string | unde
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function timelineAttachmentMetadata(
+  value: unknown,
+): { attachments: AgentAttachmentMetadata[] } | Record<string, never> {
+  if (!Array.isArray(value) || value.length === 0) return {};
+  const attachments: AgentAttachmentMetadata[] = [];
+  for (const candidate of value) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const attachment = candidate as Record<string, unknown>;
+    const id = stringValue(attachment.id);
+    const name = stringValue(attachment.name);
+    const mimeType = stringValue(attachment.mimeType);
+    const sizeBytes = attachment.sizeBytes;
+    const kind = stringValue(attachment.kind);
+    const relativePath = stringValue(attachment.relativePath);
+    if (
+      id === undefined ||
+      name === undefined ||
+      mimeType === undefined ||
+      typeof sizeBytes !== 'number' ||
+      Number.isNaN(sizeBytes) ||
+      (kind !== 'image' && kind !== 'file')
+    ) {
+      continue;
+    }
+    attachments.push({
+      id,
+      name,
+      mimeType,
+      sizeBytes,
+      kind,
+      ...(relativePath === undefined ? {} : { relativePath }),
+    });
+  }
+  return attachments.length === 0 ? {} : { attachments };
 }

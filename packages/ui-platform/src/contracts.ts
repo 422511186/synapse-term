@@ -33,6 +33,17 @@ export interface TerminalReplay {
   nextAfterSequence?: number;
 }
 
+export type AgentAttachmentKind = 'image' | 'file';
+
+export interface AgentAttachmentMetadata {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: AgentAttachmentKind;
+  relativePath?: string | undefined;
+}
+
 export interface AgentTimelineItem {
   id: string;
   sessionId: string;
@@ -58,6 +69,7 @@ export interface AgentTimelineItem {
   toolCallId?: string;
   command?: string;
   toolResult?: string;
+  attachments?: AgentAttachmentMetadata[];
   occurredAt: string;
 }
 
@@ -125,6 +137,7 @@ export interface ModelCapabilities {
   streaming: boolean;
   toolCalls: boolean;
   reasoning?: boolean | undefined;
+  multimodal?: boolean | undefined;
 }
 
 export type ModelValidation =

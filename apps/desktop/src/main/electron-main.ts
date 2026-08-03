@@ -5,12 +5,13 @@ import { userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { CURRENT_PROTOCOL_VERSION } from '@synapse-term/protocol';
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 
 import { getDesktopCoreConfig } from './core-config.js';
 import { NodeCoreProcessLauncher } from './core-process.js';
 import { CoreSupervisor } from './core-supervisor.js';
 import { createDesktopCoreBridge, type DesktopCoreBridge } from './desktop-core-bridge.js';
+import { createDesktopAttachmentController } from './desktop-attachment-controller.js';
 import {
   DESKTOP_ACP_IPC_CHANNELS,
   DESKTOP_MCP_IPC_CHANNELS,
@@ -211,6 +212,20 @@ async function startDesktopMain(): Promise<void> {
   }
   const supervisor = createSupervisor();
   debug('supervisor-created');
+  const attachmentController = createDesktopAttachmentController({
+    selectPaths: async (kind) => {
+      const result = await dialog.showOpenDialog({
+        title: kind === 'image' ? '选择图片' : '选择文件',
+        properties: ['openFile', 'multiSelections'],
+        ...(kind === 'image'
+          ? {
+              filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+            }
+          : {}),
+      });
+      return result.canceled ? [] : result.filePaths;
+    },
+  });
   const bridge = createDesktopCoreBridge(
     supervisor,
     (event) => broadcast('terminal:output', event),
@@ -219,6 +234,7 @@ async function startDesktopMain(): Promise<void> {
     () => ({ home: app.getPath('home'), shells: new ShellLocator().list() }),
     (event) => broadcast('session:resources', event),
     (event) => broadcast('session:changed', event),
+    attachmentController,
   );
   const mcpController = createMcpController({
     settingsDirectory: join(app.getPath('userData'), 'mcp'),

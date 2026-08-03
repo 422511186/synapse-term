@@ -273,6 +273,172 @@ describe('provider adapters', () => {
     ]);
   });
 
+  it('maps image content parts to OpenAI Responses input_image items', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const client = {
+      create: async (value: Record<string, unknown>) => {
+        captured.push(value);
+        return fixture([
+          { type: 'response.completed', response: { usage: {}, status: 'completed' } },
+        ]);
+      },
+    };
+    await collectModelEvents(
+      new OpenAIResponsesAdapter({ client, multimodal: true }).stream({
+        model: 'test-model',
+        items: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe this image' },
+              { type: 'image', mimeType: 'image/png', dataBase64: 'aGVsbG8=' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(captured[0]?.input).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'describe this image' },
+          { type: 'input_image', image_url: 'data:image/png;base64,aGVsbG8=' },
+        ],
+      },
+    ]);
+  });
+
+  it('maps image content parts to Chat Completions image_url blocks', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const client = {
+      create: async (value: Record<string, unknown>) => {
+        captured.push(value);
+        return fixture([{ choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+      },
+    };
+    await collectModelEvents(
+      new OpenAIChatCompletionsAdapter({ client, multimodal: true }).stream({
+        model: 'test-model',
+        items: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe this image' },
+              { type: 'image', mimeType: 'image/jpeg', dataBase64: 'aGVsbG8=' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(captured[0]?.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'describe this image' },
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/jpeg;base64,aGVsbG8=' },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('maps image content parts to Anthropic base64 image blocks', async () => {
+    const captured: Record<string, unknown>[] = [];
+    const client = {
+      create: async (value: Record<string, unknown>) => {
+        captured.push(value);
+        return fixture([{ type: 'message_stop' }]);
+      },
+    };
+    await collectModelEvents(
+      new AnthropicMessagesAdapter({ client, multimodal: true }).stream({
+        model: 'test-model',
+        items: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe this image' },
+              { type: 'image', mimeType: 'image/webp', dataBase64: 'aGVsbG8=' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(captured[0]?.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'describe this image' },
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/webp',
+              data: 'aGVsbG8=',
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('rejects image parts before sending when multimodal is not declared', async () => {
+    await expect(
+      collectModelEvents(
+        new OpenAIResponsesAdapter({ multimodal: false }).stream({
+          model: 'test-model',
+          items: [
+            {
+              role: 'user',
+              content: [{ type: 'image', mimeType: 'image/png', dataBase64: 'aGVsbG8=' }],
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow('multimodal_unsupported');
+  });
+
+  it('rejects unsupported image MIME and missing base64 data', async () => {
+    const imagePart = {
+      type: 'image' as const,
+      mimeType: 'image/svg+xml' as never,
+      dataBase64: 'aGVsbG8=',
+    };
+    await expect(
+      collectModelEvents(
+        new OpenAIChatCompletionsAdapter({ multimodal: true }).stream({
+          model: 'test-model',
+          items: [{ role: 'user', content: [imagePart] }],
+        }),
+      ),
+    ).rejects.toThrow('unsupported_image_mime');
+
+    await expect(
+      collectModelEvents(
+        new AnthropicMessagesAdapter({ multimodal: true }).stream({
+          model: 'test-model',
+          items: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  mimeType: 'image/png',
+                  dataBase64: '',
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow('image_data_missing');
+  });
+
   it('maps structured tool history to Chat Completions messages', async () => {
     const captured: Record<string, unknown>[] = [];
     const client = {

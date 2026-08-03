@@ -4681,6 +4681,9 @@
 .bottom-4 {
   bottom: 1rem;
 }
+.bottom-full {
+  bottom: 100%;
+}
 .max-w-sm {
   max-width: 24rem;
 }

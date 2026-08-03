@@ -30,7 +30,9 @@ test('shows model test three states and blocks repeated clicks while pending', a
 
   await expect(testButton).toContainText('检测通过', { timeout: 3_000 });
   await expect(page.getByRole('status').filter({ hasText: '检测通过' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '快速诊断 启用状态' })).toContainText('可用');
+  await expect(
+    page.getByRole('table', { name: '模型配置列表' }).locator('tr').filter({ hasText: '快速诊断' }),
+  ).toContainText('可用');
 });
 
 test('reports an unavailable model as failed instead of 检测通过', async ({ page }) => {
@@ -48,7 +50,9 @@ test('reports an unavailable model as failed instead of 检测通过', async ({ 
   });
   await expect(testButton).toContainText('检测');
   await expect(testButton).not.toContainText('检测通过');
-  await expect(page.getByRole('button', { name: '快速诊断 启用状态' })).toContainText('不可用');
+  await expect(
+    page.getByRole('table', { name: '模型配置列表' }).locator('tr').filter({ hasText: '快速诊断' }),
+  ).toContainText('不可用');
 });
 
 test('enables a model optimistically with success toast', async ({ page }) => {
@@ -89,13 +93,14 @@ test('shows the agent running status bar and thinking placeholder', async ({ pag
   await input.fill('delete the cache recursively');
   await page.getByRole('button', { name: '发送给 Agent' }).click();
 
+  const thinkingPlaceholder = page.locator('.thinking-placeholder');
+  await expect(thinkingPlaceholder).toBeVisible();
   const statusBar = page.locator('.running-status-bar');
   await expect(statusBar).toContainText('Agent 运行中');
   await expect(statusBar.getByRole('button', { name: '取消当前 Agent 任务' })).toBeVisible();
 
-  await expect(page.locator('.thinking-placeholder')).toBeVisible();
   await expect(page.getByText('需要人工审批', { exact: true })).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator('.thinking-placeholder')).toHaveCount(0);
+  await expect(thinkingPlaceholder).toHaveCount(0);
 });
 
 test('shows MCP server start/stop transitions and revoke confirmation', async ({ page }) => {

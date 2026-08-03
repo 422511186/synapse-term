@@ -1,4 +1,9 @@
-import type { ModelInputItem, ModelMessage } from '@synapse-term/model-providers';
+import type {
+  ModelContentPart,
+  ModelImageMimeType,
+  ModelInputItem,
+  ModelMessage,
+} from '@synapse-term/model-providers';
 import { SecretRedactor } from '@synapse-term/infrastructure';
 import { estimateModelItemsTokens } from './token-estimator.js';
 
@@ -26,7 +31,7 @@ export const AGENT_SYSTEM_PROMPT = [
 - terminal_execute：执行明确、最小且可审计的命令。优先使用只读诊断，再做必要修改；避免把无关操作合并成一条高影响命令。
 - terminal_wait：命令仍在运行时等待增量输出或最终状态。状态不确定时先 wait/observe，不要重复启动同一命令。
 - terminal_interrupt：仅在当前 Turn 的活动事务确实需要停止时使用，不把它当作通用按键输入。
-- local_list_files、local_search_files、local_read_file：发现和读取本机 home 内的文件。
+- local_list_files、local_search_files、local_read_file：发现和读取本机内的文件。
 - local_write_file、local_edit_file：在宿主策略、审批和哈希约束内创建、替换或精确编辑本机文件。
 不要假设存在任意按键、密码输入、文件删除、Session 管理、浏览器、插件或其他隐藏 Tool。`,
   `安全与审批
@@ -64,6 +69,23 @@ export interface ContextBuildInput {
   rollback?: string;
   taskSummary?: string;
   history?: readonly ModelInputItem[];
+  attachments?: readonly ContextBuildAttachment[];
+  imageParts?: readonly ContextImagePart[];
+}
+
+export interface ContextBuildAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: 'image' | 'file';
+  relativePath?: string | undefined;
+}
+
+export interface ContextImagePart {
+  type: 'image';
+  mimeType: ModelImageMimeType;
+  dataBase64: string;
 }
 
 export interface BuiltContext {
@@ -143,7 +165,23 @@ export class ContextBuilder {
         ? []
         : [`Task summary:\n${this.#redactor.redact(input.taskSummary).text}`]),
     ];
-    const user: ModelMessage = { role: 'user', content: userSections.join('\n\n') };
+    const attachmentSections =
+      input.attachments === undefined || input.attachments.length === 0
+        ? []
+        : [
+            `用户附件：\n${input.attachments
+              .map(
+                (attachment) =>
+                  `- name=${attachment.name}; mimeType=${attachment.mimeType}; sizeBytes=${attachment.sizeBytes}; kind=${attachment.kind}${attachment.relativePath === undefined ? '' : `; relativePath=${attachment.relativePath}`}`,
+              )
+              .join('\n')}`,
+          ];
+    const textContent = [...userSections, ...attachmentSections].join('\n\n');
+    const content: string | readonly ModelContentPart[] =
+      input.imageParts === undefined || input.imageParts.length === 0
+        ? textContent
+        : [{ type: 'text', text: textContent }, ...input.imageParts.map((part) => ({ ...part }))];
+    const user: ModelMessage = { role: 'user', content };
 
     const fitted = fitItems(
       [system, ...history, user],
@@ -185,7 +223,7 @@ export class ContextBuilder {
 }
 
 function redactItem(item: ModelInputItem, redactor: SecretRedactor): ModelInputItem {
-  if ('role' in item) return { ...item, content: redactor.redact(item.content).text };
+  if ('role' in item) return { ...item, content: redactContent(item.content, redactor) };
   if (item.type === 'tool_result') {
     return { ...item, content: redactor.redact(item.content).text };
   }
@@ -194,7 +232,7 @@ function redactItem(item: ModelInputItem, redactor: SecretRedactor): ModelInputI
 
 function totalCharacters(items: readonly ModelInputItem[]): number {
   return items.reduce((total, item) => {
-    if ('role' in item) return total + item.content.length;
+    if ('role' in item) return total + contentLength(item.content);
     if (item.type === 'tool_result') return total + item.content.length;
     return total + item.name.length + item.argumentsJson.length;
   }, 0);
@@ -322,19 +360,22 @@ function largestTextItem(
     if ('role' in item) {
       if (item.role === 'system' && index === 0) return [];
       const minimumLength = index === lastUserIndex ? minimumLastUserCharacters : 0;
-      if (item.content.length <= minimumLength) return [];
+      if (contentLength(item.content) <= minimumLength) return [];
       return [
         {
-          value: item.content,
-          length: item.content.length,
+          value: contentText(item.content),
+          length: contentLength(item.content),
           minimumLength,
           set: (value: string) => {
-            items[index] = { ...item, content: value };
+            items[index] = {
+              ...item,
+              content: replaceContentText(item.content, value),
+            };
           },
           truncate: (maxLength: number) =>
             index === lastUserIndex
-              ? truncatePreservingPrefix(item.content, maxLength, minimumLength)
-              : truncateWithMarker(item.content, maxLength),
+              ? truncatePreservingPrefix(contentText(item.content), maxLength, minimumLength)
+              : truncateWithMarker(contentText(item.content), maxLength),
         },
       ];
     }
@@ -358,7 +399,39 @@ function largestTextItem(
 
 function lastUserContentLength(items: readonly ModelInputItem[]): number {
   const lastUser = items.findLast((item) => 'role' in item && item.role === 'user');
-  return lastUser !== undefined && 'role' in lastUser ? lastUser.content.length : 0;
+  return lastUser !== undefined && 'role' in lastUser ? contentLength(lastUser.content) : 0;
+}
+
+function redactContent(
+  content: string | readonly ModelContentPart[],
+  redactor: SecretRedactor,
+): string | readonly ModelContentPart[] {
+  if (typeof content === 'string') return redactor.redact(content).text;
+  return content.map((part) =>
+    part.type === 'text' ? { ...part, text: redactor.redact(part.text).text } : part,
+  );
+}
+
+function contentLength(content: string | readonly ModelContentPart[]): number {
+  if (typeof content === 'string') return content.length;
+  return content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 64), 0);
+}
+
+function contentText(content: string | readonly ModelContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content.map((part) => (part.type === 'text' ? part.text : '[图片附件]')).join('\n');
+}
+
+function replaceContentText(
+  content: string | readonly ModelContentPart[],
+  next: string,
+): string | readonly ModelContentPart[] {
+  if (typeof content === 'string') return next;
+  const parts = [...content];
+  const firstText = parts.findIndex((part) => part.type === 'text');
+  if (firstText < 0) return content;
+  parts[firstText] = { type: 'text', text: next };
+  return parts;
 }
 
 function truncatePreservingPrefix(value: string, maxLength: number, minimumLength: number): string {

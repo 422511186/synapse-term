@@ -1,4 +1,5 @@
 export * from './agent/agent-task.js';
+export * from './agent/agent-attachment.js';
 export * from './agent/agent-conversation.js';
 export * from './agent/agent-driver.js';
 export * from './approval/approval-grant.js';

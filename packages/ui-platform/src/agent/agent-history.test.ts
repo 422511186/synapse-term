@@ -136,4 +136,50 @@ describe('historyToTimeline', () => {
       },
     ]);
   });
+
+  it('hydrates user text with renderer-safe attachment metadata', () => {
+    expect(
+      historyToTimeline({
+        sessionId: 'session-1',
+        turns: [],
+        items: [
+          {
+            id: 'user-1',
+            conversationId: 'conversation-1',
+            turnId: 'turn-1',
+            sequence: 1,
+            type: 'user_text',
+            content: '看这张图',
+            attachments: [
+              {
+                id: 'attachment-1',
+                name: '截图.png',
+                mimeType: 'image/png',
+                sizeBytes: 4096,
+                kind: 'image',
+                relativePath: '截图.png',
+                sourcePath: 'C:\\private\\截图.png',
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject([
+      {
+        id: 'history-user-1',
+        kind: 'user',
+        text: '看这张图',
+        attachments: [
+          {
+            id: 'attachment-1',
+            name: '截图.png',
+            mimeType: 'image/png',
+            sizeBytes: 4096,
+            kind: 'image',
+            relativePath: '截图.png',
+          },
+        ],
+      },
+    ]);
+  });
 });

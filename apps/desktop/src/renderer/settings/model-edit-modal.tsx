@@ -221,6 +221,28 @@ export function ModelEditModal({
               className="w-full rounded-lg border border-border bg-[#09090b] px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
             />
           </div>
+          <div className="flex items-center justify-between rounded-lg border border-border/70 bg-[#09090b] px-3 py-2.5">
+            <div className="text-[13px] font-medium text-foreground/90">支持多模态</div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                aria-label="支持多模态"
+                checked={draft.declaredCapabilities.multimodal === true}
+                className="h-4 w-4 accent-[#ffffff]"
+                disabled={busy}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    declaredCapabilities: {
+                      ...draft.declaredCapabilities,
+                      multimodal: event.target.checked,
+                    },
+                  })
+                }
+                type="checkbox"
+              />
+              {draft.declaredCapabilities.multimodal === true ? '已开启' : '已关闭'}
+            </label>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label

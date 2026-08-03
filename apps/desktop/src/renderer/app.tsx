@@ -9,6 +9,8 @@ import {
   XCircle,
   Search,
   FileText,
+  Image as ImageIcon,
+  Paperclip,
   ChevronDown,
   Key,
   X,
@@ -33,6 +35,14 @@ import { createMockDesktopApi } from './mock-api.js';
 import { mergeAcpHistoryIntoTimeline, RuntimeAudit, RuntimeTimeline } from './agent-panel/index.js';
 import { RunningStatusBar } from './agent-panel/running-status-bar.js';
 import { shouldShowThinkingPlaceholder } from './agent-panel/running-status.js';
+import {
+  appendSentPrompt,
+  buildPromptHistory,
+  movePromptHistory,
+} from './agent-panel/composer-prompt-history.js';
+import { filterAgentSlashCommands } from './agent-panel/agent-slash-commands.js';
+import type { AgentSlashCommand } from './agent-panel/agent-slash-commands.js';
+import { SlashCommandPopover } from './agent-panel/slash-command-popover.js';
 import { AllSessionsPopover, NewSessionModal, SearchHistoryModal } from './sessions/index.js';
 import {
   ModelEditModal,
@@ -61,6 +71,7 @@ import type {
   AuditEventView,
   DesktopApi,
   ModelConfigurationView,
+  PickedAgentAttachment,
   ProviderProfileView,
   SessionEnvironment,
   SessionSummary,
@@ -68,6 +79,8 @@ import type {
 import { buildSessionLaunch } from './session-launch.js';
 import { errorMessageZh, TerminalView } from '@synapse-term/ui-platform';
 import { chooseInitialSessionId, isInteractiveSession } from './session-selection.js';
+
+const AGENT_ATTACHMENT_MAX_ITEMS = 8;
 
 let browserMockApi: DesktopApi | undefined;
 
@@ -108,6 +121,19 @@ const permissionLabels: Record<PermissionMode, string> = {
   full_access: '完全权限',
 };
 
+const PERMISSION_MODES: readonly PermissionMode[] = ['manual', 'auto', 'full_access'];
+
+function formatAttachmentSize(sizeBytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = sizeBytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${Math.round(value * 10) / 10} ${units[unit]}`;
+}
+
 // --- MAIN APP CONTAINER ---
 export function App() {
   const api = useMemo(getApi, []);
@@ -145,6 +171,17 @@ export function App() {
   >('workspace');
   const [agentTab, setAgentTab] = useState<'timeline' | 'audit'>('timeline');
   const [chatInput, setChatInput] = useState('');
+  const [chatHistoryIndex, setChatHistoryIndex] = useState<number | undefined>();
+  const [chatHistoryDraft, setChatHistoryDraft] = useState<string | undefined>();
+  const [sentPromptHistory, setSentPromptHistory] = useState<Record<string, string[]>>({});
+  const [pendingAttachments, setPendingAttachments] = useState<PickedAgentAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string>();
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [composerSelectedIndex, setComposerSelectedIndex] = useState(0);
+  const [composerPanel, setComposerPanel] = useState<
+    { kind: 'model' } | { kind: 'permission' } | undefined
+  >();
   const [timeline, setTimeline] = useState<AgentTimelineItem[]>([]);
   const [histories, setHistories] = useState<Record<string, AgentHistoryView>>({});
   const [acpHistories, setAcpHistories] = useState<Record<string, AcpHistoryView>>({});
@@ -203,6 +240,12 @@ export function App() {
     activeSession === undefined ? undefined : histories[activeSession.id];
   const activeAcpHistory = activeSession === undefined ? undefined : acpHistories[activeSession.id];
   const activeHistory = activeBuiltinHistory;
+  const promptHistory = buildPromptHistory(
+    activeSession === undefined ? undefined : sentPromptHistory[activeSession.id],
+    driver === 'acp'
+      ? (activeAcpHistory?.turns.map((turn) => turn.userMessage) ?? [])
+      : (activeHistory?.turns.map((turn) => turn.userMessage) ?? []),
+  );
   const activeTimeline = timeline.filter(
     (item) => item.sessionId === activeSession?.id && (item.driver ?? 'builtin') === driver,
   );
@@ -215,10 +258,25 @@ export function App() {
     (driver === 'acp'
       ? activeSession !== undefined && acpActiveTurnIds[activeSession.id] !== undefined
       : activeBuiltinHistory?.activeTurnId !== undefined);
+  const slashCommands = filterAgentSlashCommands(chatInput, activeTurn);
+  const slashEnabledIndices = slashCommands
+    .map((command, index) => (command.disabled === true ? -1 : index))
+    .filter((index) => index >= 0);
+  const slashPopoverOpen = slashCommands.length > 0 && composerPanel === undefined;
+  const attachmentsDisabled =
+    coreClosed || activeSession === undefined || driver === 'acp' || activeTurn;
+  const imageAttachmentsDisabled =
+    attachmentsDisabled || activeModel?.declaredCapabilities.multimodal !== true;
+  const attachmentLimitReached = pendingAttachments.length >= AGENT_ATTACHMENT_MAX_ITEMS;
   const agentPanelMaxWidth = getAgentPanelMaxWidth(
     workspaceRef.current?.clientWidth ?? getViewportWidth(),
   );
   activeSessionIdRef.current = activeSessionId;
+
+  useEffect(() => {
+    setChatHistoryIndex(undefined);
+    setChatHistoryDraft(undefined);
+  }, [activeSessionId, driver]);
 
   useEffect(() => {
     const handleWindowResize = (): void => {
@@ -501,6 +559,13 @@ export function App() {
   }, [activeTurn]);
 
   useEffect(() => {
+    if (slashEnabledIndices.length === 0) return;
+    if (!slashEnabledIndices.includes(slashSelectedIndex)) {
+      setSlashSelectedIndex(slashEnabledIndices[0]!);
+    }
+  }, [chatInput, activeTurn]);
+
+  useEffect(() => {
     shouldStickTimelineToBottom.current = true;
   }, [activeSession?.id, agentTab]);
 
@@ -538,6 +603,9 @@ export function App() {
   const selectSession = (session: SessionSummary): void => {
     setActiveSessionId(session.id);
     closeAllDropdowns();
+    setPendingAttachments([]);
+    setAttachmentError(undefined);
+    setComposerPanel(undefined);
   };
 
   const switchDriver = (next: 'builtin' | 'acp'): void => {
@@ -546,6 +614,9 @@ export function App() {
     setDriver(next);
     setStartingTurn(false);
     setRuntimeError(undefined);
+    setPendingAttachments([]);
+    setAttachmentError(undefined);
+    setComposerPanel(undefined);
   };
 
   const selectDialect = async (dialect: SessionSummary['executionDialect']): Promise<void> => {
@@ -596,6 +667,9 @@ export function App() {
     setTurnStartedAt(Date.now());
     setHasTurnActivity(false);
     setChatInput('');
+    setChatHistoryIndex(undefined);
+    setChatHistoryDraft(undefined);
+    setComposerPanel(undefined);
     try {
       if (driver === 'acp') {
         const started = await api.acp.startTurn(sessionId, goal);
@@ -612,6 +686,7 @@ export function App() {
         const started = await api.agent.start(sessionId, goal, {
           ...(activeModel === undefined ? {} : { modelConfigurationId: activeModel.id }),
           permissionMode,
+          ...(pendingAttachments.length === 0 ? {} : { attachments: pendingAttachments }),
         });
         setHistories((items) => ({
           ...items,
@@ -620,12 +695,55 @@ export function App() {
             activeTurnId: started.turnId,
           },
         }));
+        setPendingAttachments([]);
+        setAttachmentError(undefined);
       }
+      setSentPromptHistory((items) => ({
+        ...items,
+        [sessionId]: appendSentPrompt(items[sessionId] ?? [], goal),
+      }));
     } catch (caught) {
       setRuntimeError(errorMessageZh(caught));
     } finally {
       setStartingTurn(false);
     }
+  };
+
+  const pickAttachments = async (kind: 'image' | 'file'): Promise<void> => {
+    if (coreClosed || activeSession === undefined || driver === 'acp' || activeTurn) return;
+    if (kind === 'image' && activeModel?.declaredCapabilities.multimodal !== true) {
+      setAttachmentError('当前模型不支持图片输入。');
+      return;
+    }
+    if (attachmentLimitReached) {
+      setAttachmentError(`一次任务最多可携带 ${AGENT_ATTACHMENT_MAX_ITEMS} 个附件。`);
+      return;
+    }
+    setAttachmentBusy(true);
+    setAttachmentError(undefined);
+    try {
+      const picked = await api.attachments.pick({
+        kind,
+        currentCount: pendingAttachments.length,
+      });
+      const nextCount = pendingAttachments.length + picked.length;
+      if (nextCount > AGENT_ATTACHMENT_MAX_ITEMS) {
+        setAttachmentError(`一次任务最多可携带 ${AGENT_ATTACHMENT_MAX_ITEMS} 个附件。`);
+        return;
+      }
+      setPendingAttachments((current) => [...current, ...picked]);
+    } catch (caught) {
+      setAttachmentError(errorMessageZh(caught));
+    } finally {
+      setAttachmentBusy(false);
+    }
+  };
+
+  const removeAttachment = (attachmentId: string): void => {
+    setPendingAttachments((current) =>
+      current.filter((attachment) => attachment.attachmentId !== attachmentId),
+    );
+    setAttachmentError(undefined);
   };
 
   const approve = async (item: AgentTimelineItem): Promise<void> => {
@@ -793,6 +911,35 @@ export function App() {
     setPendingConfirm({ kind: 'resetBuiltin' });
   };
 
+  const executeSlashCommand = (command: AgentSlashCommand): void => {
+    if (command.disabled === true) return;
+    setChatInput('');
+    setChatHistoryIndex(undefined);
+    setChatHistoryDraft(undefined);
+    setComposerPanel(undefined);
+    setAttachmentError(undefined);
+    switch (command.id) {
+      case 'model':
+        if (eligibleModels.length > 0) {
+          setComposerSelectedIndex(
+            Math.max(
+              0,
+              eligibleModels.findIndex((model) => model.id === activeModel?.id),
+            ),
+          );
+          setComposerPanel({ kind: 'model' });
+        }
+        break;
+      case 'permission':
+        setComposerSelectedIndex(Math.max(0, PERMISSION_MODES.indexOf(permissionMode)));
+        setComposerPanel({ kind: 'permission' });
+        break;
+      case 'clear':
+        void resetConversation();
+        break;
+    }
+  };
+
   const performResetAcp = async (): Promise<void> => {
     if (coreClosed || activeSession === undefined || activeAcpHistory?.conversation === undefined) {
       return;
@@ -801,6 +948,9 @@ export function App() {
     bumpHistoryVersion(sessionId);
     try {
       await api.acp.closeConversation(sessionId);
+      setPendingAttachments([]);
+      setAttachmentError(undefined);
+      setComposerPanel(undefined);
       setAcpHistories((items) => ({
         ...items,
         [sessionId]: {
@@ -830,6 +980,9 @@ export function App() {
     bumpHistoryVersion(sessionId);
     try {
       await api.agent.resetConversation(sessionId, conversationId);
+      setPendingAttachments([]);
+      setAttachmentError(undefined);
+      setComposerPanel(undefined);
       setHistories((items) => ({
         ...items,
         [sessionId]: { sessionId, turns: [], items: [] },
@@ -861,6 +1014,11 @@ export function App() {
       setAuditEvents([]);
       setResources({});
       setChatInput('');
+      setChatHistoryIndex(undefined);
+      setChatHistoryDraft(undefined);
+      setPendingAttachments([]);
+      setAttachmentError(undefined);
+      setComposerPanel(undefined);
       setCurrentView('workspace');
       closeAllDropdowns();
       setRuntimeError('Core 已关闭，请重新启动应用以继续使用。');
@@ -1547,54 +1705,326 @@ export function App() {
 
                     {/* Input Box */}
                     <div className="p-4 border-t border-border bg-[#09090b]">
-                      <div className="border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
+                      <div className="relative border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
+                        {slashPopoverOpen && (
+                          <SlashCommandPopover
+                            commands={slashCommands}
+                            onSelect={executeSlashCommand}
+                            selectedIndex={slashSelectedIndex}
+                          />
+                        )}
+                        {composerPanel !== undefined && (
+                          <div className="absolute bottom-full left-0 right-0 mb-2 z-30 max-h-64 overflow-y-auto rounded-lg border border-border bg-[#0e0e10] shadow-2xl">
+                            {composerPanel.kind === 'model' && (
+                              <div aria-label="Composer 模型选择" className="p-2" role="group">
+                                <div className="flex items-center justify-between px-1 py-1">
+                                  <span className="text-[11px] font-medium text-muted-foreground">
+                                    选择当前模型
+                                  </span>
+                                  <button
+                                    aria-label="关闭模型选择"
+                                    className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-secondary"
+                                    onClick={() => setComposerPanel(undefined)}
+                                    type="button"
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                </div>
+                                {eligibleModels.length === 0 ? (
+                                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                                    没有已启用的模型，请先到模型配置中启用。
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1 px-1 pb-1" role="listbox">
+                                    {eligibleModels.map((model, index) => {
+                                      const selected = composerSelectedIndex === index;
+                                      return (
+                                        <button
+                                          aria-selected={selected}
+                                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-left text-[12px] transition-colors border ${
+                                            selected
+                                              ? 'bg-primary/10 border-primary/30 text-foreground'
+                                              : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                                          } ${activeTurn ? 'opacity-40' : ''}`}
+                                          disabled={activeTurn}
+                                          key={model.id}
+                                          onClick={() => {
+                                            setActiveModelId(model.id);
+                                            setComposerPanel(undefined);
+                                          }}
+                                          role="option"
+                                          type="button"
+                                        >
+                                          <Box size={13} className="shrink-0 text-primary" />
+                                          <span className="truncate">{model.name}</span>
+                                          {activeModel?.id === model.id && (
+                                            <Check size={12} className="shrink-0 text-primary" />
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {composerPanel.kind === 'permission' && (
+                              <div aria-label="Composer 权限选择" className="p-2" role="group">
+                                <div className="flex items-center justify-between px-1 py-1">
+                                  <span className="text-[11px] font-medium text-muted-foreground">
+                                    切换权限模式
+                                  </span>
+                                  <button
+                                    aria-label="关闭权限选择"
+                                    className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-secondary rounded"
+                                    onClick={() => setComposerPanel(undefined)}
+                                    type="button"
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                </div>
+                                <div className="space-y-1 px-1 pb-1" role="listbox">
+                                  {PERMISSION_MODES.map((mode, index) => {
+                                    const selected = composerSelectedIndex === index;
+                                    return (
+                                      <button
+                                        aria-selected={selected}
+                                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-left text-[12px] transition-colors border ${
+                                          selected
+                                            ? 'bg-primary/10 border-primary/30 text-foreground'
+                                            : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                                        } ${activeTurn ? 'opacity-40' : ''}`}
+                                        disabled={activeTurn}
+                                        key={mode}
+                                        onClick={() => {
+                                          setPermissionMode(mode);
+                                          setComposerPanel(undefined);
+                                        }}
+                                        role="option"
+                                        type="button"
+                                      >
+                                        <ShieldAlert size={13} className="shrink-0 text-primary" />
+                                        <span>{permissionLabels[mode]}</span>
+                                        {permissionMode === mode && (
+                                          <Check size={12} className="shrink-0 text-primary" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <textarea
                           aria-keyshortcuts={
                             api.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
                           }
                           disabled={coreClosed}
                           value={chatInput}
-                          onChange={(e) => setChatInput(e.target.value)}
+                          onChange={(e) => {
+                            setChatInput(e.target.value);
+                            setChatHistoryIndex(undefined);
+                            setChatHistoryDraft(undefined);
+                            if (e.target.value.trim() !== '') setComposerPanel(undefined);
+                          }}
                           onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              if (composerPanel !== undefined) {
+                                event.preventDefault();
+                                setComposerPanel(undefined);
+                                return;
+                              }
+                              if (slashPopoverOpen) {
+                                event.preventDefault();
+                                setChatInput('');
+                              }
+                              return;
+                            }
+                            if (slashPopoverOpen) {
+                              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                event.preventDefault();
+                                if (slashEnabledIndices.length > 0) {
+                                  const currentPosition =
+                                    slashEnabledIndices.indexOf(slashSelectedIndex);
+                                  const nextOffset = event.key === 'ArrowDown' ? 1 : -1;
+                                  const nextPosition =
+                                    (currentPosition + nextOffset + slashEnabledIndices.length) %
+                                    slashEnabledIndices.length;
+                                  setSlashSelectedIndex(slashEnabledIndices[nextPosition]!);
+                                }
+                                return;
+                              }
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                const selected = slashCommands[slashSelectedIndex];
+                                if (selected !== undefined && selected.disabled !== true) {
+                                  event.preventDefault();
+                                  executeSlashCommand(selected);
+                                  return;
+                                }
+                              }
+                            }
+                            if (composerPanel !== undefined) {
+                              const optionCount =
+                                composerPanel.kind === 'model'
+                                  ? eligibleModels.length
+                                  : PERMISSION_MODES.length;
+                              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                if (optionCount > 0) {
+                                  event.preventDefault();
+                                  const offset = event.key === 'ArrowDown' ? 1 : -1;
+                                  setComposerSelectedIndex(
+                                    (current) => (current + offset + optionCount) % optionCount,
+                                  );
+                                }
+                                return;
+                              }
+                              if (event.key === 'Enter' && !event.shiftKey && !activeTurn) {
+                                event.preventDefault();
+                                if (composerPanel.kind === 'model') {
+                                  const model = eligibleModels[composerSelectedIndex];
+                                  if (model !== undefined) {
+                                    setActiveModelId(model.id);
+                                    setComposerPanel(undefined);
+                                  }
+                                } else {
+                                  const mode = PERMISSION_MODES[composerSelectedIndex];
+                                  if (mode !== undefined) {
+                                    setPermissionMode(mode);
+                                    setComposerPanel(undefined);
+                                  }
+                                }
+                                return;
+                              }
+                            }
+                            if (
+                              composerPanel === undefined &&
+                              (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+                            ) {
+                              const navigation = movePromptHistory(
+                                event.key === 'ArrowUp' ? 'previous' : 'next',
+                                promptHistory,
+                                chatInput,
+                                {
+                                  index: chatHistoryIndex,
+                                  draft: chatHistoryDraft,
+                                },
+                              );
+                              if (navigation === undefined) return;
+                              setChatInput(navigation.input);
+                              setChatHistoryIndex(navigation.state.index);
+                              setChatHistoryDraft(navigation.state.draft);
+                              event.preventDefault();
+                              return;
+                            }
                             const modifierPressed =
                               api.platform === 'darwin' ? event.metaKey : event.ctrlKey;
-                            if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) return;
+                            if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) {
+                              return;
+                            }
                             event.preventDefault();
                             void submitGoal();
                           }}
                           placeholder="输入目标，Command/Ctrl+Enter 发送"
                           className="w-full bg-transparent outline-none resize-none text-[13px] p-3.5 min-h-[60px] text-foreground placeholder:text-muted-foreground/70"
                         />
-                        <div className="px-3 pb-2.5 flex items-center justify-between">
-                          <button
-                            aria-label="取消当前 Agent 任务"
-                            className={`text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary disabled:opacity-40 ${activeTurn ? '' : 'hidden'}`}
-                            disabled={cancellingTurn}
-                            onClick={() => void cancelTurn()}
-                            type="button"
-                          >
-                            <XCircle size={14} /> {cancellingTurn ? '取消中…' : '取消任务'}
-                          </button>
-                          <button
-                            onClick={() => setIsSearchHistoryOpen(true)}
-                            disabled={coreClosed}
-                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
-                          >
-                            <Clock size={14} /> 提示词历史
-                          </button>
-                          <button
-                            aria-label="发送给 Agent"
-                            onClick={() => void submitGoal()}
-                            disabled={coreClosed || !chatInput.trim() || activeTurn}
-                            className={`flex items-center gap-1.5 px-5 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
-                              chatInput.trim()
-                                ? 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
-                                : 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
-                            }`}
-                          >
-                            {activeTurn && <Loader2 className="animate-spin" size={12} />}
-                            {activeTurn ? '处理中…' : '发送'}
-                          </button>
+                        {pendingAttachments.length > 0 && (
+                          <div className="px-3 pb-2 flex flex-wrap gap-2">
+                            {pendingAttachments.map((attachment) => (
+                              <span
+                                className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-secondary/60 border border-border/70 text-[11px] text-muted-foreground"
+                                key={attachment.attachmentId}
+                              >
+                                {attachment.kind === 'image' ? (
+                                  <ImageIcon size={13} className="text-primary shrink-0" />
+                                ) : (
+                                  <FileText size={13} className="text-primary shrink-0" />
+                                )}
+                                <span className="max-w-[170px] truncate">{attachment.name}</span>
+                                <span className="shrink-0 text-[10px] opacity-70">
+                                  {formatAttachmentSize(attachment.sizeBytes)}
+                                </span>
+                                <button
+                                  aria-label={`移除 ${attachment.name}`}
+                                  className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                                  onClick={() => removeAttachment(attachment.attachmentId)}
+                                  type="button"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {attachmentError !== undefined && (
+                          <div aria-live="polite" className="px-3 pb-2 text-[11px] text-red-400">
+                            {attachmentError}
+                          </div>
+                        )}
+                        <div className="px-3 pb-2.5 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              aria-label="添加图片"
+                              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              disabled={imageAttachmentsDisabled || attachmentBusy}
+                              onClick={() => void pickAttachments('image')}
+                              title={
+                                driver === 'acp'
+                                  ? '外部 Agent 不支持附件'
+                                  : activeModel?.declaredCapabilities.multimodal === true
+                                    ? '添加图片'
+                                    : '当前模型不支持图片输入'
+                              }
+                              type="button"
+                            >
+                              <ImageIcon size={14} />
+                            </button>
+                            <button
+                              aria-label="添加文件"
+                              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              disabled={attachmentsDisabled || attachmentBusy}
+                              onClick={() => void pickAttachments('file')}
+                              title={
+                                driver === 'acp' ? '外部 Agent 不支持附件' : '添加任意本地文件'
+                              }
+                              type="button"
+                            >
+                              <Paperclip size={14} />
+                            </button>
+                            <button
+                              aria-label="取消当前 Agent 任务"
+                              className={`text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary disabled:opacity-40 ${activeTurn ? '' : 'hidden'}`}
+                              disabled={cancellingTurn}
+                              onClick={() => void cancelTurn()}
+                              type="button"
+                            >
+                              <XCircle size={14} /> {cancellingTurn ? '取消中…' : '取消任务'}
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              aria-label="提示词历史"
+                              onClick={() => setIsSearchHistoryOpen(true)}
+                              disabled={coreClosed}
+                              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
+                              title="提示词历史"
+                              type="button"
+                            >
+                              <Clock size={14} />
+                            </button>
+                            <button
+                              aria-label="发送给 Agent"
+                              onClick={() => void submitGoal()}
+                              disabled={coreClosed || !chatInput.trim() || activeTurn}
+                              className={`flex items-center gap-1.5 px-5 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
+                                chatInput.trim()
+                                  ? 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
+                                  : 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
+                              }`}
+                            >
+                              {activeTurn && <Loader2 className="animate-spin" size={12} />}
+                              {activeTurn ? '处理中…' : '发送'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1713,6 +2143,8 @@ export function App() {
             onClose={() => setIsSearchHistoryOpen(false)}
             onSelect={(txt) => {
               setChatInput(txt);
+              setChatHistoryIndex(undefined);
+              setChatHistoryDraft(undefined);
               setIsSearchHistoryOpen(false);
             }}
             prompts={Array.from(

@@ -10,6 +10,7 @@ export const DESKTOP_IPC_REQUEST_CHANNELS = [
   'terminal:replay',
   'resources:get',
   'resources:refresh',
+  'attachments:pick',
   'agent:start',
   'agent:cancel',
   'agent:history',
