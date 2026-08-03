@@ -63,6 +63,16 @@ describe('Core API protocol', () => {
       parseCoreRequest('agent.start', {
         sessionId: 'session-1',
         goal: '检查服务',
+        attachments: [
+          {
+            id: 'attachment-1',
+            name: '截图.png',
+            mimeType: 'image/png',
+            sizeBytes: 1_024,
+            kind: 'image',
+            sourcePath: 'C:/tmp/a.png',
+          },
+        ],
         modelConfigurationId: 'model-1',
         reasoningEffort: 'high',
         permissionMode: 'manual',
@@ -70,6 +80,7 @@ describe('Core API protocol', () => {
     ).toMatchObject({
       method: 'agent.start',
       payload: {
+        attachments: [expect.objectContaining({ id: 'attachment-1' })],
         modelConfigurationId: 'model-1',
         reasoningEffort: 'high',
         permissionMode: 'manual',
@@ -83,6 +94,23 @@ describe('Core API protocol', () => {
         reasoningEffort: 'xhigh',
       }),
     ).toMatchObject({ payload: { reasoningEffort: 'xhigh' } });
+    expect(() =>
+      parseCoreRequest('agent.start', {
+        sessionId: 'session-1',
+        goal: '未知附件字段',
+        attachments: [
+          {
+            id: 'attachment-1',
+            name: 'notes.txt',
+            mimeType: 'text/plain',
+            sizeBytes: 1_024,
+            kind: 'file',
+            sourcePath: 'C:/tmp/notes.txt',
+            unknownField: 'must-not-cross',
+          },
+        ],
+      }),
+    ).toThrow();
     expect(() =>
       parseCoreRequest('agent.start', {
         sessionId: 'session-1',
@@ -306,6 +334,25 @@ describe('Core API protocol', () => {
       revision: 4,
     };
     expect(modelConfigurationViewSchema.parse(modelView)).toEqual(modelView);
+    expect(
+      modelConfigurationViewSchema.parse({
+        ...modelView,
+        declaredCapabilities: {
+          ...modelView.declaredCapabilities,
+          multimodal: true,
+        },
+        validation: {
+          ...modelView.validation,
+          capabilities: {
+            ...modelView.validation.capabilities,
+            multimodal: true,
+          },
+        },
+      }),
+    ).toMatchObject({
+      declaredCapabilities: { multimodal: true },
+      validation: { capabilities: { multimodal: true } },
+    });
 
     const resourceSnapshot = {
       dialect: 'posix' as const,

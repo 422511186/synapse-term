@@ -1,4 +1,4 @@
-import type { ModelInputItem } from '@synapse-term/model-providers';
+import type { ModelContentPart, ModelInputItem } from '@synapse-term/model-providers';
 
 export function estimateTextTokens(value: string): number {
   let cjk = 0;
@@ -16,7 +16,9 @@ export function estimateTextTokens(value: string): number {
 }
 
 export function estimateModelItemTokens(item: ModelInputItem): number {
-  if ('role' in item) return 6 + estimateTextTokens(item.role) + estimateTextTokens(item.content);
+  if ('role' in item) {
+    return 6 + estimateTextTokens(item.role) + estimateContentTokens(item.content);
+  }
   if (item.type === 'tool_result') {
     return 10 + estimateTextTokens(item.toolCallId) + estimateTextTokens(item.content);
   }
@@ -25,6 +27,14 @@ export function estimateModelItemTokens(item: ModelInputItem): number {
     estimateTextTokens(item.toolCallId) +
     estimateTextTokens(item.name) +
     estimateTextTokens(item.argumentsJson)
+  );
+}
+
+function estimateContentTokens(content: string | readonly ModelContentPart[]): number {
+  if (typeof content === 'string') return estimateTextTokens(content);
+  return content.reduce(
+    (total, part) => total + (part.type === 'text' ? estimateTextTokens(part.text) : 256),
+    0,
   );
 }
 

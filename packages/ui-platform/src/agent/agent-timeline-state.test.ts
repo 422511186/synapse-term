@@ -163,6 +163,58 @@ describe('agent timeline state', () => {
     expect(merged).toContainEqual(hydratedTool);
   });
 
+  it('preserves attachment metadata when hydrated history replaces a live user item', () => {
+    const liveUser: AgentTimelineItem = {
+      id: 'live-user-1',
+      sessionId: 'session-1',
+      kind: 'user',
+      text: '看这张图',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+      occurredAt: '2026-07-29T00:00:00.000Z',
+    };
+    const history = {
+      sessionId: 'session-1',
+      turns: [],
+      items: [
+        {
+          id: 'user-1',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          sequence: 1,
+          type: 'user_text',
+          content: '看这张图',
+          attachments: [
+            {
+              id: 'attachment-1',
+              name: '截图.png',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              kind: 'image',
+            },
+          ],
+        },
+      ],
+    };
+
+    const merged = mergeHydratedTimeline([liveUser], 'session-1', history);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: 'history-user-1',
+      kind: 'user',
+      attachments: [
+        {
+          id: 'attachment-1',
+          name: '截图.png',
+          mimeType: 'image/png',
+          sizeBytes: 4096,
+          kind: 'image',
+        },
+      ],
+    });
+  });
+
   it('preserves a live streaming item that is not persisted yet', () => {
     const streaming = item({ id: 'assistant-live', kind: 'assistant', status: 'streaming' });
     const merged = mergeHydratedTimeline([streaming], 'session-1', []);

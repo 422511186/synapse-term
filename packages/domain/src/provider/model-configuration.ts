@@ -6,6 +6,19 @@ export interface ModelCapabilities {
   streaming: boolean;
   toolCalls: boolean;
   reasoning?: boolean | undefined;
+  multimodal?: boolean | undefined;
+}
+
+export function normalizeModelCapabilities(
+  capabilities: ModelCapabilities,
+): ModelCapabilities & { multimodal: boolean } {
+  return {
+    responses: capabilities.responses,
+    streaming: capabilities.streaming,
+    toolCalls: capabilities.toolCalls,
+    ...(capabilities.reasoning === undefined ? {} : { reasoning: capabilities.reasoning }),
+    multimodal: capabilities.multimodal === true,
+  };
 }
 
 export interface CreateModelConfigurationInput {
@@ -100,7 +113,7 @@ export function createModelConfiguration(input: CreateModelConfigurationInput): 
   }
   return {
     ...input,
-    declaredCapabilities: { ...input.declaredCapabilities },
+    declaredCapabilities: normalizeModelCapabilities(input.declaredCapabilities),
     contextWindowTokens,
     maxOutputTokens,
     autoCompact: input.autoCompact ?? true,
@@ -126,8 +139,8 @@ export function createAgentModelSelection(
   }
   const capabilities =
     model.validation.status === 'available'
-      ? model.validation.capabilities
-      : model.declaredCapabilities;
+      ? normalizeModelCapabilities(model.validation.capabilities)
+      : normalizeModelCapabilities(model.declaredCapabilities);
   return Object.freeze({
     modelConfigurationId: model.id,
     modelConfigurationRevision: model.revision,
@@ -137,7 +150,7 @@ export function createAgentModelSelection(
     providerProfileRevision: provider.revision,
     providerProfileName: provider.name,
     protocol: provider.protocol,
-    capabilities: Object.freeze({ ...capabilities }),
+    capabilities: Object.freeze(capabilities),
     contextWindowTokens: model.contextWindowTokens,
     maxOutputTokens: model.maxOutputTokens,
     autoCompact: model.autoCompact,

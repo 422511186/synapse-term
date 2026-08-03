@@ -3,8 +3,11 @@ import { z } from 'zod';
 import {
   externalCallerSchema,
   commandRiskSchema,
+  agentAttachmentInputSchema,
+  agentAttachmentMetadataSchema,
   agentConversationSchema,
   agentTurnSchema,
+  modelCapabilitiesSchema,
   modelItemSchema,
   permissionModeSchema,
   reasoningEffortSchema,
@@ -182,6 +185,7 @@ export const agentTimelineItemSchema = z.strictObject({
   risk: commandRiskSchema.optional(),
   reasons: z.array(z.string().min(1)).max(32).optional(),
   change: localFileChangeSchema.optional(),
+  attachments: z.array(agentAttachmentMetadataSchema).max(8).optional(),
   occurredAt: z.string().datetime({ offset: true }),
 });
 
@@ -351,12 +355,7 @@ const modelConfigurationBaseShape = {
   compactThresholdPercent: z.number().int().min(50).max(95),
   supportedReasoningEfforts: modelReasoningEffortsSchema,
   defaultReasoningEffort: reasoningEffortSchema,
-  declaredCapabilities: z.strictObject({
-    responses: z.boolean(),
-    streaming: z.boolean(),
-    toolCalls: z.boolean(),
-    reasoning: z.boolean().optional(),
-  }),
+  declaredCapabilities: modelCapabilitiesSchema,
 };
 
 export const modelConfigurationInputSchema = z
@@ -500,6 +499,7 @@ export const coreRequestSchema = z.discriminatedUnion('method', [
     payload: z.strictObject({
       sessionId: idSchema,
       goal: z.string().min(1),
+      attachments: z.array(agentAttachmentInputSchema).max(8).optional(),
       modelConfigurationId: idSchema.optional(),
       reasoningEffort: reasoningEffortSchema.optional(),
       permissionMode: permissionModeSchema.optional(),

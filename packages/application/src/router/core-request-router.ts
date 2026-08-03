@@ -180,6 +180,9 @@ export class CoreRequestRouter {
         return this.#resourceHandler.refreshResources(request.payload.sessionId);
       case 'agent.start':
         return this.#agentHandler.start(request.payload.sessionId, request.payload.goal, {
+          ...(request.payload.attachments === undefined
+            ? {}
+            : { attachments: request.payload.attachments }),
           ...(request.payload.modelConfigurationId === undefined
             ? {}
             : { modelConfigurationId: request.payload.modelConfigurationId }),

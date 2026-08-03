@@ -101,7 +101,14 @@ describe('AgentRuntime', () => {
     expect(adapter.requests).toHaveLength(5);
     expect(
       adapter.requests[2]?.items.some(
-        (item) => 'role' in item && item.role === 'user' && item.content.includes('完成性复核'),
+        (item) =>
+          'role' in item &&
+          item.role === 'user' &&
+          (typeof item.content === 'string'
+            ? item.content.includes('完成性复核')
+            : item.content.some(
+                (part) => part.type === 'text' && part.text.includes('完成性复核'),
+              )),
       ),
     ).toBe(true);
     expect(adapter.requests[2]?.items).not.toEqual(

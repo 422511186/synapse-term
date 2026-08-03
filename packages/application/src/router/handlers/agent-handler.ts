@@ -4,7 +4,11 @@
  * agent.* 用例的统一入口：启动、取消、历史、重置、中断、审批与接管。
  * 全部转发给 AgentCoordinatorLike 端口，不直接触碰任务状态。
  */
-import type { AgentPermissionMode, ReasoningEffort } from '@synapse-term/domain';
+import type {
+  AgentAttachmentInput,
+  AgentPermissionMode,
+  ReasoningEffort,
+} from '@synapse-term/domain';
 import type { AgentHistoryView } from '@synapse-term/protocol';
 
 import { routerError } from '../contracts.js';
@@ -25,6 +29,7 @@ export class AgentRequestHandler {
     sessionId: string,
     goal: string,
     options?: {
+      attachments?: readonly AgentAttachmentInput[];
       modelConfigurationId?: string;
       reasoningEffort?: ReasoningEffort;
       permissionMode?: AgentPermissionMode;

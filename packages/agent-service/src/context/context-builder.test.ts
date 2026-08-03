@@ -166,4 +166,47 @@ describe('ContextBuilder', () => {
 
     expect(() => builder.build({ goal: '继续' })).toThrowError(/context_budget_exceeded/);
   });
+
+  it('injects attachment metadata and image content parts into the initial user message', () => {
+    const builder = new ContextBuilder();
+    const context = builder.build({
+      goal: '请分析附件',
+      attachments: [
+        {
+          id: 'file-1',
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 256,
+          kind: 'file',
+          relativePath: '0-notes.txt',
+        },
+        {
+          id: 'image-1',
+          name: '截图.png',
+          mimeType: 'image/png',
+          sizeBytes: 1_024,
+          kind: 'image',
+          relativePath: '1-截图.png',
+        },
+      ],
+      imageParts: [{ type: 'image', mimeType: 'image/png', dataBase64: 'iVBORw0KGgo=' }],
+    });
+    const user = context.items.find((item) => 'role' in item && item.role === 'user');
+    if (user === undefined || !('role' in user)) {
+      throw new Error('expected a user model message');
+    }
+
+    expect(Array.isArray(user.content)).toBe(true);
+    expect(user.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'text', text: expect.stringContaining('notes.txt') }),
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('relativePath=0-notes.txt'),
+        }),
+        { type: 'image', mimeType: 'image/png', dataBase64: 'iVBORw0KGgo=' },
+      ]),
+    );
+    expect(JSON.stringify(context.items)).not.toContain('iVBORw0KGgo=secret');
+  });
 });

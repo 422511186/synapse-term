@@ -9,6 +9,7 @@ import type {
   McpApprovalMode,
   ModelConfigurationInput,
   ModelConfigurationView,
+  PickedAgentAttachment,
   ProviderProfileView,
   SessionResourceEvent,
   SessionResourceSnapshot,
@@ -82,7 +83,13 @@ export function createMockDesktopApi(): DesktopApi {
       providerName: 'OpenAI 官方',
       providerProtocol: 'openai_responses',
       modelId: 'gpt-5',
-      declaredCapabilities: { responses: true, streaming: true, toolCalls: true, reasoning: true },
+      declaredCapabilities: {
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        reasoning: true,
+        multimodal: true,
+      },
       contextWindowTokens: 128_000,
       maxOutputTokens: 4_096,
       autoCompact: true,
@@ -96,7 +103,12 @@ export function createMockDesktopApi(): DesktopApi {
         status: 'available',
         checkedAt: new Date().toISOString(),
         attempt: 1,
-        capabilities: { responses: true, streaming: true, toolCalls: true },
+        capabilities: {
+          responses: true,
+          streaming: true,
+          toolCalls: true,
+          multimodal: true,
+        },
       },
       revision: 1,
     },
@@ -107,7 +119,12 @@ export function createMockDesktopApi(): DesktopApi {
       providerName: 'OpenAI 官方',
       providerProtocol: 'openai_responses',
       modelId: 'gpt-5-mini',
-      declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+      declaredCapabilities: {
+        responses: true,
+        streaming: true,
+        toolCalls: true,
+        multimodal: false,
+      },
       contextWindowTokens: 128_000,
       maxOutputTokens: 4_096,
       autoCompact: true,
@@ -146,6 +163,7 @@ export function createMockDesktopApi(): DesktopApi {
       activeTurnId?: string;
     }
   >();
+  const attachmentTickets = new Map<string, PickedAgentAttachment>();
   const pendingApprovals = new Map<
     string,
     {
@@ -317,8 +335,38 @@ export function createMockDesktopApi(): DesktopApi {
         return () => resourceListeners.delete(listener);
       },
     },
+    attachments: {
+      pick: async (options) => {
+        const currentCount = options.currentCount ?? 0;
+        if (currentCount > 8 || currentCount >= 8) {
+          throw new Error('一次任务最多可携带 8 个附件。');
+        }
+        const attachment: PickedAgentAttachment =
+          options.kind === 'image'
+            ? {
+                attachmentId: `attachment-${crypto.randomUUID()}`,
+                name: '截图.png',
+                mimeType: 'image/png',
+                sizeBytes: 1_024,
+                kind: 'image',
+              }
+            : {
+                attachmentId: `attachment-${crypto.randomUUID()}`,
+                name: 'notes.txt',
+                mimeType: 'text/plain',
+                sizeBytes: 2_048,
+                kind: 'file',
+              };
+        attachmentTickets.set(attachment.attachmentId, attachment);
+        return [structuredClone(attachment)];
+      },
+    },
     agent: {
       start: async (sessionId, goal, options = {}) => {
+        const attachments = options.attachments ?? [];
+        if (attachments.length > 8) {
+          throw new Error('一次任务最多可携带 8 个附件。');
+        }
         let history = conversations.get(sessionId);
         if (history === undefined) {
           history = {
@@ -358,6 +406,35 @@ export function createMockDesktopApi(): DesktopApi {
         }
         const provider = providers.find((item) => item.id === model.providerProfileId);
         if (provider === undefined) throw new Error('Provider 不存在');
+        for (const attachment of attachments) {
+          if (attachment.kind === 'image' && model.declaredCapabilities.multimodal !== true) {
+            throw new Error('当前模型不支持图片输入。');
+          }
+          if (
+            attachment.kind === 'image' &&
+            !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType)
+          ) {
+            throw new Error(`不支持的图片类型：${attachment.mimeType}。`);
+          }
+          const limit = attachment.kind === 'image' ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
+          if (attachment.sizeBytes > limit) {
+            throw new Error(
+              attachment.kind === 'image' ? '图片不能超过 10 MiB。' : '文件不能超过 50 MiB。',
+            );
+          }
+          const ticket = attachmentTickets.get(attachment.attachmentId);
+          if (ticket === undefined) {
+            throw new Error('附件凭证已失效，请重新选择附件。');
+          }
+          if (
+            ticket.name !== attachment.name ||
+            ticket.mimeType !== attachment.mimeType ||
+            ticket.sizeBytes !== attachment.sizeBytes ||
+            ticket.kind !== attachment.kind
+          ) {
+            throw new Error('附件元数据与选择结果不一致，请重新选择附件。');
+          }
+        }
         const turnId = `turn-${crypto.randomUUID()}`;
         const taskId = `task-${crypto.randomUUID()}`;
         history.activeTurnId = turnId;
@@ -399,12 +476,21 @@ export function createMockDesktopApi(): DesktopApi {
           sequence: history.sequence++,
           type: 'user_text',
           content: goal,
+          ...(attachments.length === 0
+            ? {}
+            : { attachments: attachments.map(toMockAttachmentMetadata) }),
         });
+        for (const attachment of attachments) {
+          attachmentTickets.delete(attachment.attachmentId);
+        }
         emitTimeline({
           id: `timeline-${Date.now()}-user`,
           sessionId,
           kind: 'user',
           text: goal,
+          ...(attachments.length === 0
+            ? {}
+            : { attachments: attachments.map(toMockAttachmentMetadata) }),
           conversationId: history.conversation.id,
           turnId,
           occurredAt: new Date().toISOString(),
@@ -912,7 +998,8 @@ export function createMockDesktopApi(): DesktopApi {
           current.maxOutputTokens !== input.maxOutputTokens ||
           current.declaredCapabilities.responses !== input.declaredCapabilities.responses ||
           current.declaredCapabilities.streaming !== input.declaredCapabilities.streaming ||
-          current.declaredCapabilities.toolCalls !== input.declaredCapabilities.toolCalls;
+          current.declaredCapabilities.toolCalls !== input.declaredCapabilities.toolCalls ||
+          current.declaredCapabilities.multimodal !== input.declaredCapabilities.multimodal;
         models[index] = {
           ...current,
           name: input.name,
@@ -962,7 +1049,12 @@ export function createMockDesktopApi(): DesktopApi {
             status: 'available',
             checkedAt: new Date().toISOString(),
             attempt,
-            capabilities: { responses: true, streaming: true, toolCalls: true },
+            capabilities: {
+              responses: true,
+              streaming: true,
+              toolCalls: true,
+              multimodal: model.declaredCapabilities.multimodal === true,
+            },
           };
         }
         model.revision += 1;
@@ -1015,7 +1107,12 @@ export function createMockDesktopApi(): DesktopApi {
                 name: modelId,
                 providerProfileId,
                 modelId,
-                declaredCapabilities: { responses: true, streaming: true, toolCalls: true },
+                declaredCapabilities: {
+                  responses: true,
+                  streaming: true,
+                  toolCalls: true,
+                  multimodal: false,
+                },
                 contextWindowTokens: 128_000,
                 maxOutputTokens: 4_096,
                 autoCompact: true,
@@ -1242,6 +1339,17 @@ export function createMockDesktopApi(): DesktopApi {
 
 function isEligibleModel(model: ModelConfigurationView): boolean {
   return model.enabled;
+}
+
+function toMockAttachmentMetadata(attachment: PickedAgentAttachment) {
+  return {
+    id: attachment.attachmentId,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    kind: attachment.kind,
+    ...(attachment.kind === 'file' ? { relativePath: attachment.name } : {}),
+  };
 }
 
 function createUnverifiedModel(

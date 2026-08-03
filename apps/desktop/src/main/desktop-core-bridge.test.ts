@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDesktopCoreBridge } from './desktop-core-bridge.js';
+import { createDesktopAttachmentController } from './desktop-attachment-controller.js';
 import type { CoreSupervisor } from './core-supervisor.js';
 
 class FakeSupervisor {
@@ -35,6 +36,40 @@ class FakeSupervisor {
     this.exitRequests.push(choice);
     return { ok: true, state: 'detached' };
   }
+}
+
+class FakeAttachmentController {
+  readonly resolved: unknown[] = [];
+
+  async pick(): Promise<
+    Array<{ attachmentId: string; name: string; mimeType: string; sizeBytes: number; kind: 'file' }>
+  > {
+    return [
+      {
+        attachmentId: 'ticket-1',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 2_048,
+        kind: 'file',
+      },
+    ];
+  }
+
+  async resolve(value: unknown) {
+    this.resolved.push(value);
+    return [
+      {
+        id: 'ticket-1',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 2_048,
+        kind: 'file' as const,
+        sourcePath: 'C:/tmp/notes.txt',
+      },
+    ];
+  }
+
+  clear(): void {}
 }
 
 describe('DesktopCoreBridge', () => {
@@ -364,6 +399,107 @@ describe('DesktopCoreBridge', () => {
     await expect(bridge.invoke('filesystem:read', { path: '/tmp/secret' })).rejects.toThrow(
       'Renderer channel is not available',
     );
+    bridge.dispose();
+  });
+
+  it('picks renderer-safe attachments and resolves their tickets before Core start', async () => {
+    const supervisor = new FakeSupervisor();
+    const attachmentController = new FakeAttachmentController();
+    const bridge = createDesktopCoreBridge(
+      supervisor as unknown as CoreSupervisor,
+      () => undefined,
+      () => undefined,
+      {},
+      undefined,
+      () => undefined,
+      () => undefined,
+      attachmentController as never,
+    );
+
+    await expect(
+      bridge.invoke('attachments:pick', { kind: 'file', currentCount: 0 }),
+    ).resolves.toEqual([
+      {
+        attachmentId: 'ticket-1',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 2_048,
+        kind: 'file',
+      },
+    ]);
+    await bridge.invoke('agent:start', 'session-1', 'read notes', {
+      attachments: [
+        {
+          attachmentId: 'ticket-1',
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 2_048,
+          kind: 'file',
+        },
+      ],
+      permissionMode: 'manual',
+    });
+
+    expect(attachmentController.resolved).toEqual([
+      [
+        {
+          attachmentId: 'ticket-1',
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 2_048,
+          kind: 'file',
+        },
+      ],
+    ]);
+    expect(supervisor.requests[0]).toEqual({
+      method: 'agent.start',
+      payload: {
+        sessionId: 'session-1',
+        goal: 'read notes',
+        attachments: [
+          {
+            id: 'ticket-1',
+            name: 'notes.txt',
+            mimeType: 'text/plain',
+            sizeBytes: 2_048,
+            kind: 'file',
+            sourcePath: 'C:/tmp/notes.txt',
+          },
+        ],
+        permissionMode: 'manual',
+      },
+    });
+    bridge.dispose();
+  });
+
+  it('rejects renderer attachment fields that include sourcePath before forwarding to Core', async () => {
+    const supervisor = new FakeSupervisor();
+    const bridge = createDesktopCoreBridge(
+      supervisor as unknown as CoreSupervisor,
+      () => undefined,
+      () => undefined,
+      {},
+      undefined,
+      () => undefined,
+      () => undefined,
+      createDesktopAttachmentController({ selectPaths: async () => [] }),
+    );
+
+    await expect(
+      bridge.invoke('agent:start', 'session-1', 'read notes', {
+        attachments: [
+          {
+            attachmentId: 'ticket-1',
+            name: 'notes.txt',
+            mimeType: 'text/plain',
+            sizeBytes: 2_048,
+            kind: 'file',
+            sourcePath: 'C:/tmp/notes.txt',
+          },
+        ],
+      }),
+    ).rejects.toThrow();
+    expect(supervisor.requests).toEqual([]);
     bridge.dispose();
   });
 });

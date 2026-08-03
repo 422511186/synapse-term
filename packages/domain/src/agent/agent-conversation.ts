@@ -1,3 +1,4 @@
+import type { AgentAttachmentMetadata } from './agent-attachment.js';
 import type { AgentDriverKind } from './agent-driver.js';
 import type { AgentModelSelection, ModelReasoningEffort } from '../provider/model-configuration.js';
 
@@ -144,7 +145,15 @@ interface ModelItemBase {
 }
 
 export type ModelItem =
-  | (ModelItemBase & { type: 'system_text' | 'user_text' | 'assistant_text'; content: string })
+  | (ModelItemBase & {
+      type: 'system_text' | 'assistant_text';
+      content: string;
+    })
+  | (ModelItemBase & {
+      type: 'user_text';
+      content: string;
+      attachments?: AgentAttachmentMetadata[] | undefined;
+    })
   | (ModelItemBase & {
       type: 'assistant_tool_call';
       toolCallId: string;

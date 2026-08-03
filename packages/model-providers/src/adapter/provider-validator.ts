@@ -115,6 +115,7 @@ export class ModelValidator {
               ...(model.declaredCapabilities.reasoning === undefined
                 ? {}
                 : { reasoning: model.declaredCapabilities.reasoning }),
+              multimodal: model.declaredCapabilities.multimodal === true,
             },
           }
         : {
