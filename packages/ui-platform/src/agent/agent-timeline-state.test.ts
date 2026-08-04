@@ -104,6 +104,80 @@ describe('agent timeline state', () => {
     expect(state.items).toEqual([expect.objectContaining({ id: 'assistant-1', text: 'final' })]);
   });
 
+  it('places a replaced final assistant response after the tool events it follows', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(
+      state,
+      delta({ delta: '先检查主机。', sequence: 0, occurredAt: '2026-08-04T00:00:01.000Z' }),
+    );
+    state = applyAgentTimelineEvent(
+      state,
+      item({
+        id: 'tool-call-call-1',
+        kind: 'tool',
+        toolRole: 'call',
+        toolCallId: 'call-1',
+        text: 'terminal_execute\n{"command":"vm_stat"}',
+        status: 'running',
+        turnId: 'turn-1',
+        occurredAt: '2026-08-04T00:00:02.000Z',
+      }),
+    );
+    state = applyAgentTimelineEvent(
+      state,
+      item({
+        id: 'command-1',
+        kind: 'command',
+        toolCallId: 'call-1',
+        text: 'vm_stat',
+        status: 'completed',
+        turnId: 'turn-1',
+        occurredAt: '2026-08-04T00:00:03.000Z',
+      }),
+    );
+    state = applyAgentTimelineEvent(
+      state,
+      item({
+        id: 'tool-result-call-1',
+        kind: 'tool',
+        toolRole: 'result',
+        toolCallId: 'call-1',
+        text: '{"ok":true}',
+        status: 'completed',
+        turnId: 'turn-1',
+        occurredAt: '2026-08-04T00:00:04.000Z',
+      }),
+    );
+    state = applyAgentTextDelta(
+      state,
+      delta({
+        operation: 'replace',
+        delta: '结论：检查已完成。',
+        sequence: 1,
+        occurredAt: '2026-08-04T00:00:05.000Z',
+      }),
+    );
+    state = applyAgentTimelineEvent(
+      state,
+      item({
+        id: 'assistant-1',
+        kind: 'assistant',
+        text: '结论：检查已完成。',
+        status: 'completed',
+        turnId: 'turn-1',
+        occurredAt: '2026-08-04T00:00:06.000Z',
+      }),
+    );
+
+    expect(
+      groupAgentTimelineItems(state.items).map((group) =>
+        group.kind === 'tool'
+          ? `tool:${group.toolCallId}`
+          : `${group.event.kind}:${group.event.text}`,
+      ),
+    ).toEqual(['tool:call-1', 'assistant:结论：检查已完成。']);
+  });
+
   it('rejects a sequence gap and requests Session history refresh', () => {
     let state = createAgentTimelineState();
     state = applyAgentTextDelta(state, delta({ delta: 'a', sequence: 0 }));
@@ -429,6 +503,54 @@ describe('agent timeline state', () => {
       hydratedCall,
       interrupted,
     ]);
+  });
+
+  it('restores persisted order when hydration finds a live assistant before its tool call', () => {
+    const liveAssistant = item({
+      id: 'assistant-1',
+      kind: 'assistant',
+      text: '结论：检查已完成。',
+      status: 'completed',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+      occurredAt: '2026-08-04T00:00:06.000Z',
+    });
+    const liveCall = item({
+      id: 'tool-call-call-1',
+      kind: 'tool',
+      toolRole: 'call',
+      toolCallId: 'call-1',
+      text: 'terminal_execute\n{"command":"vm_stat"}',
+      status: 'completed',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+      occurredAt: '2026-08-04T00:00:02.000Z',
+    });
+    const liveCommand = item({
+      id: 'command-1',
+      kind: 'command',
+      toolCallId: 'call-1',
+      text: 'vm_stat',
+      status: 'completed',
+      conversationId: 'conversation-1',
+      turnId: 'turn-1',
+      occurredAt: '2026-08-04T00:00:03.000Z',
+    });
+    const hydratedCall = { ...liveCall, id: 'history-call-1' };
+    const hydratedAssistant = { ...liveAssistant, id: 'history-assistant-1' };
+
+    const merged = mergeHydratedTimeline([liveAssistant, liveCall, liveCommand], 'session-1', [
+      hydratedCall,
+      hydratedAssistant,
+    ]);
+
+    expect(
+      groupAgentTimelineItems(merged).map((group) =>
+        group.kind === 'tool'
+          ? `tool:${group.toolCallId}`
+          : `${group.event.kind}:${group.event.text}`,
+      ),
+    ).toEqual(['tool:call-1', 'assistant:结论：检查已完成。']);
   });
 
   it('keeps each live failure directly below the user turn it belongs to', () => {

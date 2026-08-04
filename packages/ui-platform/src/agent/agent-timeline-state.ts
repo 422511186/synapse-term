@@ -172,8 +172,39 @@ export function upsertTimelineEvent(
   const index = byId >= 0 ? byId : byToolCallId;
   if (index < 0) return [...items.slice(-(Math.max(1, limit) - 1)), event];
   const next = [...items];
-  next[index] = mergeTimelineEvent(next[index]!, event);
+  const merged = mergeTimelineEvent(next[index]!, event);
+  if (shouldRepositionAssistantUpdate(next[index]!, event)) {
+    next.splice(index, 1);
+    return insertTimelineItemChronologically(next, merged);
+  }
+  next[index] = merged;
   return next;
+}
+
+function shouldRepositionAssistantUpdate(
+  existing: AgentTimelineItem,
+  event: AgentTimelineItem,
+): boolean {
+  return (
+    existing.kind === 'assistant' &&
+    event.kind === 'assistant' &&
+    existing.occurredAt !== event.occurredAt
+  );
+}
+
+function insertTimelineItemChronologically(
+  items: readonly AgentTimelineItem[],
+  event: AgentTimelineItem,
+): AgentTimelineItem[] {
+  const eventTime = Date.parse(event.occurredAt);
+  if (Number.isNaN(eventTime)) return [...items, event];
+
+  const insertionIndex = items.findIndex((item) => {
+    const itemTime = Date.parse(item.occurredAt);
+    return !Number.isNaN(itemTime) && itemTime > eventTime;
+  });
+  if (insertionIndex < 0) return [...items, event];
+  return [...items.slice(0, insertionIndex), event, ...items.slice(insertionIndex)];
 }
 
 function mergeTimelineEvent(
@@ -472,7 +503,7 @@ function mergeSessionTimeline(
         ) {
           entries.push({ item });
         } else {
-          entries.push({ item: replacement, hydratedIndex });
+          insertHydratedEntry(entries, { item: replacement, hydratedIndex });
         }
         emittedHydratedIds.add(replacement.id);
       }
