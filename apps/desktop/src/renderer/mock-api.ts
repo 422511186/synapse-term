@@ -247,6 +247,15 @@ export function createMockDesktopApi(): DesktopApi {
         emitSessionChanged(session);
         return structuredClone(session);
       },
+      rename: async (sessionId, alias) => {
+        const session = sessions.find((candidate) => candidate.id === sessionId);
+        if (session === undefined) throw new Error('终端会话不存在');
+        const normalized = alias.trim();
+        if (normalized.length === 0) throw new Error('会话名称不能为空');
+        session.title = normalized;
+        emitSessionChanged(session);
+        return structuredClone(session);
+      },
       setDialect: async (sessionId, executionDialect) => {
         const session = sessions.find((candidate) => candidate.id === sessionId);
         if (session === undefined) throw new Error('终端会话不存在');
@@ -497,12 +506,44 @@ export function createMockDesktopApi(): DesktopApi {
           turnId,
           occurredAt: new Date().toISOString(),
         });
+        const emitProgress = (
+          phase: NonNullable<AgentTimelineItem['progress']>['phase'],
+          revision: number,
+          steps: NonNullable<AgentTimelineItem['progress']>['steps'],
+        ): void => {
+          emitTimeline({
+            id: `mock-progress-${turnId}`,
+            sessionId,
+            kind: 'system',
+            text: phase,
+            status: phase,
+            progress: { phase, revision, steps },
+            conversationId: history!.conversation.id,
+            turnId,
+            occurredAt: new Date().toISOString(),
+          });
+        };
+        const initialProgressDelayMs = searchParam('agentThinking') === '1' ? 250 : 0;
+        const emitInitialProgress = (): void => {
+          if (history!.activeTurnId !== turnId) return;
+          emitProgress('planning', 0, [
+            { id: 'mock-plan', label: '分析任务目标', status: 'running' },
+          ]);
+        };
+        if (initialProgressDelayMs > 0) {
+          globalThis.setTimeout(emitInitialProgress, initialProgressDelayMs);
+        } else {
+          emitInitialProgress();
+        }
         if (searchParam('agentFailure') === '1') {
           globalThis.setTimeout(() => {
             if (history!.activeTurnId !== turnId) return;
             const activeTurn = history!.turns.find((turn) => turn.id === turnId);
             if (activeTurn !== undefined) activeTurn.status = 'failed';
             delete history!.activeTurnId;
+            emitProgress('failed', 1, [
+              { id: 'mock-plan', label: '分析任务目标', status: 'failed' },
+            ]);
             emitTimeline({
               id: `failure-${Date.now()}`,
               sessionId,
@@ -513,7 +554,7 @@ export function createMockDesktopApi(): DesktopApi {
               turnId,
               occurredAt: new Date().toISOString(),
             });
-          }, 100);
+          }, 100 + initialProgressDelayMs);
           return { taskId, conversationId: history.conversation.id, turnId };
         }
         if (/edit local file/i.test(goal)) {
@@ -537,6 +578,9 @@ export function createMockDesktopApi(): DesktopApi {
           };
           pendingApprovals.set(approval.id, approval);
           globalThis.setTimeout(() => {
+            emitProgress('waiting_approval', 1, [
+              { id: 'mock-plan', label: '等待命令审批', status: 'waiting_approval' },
+            ]);
             emitTimeline({
               id: approval.id,
               sessionId,
@@ -550,7 +594,7 @@ export function createMockDesktopApi(): DesktopApi {
               turnId,
               occurredAt: new Date().toISOString(),
             });
-          }, 250);
+          }, 250 + initialProgressDelayMs);
           return { taskId, conversationId: history.conversation.id, turnId };
         }
         if (/\b(?:restart|delete|remove)\b/i.test(goal)) {
@@ -568,6 +612,9 @@ export function createMockDesktopApi(): DesktopApi {
           };
           pendingApprovals.set(approval.id, approval);
           globalThis.setTimeout(() => {
+            emitProgress('waiting_approval', 1, [
+              { id: 'mock-plan', label: '等待命令审批', status: 'waiting_approval' },
+            ]);
             emitTimeline({
               id: approval.id,
               sessionId,
@@ -580,7 +627,7 @@ export function createMockDesktopApi(): DesktopApi {
               turnId: approval.turnId,
               occurredAt: new Date().toISOString(),
             });
-          }, 250);
+          }, 250 + initialProgressDelayMs);
           return { taskId, conversationId: history.conversation.id, turnId };
         }
         const assistantText = /markdown/i.test(goal)
@@ -589,9 +636,13 @@ export function createMockDesktopApi(): DesktopApi {
         const commandId = `timeline-${Date.now()}-command`;
         const toolCallId = `tool-${Date.now()}-call`;
         const commandText = 'df -h && systemctl --failed --no-pager';
-        const commandCompletionDelay = searchParam('longCommand') === '1' ? 30_000 : 350;
+        const commandCompletionDelay =
+          (searchParam('longCommand') === '1' ? 30_000 : 350) + initialProgressDelayMs;
         globalThis.setTimeout(() => {
           if (history!.activeTurnId !== turnId) return;
+          emitProgress('executing', 1, [
+            { id: 'mock-plan', label: '执行终端检查', status: 'running' },
+          ]);
           runningCommands.set(sessionId, {
             id: commandId,
             text: commandText,
@@ -637,6 +688,9 @@ export function createMockDesktopApi(): DesktopApi {
           if (history!.activeTurnId !== turnId) return;
           if (runningCommands.get(sessionId)?.id !== commandId) return;
           runningCommands.delete(sessionId);
+          emitProgress('verifying', 2, [
+            { id: 'mock-plan', label: '复核检查结果', status: 'running' },
+          ]);
           emitTimeline({
             id: commandId,
             sessionId,
@@ -693,6 +747,9 @@ export function createMockDesktopApi(): DesktopApi {
           });
           history!.turns.find((turn) => turn.id === turnId)!.status = 'completed';
           delete history!.activeTurnId;
+          emitProgress('completed', 3, [
+            { id: 'mock-plan', label: '复核检查结果', status: 'completed' },
+          ]);
           emitTimeline({
             id: `timeline-${Date.now()}-assistant`,
             sessionId,
@@ -717,6 +774,21 @@ export function createMockDesktopApi(): DesktopApi {
           const activeTurnId = history.activeTurnId;
           if (active !== undefined) active.status = 'cancelled';
           delete history.activeTurnId;
+          emitTimeline({
+            id: `mock-progress-${activeTurnId}`,
+            sessionId,
+            kind: 'system',
+            text: 'cancelled',
+            status: 'cancelled',
+            progress: {
+              phase: 'cancelled',
+              revision: 2,
+              steps: [{ id: 'mock-plan', label: '当前任务', status: 'cancelled' }],
+            },
+            conversationId: history.conversation.id,
+            turnId: activeTurnId,
+            occurredAt: new Date().toISOString(),
+          });
           emitTimeline({
             id: `cancel-${Date.now()}`,
             sessionId,
@@ -859,6 +931,21 @@ export function createMockDesktopApi(): DesktopApi {
           conversationId: pending.conversationId,
           turnId: pending.turnId,
           ...(pending.change === undefined ? {} : { change: pending.change }),
+          occurredAt: new Date().toISOString(),
+        });
+        emitTimeline({
+          id: `mock-progress-${pending.turnId}`,
+          sessionId,
+          kind: 'system',
+          text: 'completed',
+          status: 'completed',
+          progress: {
+            phase: 'completed',
+            revision: 2,
+            steps: [{ id: 'mock-plan', label: '命令审批', status: 'completed' }],
+          },
+          conversationId: pending.conversationId,
+          turnId: pending.turnId,
           occurredAt: new Date().toISOString(),
         });
         const history = conversations.get(sessionId);

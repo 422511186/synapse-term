@@ -21,6 +21,25 @@ test('backs the prototype workspace with runtime sessions and xterm', async ({ p
   await expect(page.getByRole('button', { name: '方言: POSIX', exact: true })).toBeVisible();
 });
 
+test('keeps progress in the timeline without a separate plan card', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+
+  await expect(page.getByText('Synapse · Agent', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Agent Timeline', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '审计日志', exact: true })).toHaveCount(0);
+  await expect(page.locator('.agent-driver-strip')).toHaveCount(0);
+
+  const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
+  await composer.fill('show markdown diagnostics');
+  await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
+
+  await expect(page.locator('.current-turn-plan')).toHaveCount(0);
+  await expect(page.locator('.current-turn-plan-slot')).toHaveCount(0);
+  await expect(page.locator('.agent-progress-card')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '诊断结论', exact: true })).toBeVisible();
+});
+
 test('keeps the terminal viewport aligned to complete rows at the bottom', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
@@ -75,6 +94,18 @@ test('forwards terminal search input to the active xterm search addon', async ({
     .toEqual(['kubectl']);
 });
 
+test('opens terminal search with Ctrl+F while the terminal has focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+
+  const searchInput = page.getByPlaceholder('搜索终端输出 (Ctrl+F)');
+  await page.locator('.terminal-host').click();
+  await page.keyboard.press('Control+f');
+
+  await expect(searchInput).toBeFocused();
+  await expect(searchInput).toBeVisible();
+});
+
 test('backs the prototype resource, agent, approval, and audit surfaces with runtime APIs', async ({
   page,
 }) => {
@@ -98,8 +129,10 @@ test('backs the prototype resource, agent, approval, and audit surfaces with run
     page.getByText('systemctl action changes service state', { exact: true }),
   ).toHaveCount(0);
 
-  await page.getByRole('tab', { name: '审计日志', exact: true }).click();
-  await expect(page.getByRole('tabpanel', { name: '审计日志' })).toContainText('创建终端会话');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('menuitem', { name: '审计日志', exact: true }).click();
+  await expect(page.getByText('创建终端会话', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
 });
 
 test('creates, closes, and reuses sessions through the prototype controls', async ({ page }) => {
@@ -108,7 +141,7 @@ test('creates, closes, and reuses sessions through the prototype controls', asyn
 
   await page.getByRole('button', { name: '新建终端会话', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建终端会话' });
-  await dialog.getByLabel('会话名称').fill('staging / bash');
+  await dialog.getByLabel('Session Alias').fill('staging / bash');
   await dialog.getByLabel('系统 Shell').selectOption('bash');
   await dialog.getByRole('button', { name: '创建并连接', exact: true }).click();
   await expect(
@@ -133,10 +166,7 @@ test('reuses runtime prompt history and can cancel an active turn', async ({ pag
   await expect(
     page.getByText('df -h && systemctl --failed --no-pager', { exact: true }),
   ).toBeVisible();
-  await page
-    .locator('.running-status-bar')
-    .getByRole('button', { name: '取消当前 Agent 任务', exact: true })
-    .click();
+  await page.getByRole('button', { name: '停止当前 Agent 任务', exact: true }).click();
   await expect(page.getByText('已取消', { exact: true }).first()).toBeVisible();
 
   await page.getByRole('button', { name: '提示词历史', exact: true }).click();
@@ -188,19 +218,13 @@ test('keeps task cancellation available when approval failure covers the timelin
   await page.getByRole('button', { name: '批准执行', exact: true }).click();
   const dialog = page.getByRole('alertdialog', { name: '运行错误' });
   await expect(dialog).toContainText('模拟审批失败');
-  const cancel = dialog.getByRole('button', { name: '取消当前任务', exact: true });
-  await expect(cancel).toBeVisible();
-
-  await cancel.click();
+  await dialog.getByRole('button', { name: '关闭错误提示', exact: true }).click();
+  await page.getByRole('button', { name: '停止当前 Agent 任务', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText('当前任务已取消', { exact: true })).toBeVisible();
   await expect(
-    page.getByRole('button', {
-      name: '取消当前 Agent 任务',
-      exact: true,
-      includeHidden: true,
-    }),
-  ).toHaveClass(/hidden/);
+    page.locator('[aria-label="Agent 时间线"]').getByText('当前任务已取消', { exact: true }).last(),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeVisible();
 });
 
 test('retires a stale approval without leaving an actionable card or error overlay', async ({
@@ -217,13 +241,7 @@ test('retires a stale approval without leaving an actionable card or error overl
 
   await expect(page.getByRole('alertdialog', { name: '运行错误' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '批准执行', exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole('button', {
-      name: '取消当前 Agent 任务',
-      exact: true,
-      includeHidden: true,
-    }),
-  ).toHaveClass(/hidden/);
+  await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeVisible();
 });
 
 test('places Agent failure events below their corresponding prompt', async ({ page }) => {
@@ -231,7 +249,7 @@ test('places Agent failure events below their corresponding prompt', async ({ pa
   await page.goto('/?agentFailure=1');
 
   const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
-  const timeline = page.locator('[role="tabpanel"][aria-label="Agent Timeline"]');
+  const timeline = page.locator('[role="tabpanel"][aria-label="Agent 时间线"]');
   const firstPrompt = '查一下第一轮内存';
   const secondPrompt = '查一下第二轮内存';
 
@@ -270,14 +288,14 @@ test('releases the Agent turn after a history timeout recovery', async ({ page }
   const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
   await composer.fill('show markdown diagnostics');
   await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
-  await expect(page.getByText('当前任务已取消', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('[aria-label="Agent 时间线"]').getByText('当前任务已取消', { exact: true }).last(),
+  ).toBeVisible();
 
   const dialog = page.getByRole('alertdialog', { name: '运行错误' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: '关闭错误提示', exact: true }).click();
-  await expect(
-    page.getByRole('button', { name: '取消当前 Agent 任务', exact: true, includeHidden: true }),
-  ).toHaveClass(/hidden/);
+  await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeDisabled();
   await composer.fill('a follow-up goal');
   await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeEnabled();
 });
@@ -312,7 +330,7 @@ test('follows new Timeline messages at the latest position without stealing hist
   await page.goto('/');
 
   const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
-  const timeline = page.locator('[role="tabpanel"][aria-label="Agent Timeline"]');
+  const timeline = page.locator('[role="tabpanel"][aria-label="Agent 时间线"]');
 
   for (let index = 1; index <= 4; index += 1) {
     const prompt = `show markdown diagnostics ${index}`;

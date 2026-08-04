@@ -3,14 +3,17 @@ import { useEffect, useState, type JSX } from 'react';
 import { X } from 'lucide-react';
 
 import { errorMessageZh } from '@synapse-term/ui-platform';
-import type { SessionEnvironment } from '../../preload/preload-api.js';
+import type { SessionEnvironment, SessionSummary } from '../../preload/preload-api.js';
+import { getDefaultSessionAlias, resolveSessionAlias } from '../session-alias.js';
 
 export function NewSessionModal({
   environment,
+  sessions,
   onClose,
   onCreate,
 }: {
   environment: SessionEnvironment;
+  sessions: readonly Pick<SessionSummary, 'title'>[];
   onClose: () => void;
   onCreate: (
     title: string,
@@ -18,7 +21,8 @@ export function NewSessionModal({
   ) => Promise<void>;
 }): JSX.Element {
   const availableShells = environment.shells.filter((shell) => shell.available);
-  const [title, setTitle] = useState('');
+  const defaultAlias = getDefaultSessionAlias(sessions);
+  const [title, setTitle] = useState(() => defaultAlias);
   const [shellKind, setShellKind] = useState<SessionEnvironment['shells'][number]['kind']>(
     () => availableShells[0]?.kind ?? 'bash',
   );
@@ -32,14 +36,11 @@ export function NewSessionModal({
   }, [availableShells, shellKind]);
 
   const create = async (): Promise<void> => {
-    if (!title.trim()) {
-      setError('请输入会话名称。');
-      return;
-    }
+    const alias = resolveSessionAlias(title, sessions);
     setCreating(true);
     setError(undefined);
     try {
-      await onCreate(title.trim(), shellKind);
+      await onCreate(alias, shellKind);
     } catch (caught) {
       setError(errorMessageZh(caught));
       setCreating(false);
@@ -75,14 +76,14 @@ export function NewSessionModal({
               className="text-[13px] font-medium text-foreground/90"
               htmlFor="prototype-session-name"
             >
-              会话名称
+              Session Alias
             </label>
             <input
               id="prototype-session-name"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               type="text"
-              placeholder="例如: 生产环境-K8S"
+              placeholder={defaultAlias}
               className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
             />
           </div>

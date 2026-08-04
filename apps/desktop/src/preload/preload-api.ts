@@ -189,6 +189,7 @@ export interface DesktopApi {
     list(): Promise<SessionSummary[]>;
     environment(): Promise<SessionEnvironment>;
     create(input: SessionLaunchInput): Promise<SessionSummary>;
+    rename(sessionId: string, alias: string): Promise<SessionSummary>;
     setDialect(
       sessionId: string,
       executionDialect: SessionSummary['executionDialect'],
@@ -302,6 +303,7 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
       list: () => invoke('sessions:list'),
       environment: () => invoke('sessions:environment'),
       create: (input) => invoke('sessions:create', input),
+      rename: (sessionId, alias) => invoke('sessions:rename', sessionId, alias),
       setDialect: (sessionId, executionDialect) =>
         invoke('sessions:set-dialect', sessionId, executionDialect),
       markShared: (sessionId) => invoke('sessions:mark-shared', sessionId),

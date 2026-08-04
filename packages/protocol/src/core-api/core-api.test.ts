@@ -134,6 +134,25 @@ describe('Core API protocol', () => {
     });
   });
 
+  it('accepts only a non-empty alias and sessionId for session.rename', () => {
+    expect(
+      parseCoreRequest('session.rename', { sessionId: 'session-1', alias: 'new name' }),
+    ).toEqual({
+      method: 'session.rename',
+      payload: { sessionId: 'session-1', alias: 'new name' },
+    });
+    expect(() =>
+      parseCoreRequest('session.rename', { sessionId: 'session-1', alias: ' \t ' }),
+    ).toThrow();
+    expect(() =>
+      parseCoreRequest('session.rename', {
+        sessionId: 'session-1',
+        alias: 'new name',
+        title: 'must not cross the boundary',
+      }),
+    ).toThrow();
+  });
+
   it('preserves a bounded terminal type in Session launch and summary payloads', () => {
     const request = coreRequestSchema.safeParse({
       method: 'session.create',

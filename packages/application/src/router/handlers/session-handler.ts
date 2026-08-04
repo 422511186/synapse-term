@@ -83,7 +83,7 @@ export class SessionRequestHandler {
         this.#summary(state.id, this.#titles.get(state.id) ?? state.id, state),
       );
     }
-    return [...summaries.values()].sort((left, right) => left.id.localeCompare(right.id));
+    return [...summaries.values()];
   }
 
   async createSession(input: SessionLaunch): Promise<SessionSummary> {
@@ -150,6 +150,27 @@ export class SessionRequestHandler {
     });
     this.#onActivityChange({ sessions: this.#sessions.activeCount, agentTasks: 0 });
     return true;
+  }
+
+  renameSession(sessionId: string, alias: string): SessionSummary {
+    const actor = this.#sessions.get(sessionId);
+    const state = actor?.snapshot ?? this.#repositories.getSession(sessionId);
+    if (state === undefined) throw routerError('session_not_found', 'Session not found');
+    const previousTitle = this.#titles.get(sessionId) ?? sessionId;
+    if (!this.#repositories.renameSession(sessionId, alias)) {
+      throw routerError('session_not_found', 'Session not found');
+    }
+    const title = alias.trim();
+    this.#titles.set(sessionId, title);
+    this.#recordAudit({
+      actor: { kind: 'user' },
+      sessionId,
+      type: 'session.renamed',
+      payload: { previousTitle, title },
+    });
+    const summary = this.#summary(sessionId, title, state);
+    this.#emitChanged(summary);
+    return summary;
   }
 
   async setSessionDialect(

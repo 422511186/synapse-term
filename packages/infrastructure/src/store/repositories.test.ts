@@ -25,6 +25,59 @@ import { CoreRepositories } from './repositories.js';
 import { SqliteStore } from './sqlite-store.js';
 
 describe('CoreRepositories', () => {
+  it('lists Session metadata in creation order instead of UUID order', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      try {
+        store
+          .database()
+          .prepare('INSERT INTO sessions (id, state_json, title, launch_json) VALUES (?, ?, ?, ?)')
+          .run(
+            'session-z',
+            JSON.stringify(createSessionState('session-z')),
+            'first',
+            JSON.stringify({
+              executable: 'bash',
+              terminalType: 'Git Bash',
+              args: [],
+              cwd: 'C:/work',
+              columns: 80,
+              rows: 24,
+              executionDialect: 'posix',
+              envKeys: [],
+            }),
+          );
+        store
+          .database()
+          .prepare('INSERT INTO sessions (id, state_json, title, launch_json) VALUES (?, ?, ?, ?)')
+          .run(
+            'session-a',
+            JSON.stringify(createSessionState('session-a')),
+            'second',
+            JSON.stringify({
+              executable: 'bash',
+              terminalType: 'Git Bash',
+              args: [],
+              cwd: 'C:/work',
+              columns: 80,
+              rows: 24,
+              executionDialect: 'posix',
+              envKeys: [],
+            }),
+          );
+
+        const repositories = new CoreRepositories(store);
+        expect(repositories.listSessionMetadata().map((record) => record.id)).toEqual([
+          'session-z',
+          'session-a',
+        ]);
+      } finally {
+        await store.close();
+      }
+    });
+  });
+
   it('persists multiple model configurations per provider with a unique model id', async () => {
     await withTemporaryDirectory(async (directory) => {
       const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
@@ -315,7 +368,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(9);
+        expect(upgraded.schemaVersion).toBe(10);
         const upgradedRepositories = new CoreRepositories(upgraded);
         expect(upgradedRepositories.getSession(legacySession.id)).toMatchObject({
           executionDialect: 'observe_only',
@@ -452,7 +505,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(9);
+        expect(upgraded.schemaVersion).toBe(10);
         const modelRow = upgraded
           .database()
           .prepare('SELECT state_json FROM model_configurations WHERE id = ?')
@@ -594,7 +647,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(9);
+        expect(upgraded.schemaVersion).toBe(10);
         const repositories = new CoreRepositories(upgraded);
         expect(repositories.getAgentConversation('conversation-legacy')).toMatchObject({
           driver: 'builtin',

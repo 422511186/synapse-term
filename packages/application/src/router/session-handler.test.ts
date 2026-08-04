@@ -1,6 +1,17 @@
 import { join } from 'node:path';
+import type * as NodeCrypto from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const randomUUID = vi.hoisted(() => {
+  let counter = 0;
+  return vi.fn(() => `generated-session-${++counter}`);
+});
+
+vi.mock('node:crypto', async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeCrypto>()),
+  randomUUID,
+}));
 
 import { CORE_MIGRATIONS, CoreRepositories, SqliteStore } from '@synapse-term/infrastructure';
 import { OutputJournal, SessionManager, type PtySpawner } from '@synapse-term/terminal-service';
@@ -138,6 +149,79 @@ describe('SessionRequestHandler share probe', () => {
         sessionId,
         payload: { phase: 'share', outcome: 'skipped' },
       });
+    });
+  });
+});
+
+describe('SessionRequestHandler session aliases', () => {
+  it('rejects a whitespace-only alias at the Core boundary', async () => {
+    await withRouter(async ({ router }) => {
+      await expect(
+        router.handle('session.create', { ...launch, title: ' \t ' }, 'connection-1'),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('allows duplicate aliases while keeping distinct session identities', async () => {
+    await withRouter(async ({ router }) => {
+      const first = (await router.handle(
+        'session.create',
+        { ...launch, title: '同名会话' },
+        'connection-1',
+      )) as { id: string; title: string };
+      const second = (await router.handle(
+        'session.create',
+        { ...launch, title: '不同别名' },
+        'connection-1',
+      )) as { id: string; title: string };
+
+      const renamed = (await router.handle(
+        'session.rename',
+        { sessionId: second.id, alias: '同名会话' },
+        'connection-1',
+      )) as { id: string; title: string };
+
+      expect(first).toMatchObject({ title: '同名会话' });
+      expect(renamed).toMatchObject({ id: second.id, title: '同名会话' });
+      expect(second.id).not.toBe(first.id);
+    });
+  });
+
+  it('renames an alias without changing the addressed sessionId', async () => {
+    await withRouter(async ({ router }) => {
+      const created = (await router.handle(
+        'session.create',
+        { ...launch, title: '原始别名' },
+        'connection-1',
+      )) as { id: string };
+
+      await expect(
+        router.handle('session.rename', { sessionId: created.id, alias: '新别名' }, 'connection-1'),
+      ).resolves.toMatchObject({ id: created.id, title: '新别名' });
+    });
+  });
+
+  it('returns sessions in creation order instead of UUID order', async () => {
+    randomUUID
+      .mockClear()
+      .mockReturnValueOnce('session-2')
+      .mockReturnValueOnce('session-1')
+      .mockReturnValueOnce('session-3');
+
+    await withRouter(async ({ router }) => {
+      await router.handle('session.create', { ...launch, title: '先创建' }, 'connection-1');
+      await router.handle('session.create', { ...launch, title: '后创建' }, 'connection-1');
+      await router.handle('session.create', { ...launch, title: '最后创建' }, 'connection-1');
+
+      const sessions = (await router.handle('session.list', {}, 'connection-1')) as Array<{
+        id: string;
+        title: string;
+      }>;
+      expect(sessions.map((session) => [session.id, session.title])).toEqual([
+        ['session-2', '先创建'],
+        ['session-1', '后创建'],
+        ['session-3', '最后创建'],
+      ]);
     });
   });
 });

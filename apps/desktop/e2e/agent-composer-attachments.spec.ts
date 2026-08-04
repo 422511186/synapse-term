@@ -113,7 +113,7 @@ test('picks and removes file attachments and sends attachment metadata to the ti
   await page.getByRole('button', { name: '添加文件', exact: true }).click();
   await input.fill('read the attached file');
   await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
-  const timeline = page.locator('[role="tabpanel"][aria-label="Agent Timeline"]');
+  const timeline = page.locator('[role="tabpanel"][aria-label="Agent 时间线"]');
   await expect(timeline).toContainText('notes.txt');
   await expect(timeline).toContainText('text/plain');
   await expect(timeline).toContainText('2 KB');
@@ -130,8 +130,9 @@ test('allows image attachments for multimodal models and blocks them for non-mul
   await expect(page.getByText('截图.png', { exact: true })).toBeVisible();
   await input.fill('inspect the screenshot');
   await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
-  const timeline = page.locator('[role="tabpanel"][aria-label="Agent Timeline"]');
+  const timeline = page.locator('[role="tabpanel"][aria-label="Agent 时间线"]');
   await expect(timeline).toContainText('截图.png');
+  await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '模型: GPT-5', exact: true }).click();
   await page.getByRole('menuitem', { name: '管理模型配置...', exact: true }).click();

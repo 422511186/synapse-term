@@ -138,6 +138,7 @@ describe('DesktopCoreBridge', () => {
       executionDialect: 'posix',
     });
     await bridge.invoke('sessions:set-dialect', 'session-1', 'powershell');
+    await bridge.invoke('sessions:rename', 'session-1', 'renamed shell');
     await bridge.invoke('sessions:mark-shared', 'session-1');
     await bridge.invoke('resources:get', 'session-1');
     await bridge.invoke('resources:refresh', 'session-1');
@@ -172,6 +173,7 @@ describe('DesktopCoreBridge', () => {
         method: 'session.setDialect',
         payload: { sessionId: 'session-1', executionDialect: 'powershell' },
       },
+      { method: 'session.rename', payload: { sessionId: 'session-1', alias: 'renamed shell' } },
       { method: 'session.markShared', payload: { sessionId: 'session-1' } },
       { method: 'resources.get', payload: { sessionId: 'session-1' } },
       { method: 'resources.refresh', payload: { sessionId: 'session-1' } },

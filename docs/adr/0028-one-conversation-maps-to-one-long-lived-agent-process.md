@@ -4,7 +4,7 @@
 
 ## 决策
 
-一个 ACP Conversation 对应一个外部 Agent 子进程；子进程只在用户显式开启 ACP、选择驱动者并开始任务时启动。关闭 Conversation、关闭 ACP 开关或退出应用时终止该进程。
+一个 ACP Conversation 对应一个外部 Agent 子进程；子进程只在用户显式开启 ACP 并通过保留的 ACP 控制路径开始任务时启动。当前桌面 Agent 工作区不提供驱动者选择或外部新任务入口，但关闭 Conversation、关闭 ACP 开关或退出应用时仍终止该进程。
 
 ## 当前实现
 

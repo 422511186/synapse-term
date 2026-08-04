@@ -87,7 +87,7 @@ test('rolls back the optimistic enable when the API fails', async ({ page }) => 
 
 test('shows the agent running status bar and thinking placeholder', async ({ page }) => {
   await page.setViewportSize(wideDesktop);
-  await page.goto('/');
+  await page.goto('/?agentThinking=1');
 
   const input = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
   await input.fill('delete the cache recursively');
@@ -97,7 +97,8 @@ test('shows the agent running status bar and thinking placeholder', async ({ pag
   await expect(thinkingPlaceholder).toBeVisible();
   const statusBar = page.locator('.running-status-bar');
   await expect(statusBar).toContainText('Agent 运行中');
-  await expect(statusBar.getByRole('button', { name: '取消当前 Agent 任务' })).toBeVisible();
+  await expect(statusBar.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '停止当前 Agent 任务' })).toBeVisible();
 
   await expect(page.getByText('需要人工审批', { exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(thinkingPlaceholder).toHaveCount(0);

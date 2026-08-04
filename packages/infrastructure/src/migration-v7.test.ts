@@ -63,9 +63,13 @@ describe('Migration v7: plaintext environment fields', () => {
   it('opens schema v8 databases created by the refactored desktop branch', async () => {
     await withTemporaryDirectory(async (dir) => {
       const databasePath = join(dir, 'core.sqlite');
-      const initialStore = new SqliteStore(databasePath, CORE_MIGRATIONS);
+      const initialStore = new SqliteStore(databasePath, CORE_MIGRATIONS.slice(0, 8));
       await initialStore.open();
-      new CoreRepositories(initialStore).saveSession(createSessionState('legacy-session'));
+      const legacySession = createSessionState('legacy-session');
+      initialStore
+        .database()
+        .prepare('INSERT INTO sessions (id, state_json, execution_dialect) VALUES (?, ?, ?)')
+        .run(legacySession.id, JSON.stringify(legacySession), legacySession.executionDialect);
       await initialStore.close();
 
       const database = new DatabaseSync(databasePath);
@@ -82,7 +86,7 @@ describe('Migration v7: plaintext environment fields', () => {
 
       const store = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await store.open();
-      expect(store.schemaVersion).toBe(9);
+      expect(store.schemaVersion).toBe(10);
       expect(new CoreRepositories(store).listSessions()).toEqual([
         expect.objectContaining({
           id: 'legacy-session',

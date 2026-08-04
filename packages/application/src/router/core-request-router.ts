@@ -152,6 +152,8 @@ export class CoreRequestRouter {
         return this.#sessionHandler.listSessions();
       case 'session.create':
         return this.#sessionHandler.createSession(request.payload);
+      case 'session.rename':
+        return this.#sessionHandler.renameSession(request.payload.sessionId, request.payload.alias);
       case 'session.setDialect':
         return this.#sessionHandler.setSessionDialect(
           request.payload.sessionId,

@@ -91,6 +91,11 @@ export function createDesktopCoreBridge(
             rows: input.rows ?? 24,
           });
         }
+        case 'sessions:rename':
+          return request(supervisor, 'session.rename', {
+            sessionId: stringAt(argumentsValue, 0),
+            alias: stringAt(argumentsValue, 1),
+          });
         case 'sessions:set-dialect':
           return request(supervisor, 'session.setDialect', {
             sessionId: stringAt(argumentsValue, 0),

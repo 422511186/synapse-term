@@ -55,26 +55,29 @@ export class CoreRepositories {
     const parsedMetadata =
       metadata === undefined ? undefined : sessionLaunchMetadataSchema.parse(metadata);
     this.#store.transaction((database) => {
+      const createdAt = parsedMetadata?.createdAt ?? this.#nextSessionCreatedAt(database);
       if (parsedMetadata === undefined) {
         database
           .prepare(
-            `INSERT INTO sessions (id, state_json, execution_dialect) VALUES (?, ?, ?)
+            `INSERT INTO sessions (id, state_json, execution_dialect, created_at) VALUES (?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                state_json = excluded.state_json,
                execution_dialect = excluded.execution_dialect`,
           )
-          .run(value.id, JSON.stringify(value), value.executionDialect);
+          .run(value.id, JSON.stringify(value), value.executionDialect, createdAt);
         return;
       }
       database
         .prepare(
-          `INSERT INTO sessions (id, state_json, title, launch_json, execution_dialect)
-           VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO sessions
+             (id, state_json, title, launch_json, execution_dialect, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              state_json = excluded.state_json,
              title = excluded.title,
              launch_json = excluded.launch_json,
-             execution_dialect = excluded.execution_dialect`,
+             execution_dialect = excluded.execution_dialect,
+             created_at = COALESCE(sessions.created_at, excluded.created_at)`,
         )
         .run(
           value.id,
@@ -82,7 +85,19 @@ export class CoreRepositories {
           parsedMetadata.title,
           JSON.stringify(parsedMetadata.launch),
           value.executionDialect,
+          createdAt,
         );
+    });
+  }
+
+  renameSession(id: string, title: string): boolean {
+    const normalized = title.trim();
+    if (normalized.length === 0) throw new Error('Session alias must not be blank');
+    return this.#store.transaction((database) => {
+      const result = database
+        .prepare('UPDATE sessions SET title = ? WHERE id = ?')
+        .run(normalized, id);
+      return Number(result.changes) > 0;
     });
   }
 
@@ -253,21 +268,30 @@ export class CoreRepositories {
   }
 
   listSessions(): SessionState[] {
-    return this.#listJson('sessions', sessionStateSchema.parse) as SessionState[];
+    const rows = this.#store
+      .database()
+      .prepare(
+        'SELECT state_json FROM sessions ORDER BY COALESCE(created_at, rowid) ASC, rowid ASC',
+      )
+      .all() as Array<{ state_json: string }>;
+    return rows.map((row) => sessionStateSchema.parse(JSON.parse(row.state_json)));
   }
 
   listSessionMetadata(): Array<{ id: string; metadata: SessionLaunchMetadata }> {
     const rows = this.#store
       .database()
       .prepare(
-        `SELECT id, title, launch_json FROM sessions
-         WHERE title IS NOT NULL AND launch_json IS NOT NULL ORDER BY id ASC`,
+        `SELECT id, title, launch_json, COALESCE(created_at, rowid) AS created_at
+         FROM sessions
+         WHERE title IS NOT NULL AND launch_json IS NOT NULL
+         ORDER BY COALESCE(created_at, rowid) ASC, rowid ASC`,
       )
-      .all() as Array<{ id: string; title: string; launch_json: string }>;
+      .all() as Array<{ id: string; title: string; launch_json: string; created_at: number }>;
     return rows.map((row) => ({
       id: row.id,
       metadata: sessionLaunchMetadataSchema.parse({
         title: row.title,
+        createdAt: row.created_at,
         launch: JSON.parse(row.launch_json),
       }),
     }));
@@ -463,6 +487,14 @@ export class CoreRepositories {
         )
         .run(id, JSON.stringify(value));
     });
+  }
+
+  #nextSessionCreatedAt(database: DatabaseSync): number {
+    const row = database
+      .prepare('SELECT COALESCE(MAX(COALESCE(created_at, rowid)), 0) AS latest FROM sessions')
+      .get() as { latest?: number | bigint } | undefined;
+    const latest = row?.latest === undefined ? 0 : Number(row.latest);
+    return latest + 1;
   }
 
   #getJson(

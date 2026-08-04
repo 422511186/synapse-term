@@ -4,11 +4,11 @@
 
 ## 决策
 
-当前 ACP 驱动者只接入 `opencode`，因为它提供 `opencode acp` 模式。Codex、Claude Code 等客户端若没有可用 ACP server，则通过 MCP 作为外部调用者接入。
+当前 ACP 驱动者只接入 `opencode`，因为它提供 `opencode acp` 模式。Codex、Claude Code 等客户端若没有可用 ACP server，则通过 MCP 作为外部调用者接入。当前桌面 Agent 工作区暂不展示 ACP 驱动切换或外部新任务入口，ACP 控制器与设置页保留以便后续恢复。
 
 ## 当前实现
 
-`AcpController` 使用可注入的 `opencodePath`，默认执行 `opencode`；ACP 设置页和 Agent 面板只展示当前实现支持的驱动者。
+`AcpController` 使用可注入的 `opencodePath`，默认执行 `opencode`；ACP 设置页保留当前实现支持的配置与状态，Agent 工作区只展示内置 Agent。
 
 ## 影响
 

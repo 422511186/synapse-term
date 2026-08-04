@@ -28,7 +28,7 @@ export function ToolTimelineCard({
         : 'is-running';
 
   return (
-    <div className="agent-tool-card">
+    <div className="agent-timeline-structured w-full agent-tool-card">
       <div className="agent-tool-call-row">
         <Play className="agent-tool-icon" size={12} />
         <span className="agent-tool-name">{callSummary?.name ?? '工具调用'}</span>

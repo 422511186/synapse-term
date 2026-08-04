@@ -97,6 +97,7 @@ const externalCallerContextSchema = z.strictObject({
 export const coreApiUseCaseSchema = z.enum([
   'session.list',
   'session.create',
+  'session.rename',
   'session.setDialect',
   'session.close',
   'session.markShared',
@@ -143,7 +144,7 @@ export type CoreApiUseCase = z.infer<typeof coreApiUseCaseSchema>;
 
 export const sessionSummarySchema = z.strictObject({
   id: idSchema,
-  title: z.string().min(1),
+  title: z.string().trim().min(1),
   terminalType: terminalTypeSchema,
   pty: z.enum(['starting', 'running', 'exited', 'failed', 'interrupted']),
   shell: z.enum(['unknown', 'probing', 'ready', 'executing', 'interaction_required']),
@@ -154,7 +155,7 @@ export const sessionSummarySchema = z.strictObject({
 });
 
 export const sessionLaunchSchema = z.strictObject({
-  title: z.string().min(1),
+  title: z.string().trim().min(1),
   terminalType: terminalTypeSchema,
   executable: z.string().min(1),
   args: z.array(z.string()).max(256),
@@ -166,7 +167,8 @@ export const sessionLaunchSchema = z.strictObject({
 });
 
 export const sessionLaunchMetadataSchema = z.strictObject({
-  title: z.string().min(1),
+  title: z.string().trim().min(1),
+  createdAt: z.number().int().nonnegative().optional(),
   launch: z.strictObject({
     executable: z.string().min(1),
     terminalType: terminalTypeSchema.default('Unknown terminal'),
@@ -177,6 +179,11 @@ export const sessionLaunchMetadataSchema = z.strictObject({
     executionDialect: executionDialectSchema.default('observe_only'),
     envKeys: z.array(z.string().min(1)).max(4_096),
   }),
+});
+
+export const sessionRenameSchema = z.strictObject({
+  sessionId: idSchema,
+  alias: z.string().trim().min(1),
 });
 
 export const terminalReplaySchema = z.strictObject({
@@ -502,6 +509,7 @@ export const coreStatusViewSchema = z.strictObject({
 export const coreRequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ method: z.literal('session.list'), payload: emptyPayloadSchema }),
   z.strictObject({ method: z.literal('session.create'), payload: sessionLaunchSchema }),
+  z.strictObject({ method: z.literal('session.rename'), payload: sessionRenameSchema }),
   z.strictObject({
     method: z.literal('session.setDialect'),
     payload: z.strictObject({ sessionId: idSchema, executionDialect: executionDialectSchema }),
@@ -727,6 +735,7 @@ export const coreServiceEventSchema = z.discriminatedUnion('type', [
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export type SessionLaunch = z.infer<typeof sessionLaunchSchema>;
 export type SessionLaunchMetadata = z.infer<typeof sessionLaunchMetadataSchema>;
+export type SessionRename = z.infer<typeof sessionRenameSchema>;
 export type TerminalReplay = z.infer<typeof terminalReplaySchema>;
 export type LocalFileChange = z.infer<typeof localFileChangeSchema>;
 export type AgentTimelineItem = z.infer<typeof agentTimelineItemSchema>;

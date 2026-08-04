@@ -14,14 +14,24 @@ test('renders the runtime-backed Synapse Term workspace at the wide prototype ge
   await expect(
     page.getByRole('tab', { name: 'api-prod / bash Git Bash', exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Agent Timeline', exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: '审计日志', exact: true })).toBeVisible();
+  await expect(page.getByText('Synapse · Agent', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Agent Timeline', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '审计日志', exact: true })).toHaveCount(0);
+  await expect(page.locator('.agent-driver-strip')).toHaveCount(0);
+  await expect(page.locator('.agent-progress-card')).toHaveCount(0);
 
   await expectPrototypeGeometry(page, { terminalWidth: 890, agentWidth: 550, contentHeight: 844 });
   await expect(page.locator('.prototype-header')).toHaveCSS('height', '56px');
   await expect(page.locator('.prototype-header')).toHaveCSS('background-color', 'rgb(9, 9, 11)');
   await expect(page.locator('.prototype-terminal')).toHaveCSS('background-color', 'rgb(0, 0, 0)');
   await expect(page.locator('.prototype-agent')).toHaveCSS('background-color', 'rgb(9, 9, 11)');
+  await expect(page.getByRole('button', { name: '全部会话', exact: true })).toHaveCSS(
+    'display',
+    'flex',
+  );
+  await expect(
+    page.getByRole('button', { name: '共享并复制当前 Session ID', exact: true }),
+  ).toHaveCSS('display', 'flex');
   await expect(page.locator('.terminal-host')).toHaveCSS('font-size', '14px');
   await expect(page.locator('.terminal-host')).toHaveCSS('line-height', '22.75px');
   await expect(page.locator('.terminal-host')).toHaveCSS('font-family', /JetBrains Mono/i);
@@ -39,14 +49,6 @@ test('renders the runtime-backed Synapse Term workspace at the wide prototype ge
     'height',
     '30px',
   );
-  await expect(page.getByRole('tab', { name: 'Agent Timeline', exact: true })).toHaveCSS(
-    'font-size',
-    '13px',
-  );
-  await expect(page.getByRole('tab', { name: 'Agent Timeline', exact: true })).toHaveCSS(
-    'font-weight',
-    '500',
-  );
   await expect(page.getByText('人工审批', { exact: true })).toHaveCSS('text-rendering', 'auto');
 });
 
@@ -61,7 +63,109 @@ test('keeps the agent visible at the compact desktop prototype geometry', async 
   await expectDocumentBounds(page);
 });
 
-test('resizes, hides, and restores the Agent panel', async ({ page }) => {
+test('keeps Agent hierarchy and controls stable across desktop viewports', async ({ page }) => {
+  for (const viewport of [wideDesktop, compactDesktop]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/?longCommand=1');
+
+    await expect(page.getByText('Synapse · Agent', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Agent Timeline', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '审计日志', exact: true })).toHaveCount(0);
+    await expect(page.locator('.agent-driver-strip')).toHaveCount(0);
+    await expect(page.locator('.session-tab-list')).toHaveCSS('overflow-x', 'auto');
+    await expect(page.locator('.session-tab-tools .session-tab-tool')).toHaveCount(3);
+
+    const shareButton = page.getByRole('button', {
+      name: '共享并复制当前 Session ID',
+      exact: true,
+    });
+    await expect(shareButton).toBeVisible();
+    if (viewport.width <= compactDesktop.width) {
+      const shareBounds = await shareButton.boundingBox();
+      expect(shareBounds).not.toBeNull();
+      expect(shareBounds!.width).toBeLessThanOrEqual(36);
+      expect(
+        await page
+          .locator('.session-tab-tools .session-action-label')
+          .evaluateAll((elements) => elements.map((element) => getComputedStyle(element).display)),
+      ).toEqual(['none', 'none']);
+    }
+
+    const composer = page.getByPlaceholder('输入目标，Command/Ctrl+Enter 发送');
+    await composer.fill('show markdown diagnostics');
+    await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
+
+    await expect(page.locator('.current-turn-plan')).toHaveCount(0);
+    await expect(page.locator('.current-turn-plan-slot')).toHaveCount(0);
+    await expect(page.locator('.agent-progress-card')).toHaveCount(0);
+    await expect(page.locator('.running-status-bar')).toBeVisible();
+    await expect(page.locator('.running-status-bar').getByRole('button')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: '停止当前 Agent 任务', exact: true }),
+    ).toBeEnabled();
+
+    const statusGeometry = await page.locator('.running-status-bar').evaluate((element) => {
+      const composerShell = element.nextElementSibling;
+      if (!(composerShell instanceof HTMLElement)) return undefined;
+      const statusRect = element.getBoundingClientRect();
+      const composerRect = composerShell.getBoundingClientRect();
+      return {
+        statusBottom: statusRect.bottom,
+        composerTop: composerRect.top,
+        composerInput: composerShell.querySelector('textarea') !== null,
+      };
+    });
+    expect(statusGeometry).toBeDefined();
+    expect(statusGeometry!.composerInput).toBe(true);
+    expect(statusGeometry!.statusBottom).toBeLessThanOrEqual(statusGeometry!.composerTop + 1);
+
+    const userMessage = page.locator('.agent-timeline-user');
+    await expect(userMessage).toBeVisible();
+    await expect
+      .poll(() => userMessage.evaluate((element) => getComputedStyle(element).justifyContent))
+      .toBe('flex-end');
+
+    await page.getByRole('button', { name: '停止当前 Agent 任务', exact: true }).click();
+    await expect(
+      page
+        .locator('[aria-label="Agent 时间线"]')
+        .locator('span.truncate')
+        .filter({ hasText: '当前任务已取消' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '发送给 Agent', exact: true })).toBeVisible();
+
+    await page.goto('/');
+    await composer.fill('simple question');
+    await page.getByRole('button', { name: '发送给 Agent', exact: true }).click();
+    await expect(
+      page.getByText('磁盘使用率正常，当前没有失败的 systemd 服务。', { exact: true }),
+    ).toBeVisible();
+
+    const assistantMessage = page.locator('.agent-timeline-assistant');
+    expect(await assistantMessage.count()).toBe(1);
+    await expect
+      .poll(() => assistantMessage.evaluate((element) => getComputedStyle(element).justifyContent))
+      .toBe('flex-start');
+    expect(
+      await page.locator('.agent-timeline-user img, .agent-timeline-assistant img').count(),
+    ).toBe(0);
+
+    const metrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      clientHeight: document.documentElement.clientHeight,
+    }));
+    expect(metrics).toEqual({
+      scrollWidth: viewport.width,
+      clientWidth: viewport.width,
+      scrollHeight: viewport.height,
+      clientHeight: viewport.height,
+    });
+  }
+});
+
+test('resizes the Agent panel without a title block', async ({ page }) => {
   await page.setViewportSize(wideDesktop);
   await page.goto('/');
 
@@ -69,9 +173,10 @@ test('resizes, hides, and restores the Agent panel', async ({ page }) => {
   const terminal = page.locator('.prototype-terminal');
   const agent = page.locator('.prototype-agent');
   const resizeHandle = page.getByRole('separator', { name: '调整 Agent 面板宽度' });
-  const hideButton = page.getByRole('button', { name: '隐藏 Agent 面板' });
 
   await expect(resizeHandle).toBeVisible();
+  await expect(page.locator('.agent-panel-titlebar')).toHaveCount(0);
+  await expect(page.locator('.agent-panel-collapse-button')).toHaveCount(0);
   const initialAgentBounds = await agent.boundingBox();
   expect(initialAgentBounds).not.toBeNull();
 
@@ -88,23 +193,6 @@ test('resizes, hides, and restores the Agent panel', async ({ page }) => {
   expect(resizedAgentBounds!.width).toBeGreaterThan(initialAgentBounds!.width + 60);
   expect(resizedAgentBounds!.width).toBeLessThanOrEqual(720);
   await expectBoundsToShareEdge(workspace, terminal, agent);
-
-  await hideButton.click();
-  await expect(agent).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '显示 Agent 面板' })).toBeVisible();
-
-  const workspaceBounds = await workspace.boundingBox();
-  const terminalBounds = await terminal.boundingBox();
-  expect(workspaceBounds).not.toBeNull();
-  expect(terminalBounds).not.toBeNull();
-  expect(terminalBounds!.width).toBe(workspaceBounds!.width);
-
-  await page.getByRole('button', { name: '显示 Agent 面板' }).click();
-  await expect(agent).toBeVisible();
-  const restoredAgentBounds = await agent.boundingBox();
-  expect(restoredAgentBounds).not.toBeNull();
-  expect(restoredAgentBounds!.width).toBe(resizedAgentBounds!.width);
-  await expectBoundsToShareEdge(workspace, terminal, agent);
 });
 
 test('uses runtime sessions and resources behind prototype controls', async ({ page }) => {
@@ -120,7 +208,7 @@ test('uses runtime sessions and resources behind prototype controls', async ({ p
   await page.getByRole('button', { name: '新建终端会话', exact: true }).click();
   const newSession = page.getByRole('dialog', { name: '新建终端会话' });
   await expect(newSession).toBeVisible();
-  await expect(newSession.getByLabel('会话名称')).toBeVisible();
+  await expect(newSession.getByLabel('Session Alias')).toBeVisible();
   await newSession.getByRole('button', { name: '取消', exact: true }).click();
   await expect(newSession).toHaveCount(0);
 
@@ -137,7 +225,9 @@ test('uses runtime sessions and resources behind prototype controls', async ({ p
   await expect(resourceMonitor).toHaveCount(0);
 });
 
-test('uses runtime Timeline, Audit, prompt history, and permission states', async ({ page }) => {
+test('uses runtime Timeline, audit settings, prompt history, and permission states', async ({
+  page,
+}) => {
   await page.setViewportSize(wideDesktop);
   await page.goto('/');
 
@@ -148,10 +238,10 @@ test('uses runtime Timeline, Audit, prompt history, and permission states', asyn
   await page.getByRole('button', { name: '批准执行', exact: true }).click();
   await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible();
 
-  await page.getByRole('tab', { name: '审计日志', exact: true }).click();
-  const audit = page.getByRole('tabpanel', { name: '审计日志' });
-  await expect(audit).toContainText('创建终端会话');
-  await page.getByRole('tab', { name: 'Agent Timeline', exact: true }).click();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('menuitem', { name: '审计日志', exact: true }).click();
+  await expect(page.getByText('创建终端会话', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
   await expect(page.getByText('已完成', { exact: true }).first()).toBeVisible();
 
   await page.getByRole('button', { name: '提示词历史', exact: true }).click();

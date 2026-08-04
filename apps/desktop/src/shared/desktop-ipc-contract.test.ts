@@ -15,6 +15,7 @@ describe('desktop IPC contract', () => {
       'sessions:list',
       'sessions:environment',
       'sessions:create',
+      'sessions:rename',
       'sessions:set-dialect',
       'sessions:mark-shared',
       'sessions:close',

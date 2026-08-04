@@ -1,16 +1,21 @@
 import type { SessionLaunchInput } from '../preload/preload-api.js';
+import type { SessionSummary } from '../preload/preload-api.js';
 import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
+import { resolveSessionAlias } from './session-alias.js';
+
+export { getDefaultSessionAlias, resolveSessionAlias } from './session-alias.js';
 
 export function buildSessionLaunch(
   title: string,
   cwd: string,
   shell: LocalShellDescriptor,
+  sessions: readonly Pick<SessionSummary, 'title'>[] = [],
 ): SessionLaunchInput {
   if (!shell.available || shell.executable === undefined) {
     throw new Error(shell.reason ?? `当前系统无法使用 ${shell.label}`);
   }
   return {
-    title,
+    title: resolveSessionAlias(title, sessions),
     terminalType: shell.label,
     executable: shell.executable,
     args: [...shell.args],

@@ -1,8 +1,5 @@
-# desktop-terminal Specification
+## MODIFIED Requirements
 
-## Purpose
-规定 Windows 桌面终端工作区的 Session 创建与切换、基础终端交互、Session-scoped Agent 面板、审批与接管控件、UI 重连、Renderer 隔离和可见失败状态。
-## Requirements
 ### Requirement: Desktop Terminal Workspace
 系统 MUST 提供桌面终端工作区，允许当前用户创建、查看、切换、重命名和关闭 Terminal Session 标签页。每个活动标签 MUST 显示 Session Alias、来自运行时摘要的终端类型和表示终端可用性的状态点；新建标签入口、全部会话入口和共享当前 Session ID 入口 MUST 始终可达。Session Alias 只是可读名称，不得替代唯一 `sessionId`。
 
@@ -37,40 +34,6 @@
 #### Scenario: Share the current Session ID
 - **WHEN** 用户点击标签栏右侧的共享 ID 操作
 - **THEN** 系统 MUST 标记当前 Session 为 `Shared Session` 并复制唯一 `sessionId`；宽屏显示图标和“共享 ID”，窄屏可只显示图标但 MUST 提供完整 tooltip“共享并复制当前 Session ID”
-
-### Requirement: Basic Terminal Interaction
-桌面终端 MUST 支持人工输入、复制、粘贴、滚动、搜索和随窗口变化调整终端尺寸。
-
-#### Scenario: Resize terminal
-- **WHEN** 终端可视区域尺寸发生变化
-- **THEN** 系统更新 xterm 渲染尺寸并向对应 PTY 发送新的行列数
-
-#### Scenario: Search scrollback
-- **WHEN** 用户在当前终端中搜索文本
-- **THEN** 系统在可用滚动区中定位匹配结果且不向 PTY 写入内容
-
-#### Scenario: Reopen an inactive terminal tab
-- **WHEN** 用户选择此前未在 Renderer 中挂载的活动 Session 标签
-- **THEN** 系统 MUST 调用该 Session 的 replay 接口并仅显示该 Session 的有序终端输出
-
-### Requirement: Launch Profiles
-系统 SHALL 支持由 executable、args、cwd、环境变量引用和初始尺寸组成的本地启动配置，且不得要求配置远程连接类型。受支持的本地 Shell 启动参数 MUST 遵循对应平台的用户环境初始化语义：macOS Zsh/Bash 与 Windows Git Bash MUST 以登录交互模式启动，Windows PowerShell MUST 不禁用用户 Profile，WSL MUST 保持发行版默认 Shell 的环境边界。
-
-#### Scenario: Launch arbitrary local command
-- **WHEN** 用户选择启动 `powershell.exe`、`wsl.exe` 或 `ssh.exe` 的配置
-- **THEN** 系统按配置创建本地 PTY 且不创建 SSH、堡垒机或容器领域对象
-
-#### Scenario: Launch a POSIX shell from the desktop
-- **WHEN** 用户从 Finder、Explorer 或终端启动 macOS Zsh、macOS Bash 或 Windows Git Bash
-- **THEN** 系统使用登录交互 Shell 参数创建 PTY，使用户登录初始化配置有机会设置 PATH 和其他用户环境
-
-#### Scenario: Launch PowerShell with its user environment
-- **WHEN** 用户从 Windows 桌面启动 PowerShell Session
-- **THEN** 系统不得传入 `-NoProfile`，且 PowerShell 按默认规则加载可用的用户 Profile
-
-#### Scenario: Launch WSL without crossing environment boundaries
-- **WHEN** 用户从 Windows 桌面启动 WSL Session
-- **THEN** 系统使用 WSL 默认用户 Shell 和发行版内部环境，不把 Windows 侧 CLI 路径作为 Linux PATH 的替代品
 
 ### Requirement: Session-Scoped Agent Panel
 桌面端 MUST 呈现当前 Session 的固定 Agent 面板，但不得渲染额外的品牌标题栏、内置 Agent 就绪状态条或面板折叠块。面板 MUST 不再提供顶部 `Agent Timeline`/`审计日志 (Audit)` Tabs，也 MUST 不单独显示 plan、plan 槽位或 progress snapshot 卡片；面板内容直接包含运行状态、可滚动时间线和 Composer。审计日志 MUST 从设置进入并保持只读。当前桌面入口 MUST 只允许内置 Agent 发起新任务，ACP/外置 Agent 后端能力继续保留但不在该面板提供选择或启动入口。Timeline、审批和 Tool 数据仍来自 Agent history、timeline/delta 事件和安全 progress projection；progress snapshot 只保留在运行时/历史状态，不创建可见时间线节点。Assistant 文本 MUST 在流式期间以 delta 传输，并在终态或 history hydration 后收敛为一个完整稳定的 timeline item。
@@ -127,8 +90,8 @@
 - **THEN** UI 显示接管状态并允许用户获得输入控制权
 
 #### Scenario: Approve or reject is in flight
-- **WHEN** 用户点击"批准执行"或"拒绝执行"
-- **THEN** 按钮 MUST 立即显示"批准中…/拒绝中…"并禁用，重复点击 MUST 被忽略，请求 settle 后恢复可点
+- **WHEN** 用户点击“批准执行”或“拒绝执行”
+- **THEN** 按钮 MUST 立即显示“批准中…”/“拒绝中…”并禁用，重复点击 MUST 被忽略，请求 settle 后恢复可点
 
 #### Scenario: Stop task is in flight
 - **WHEN** 用户在 Agent 运行期间点击 Composer 的停止按钮且取消请求尚未返回
@@ -154,26 +117,15 @@ Agent 面板 MUST 在任务运行期间、Composer 上方显示常驻运行状�
 
 #### Scenario: Thinking placeholder after submit
 - **WHEN** 用户提交目标且内置模型正在推理、时间线暂无新事件
-- **THEN** 时间线 MUST 在用户消息下方显示"思考中…"占位动画
+- **THEN** 时间线 MUST 在用户消息下方显示“思考中…”占位动画
 
 #### Scenario: Placeholder removed on first event
 - **WHEN** 第一条工具调用或助手事件到达
-- **THEN** "思考中…"占位 MUST 自动移除
+- **THEN** “思考中…”占位 MUST 自动移除
 
 #### Scenario: External Agent startup is not exposed
 - **WHEN** 用户在当前桌面版本打开 Agent 面板
 - **THEN** UI MUST 不显示“正在启动外部 Agent”或“外部驱动者已就绪”等 ACP 专属阶段文案；ACP 后端状态不得改变内置 Agent 面板的启动文案
-
-### Requirement: Cancellation Remains Available During Agent Blocking States
-桌面端 MUST 在 Agent 等待审批、环境 Probe、Provider 输出或 Tool Result 时保持取消任务控件可用；显示可恢复错误时不得用全屏遮罩阻断取消操作，除非用户明确关闭该提示后继续。
-
-#### Scenario: Cancel from approval waiting state
-- **WHEN** Timeline 显示待审批卡片且用户点击取消任务
-- **THEN** 请求发送到当前 Session 的活动 Agent Task，Core 返回 cancelled，UI 清除 active turn 和待审批操作
-
-#### Scenario: Stale approval error is shown
-- **WHEN** 用户点击旧审批导致 `approval_invalid` 或 `Approval is no longer pending`
-- **THEN** UI 刷新当前 Agent 状态并将旧卡片置为不可操作，取消任务仍可点击且不会被错误弹层永久遮挡
 
 ### Requirement: Prototype Context Controls
 工作区 Header MUST 呈现 `Synapse Term` 品牌、按创建顺序排列的多 Session 标签、终端可用性状态点、方言、资源监控、模型、权限和设置控件。Session 标签必须支持直接切换，标签列表在空间不足时横向滚动，`+`、全部会话和共享 ID 入口固定在标签列表右侧。下拉菜单 MUST 互斥打开，并能进入相应的 Dialog 或二级设置页；审计入口属于设置，不属于 Agent 面板 Tab。
@@ -189,35 +141,3 @@ Agent 面板 MUST 在任务运行期间、Composer 上方显示常驻运行状�
 #### Scenario: Navigate to configuration pages
 - **WHEN** 用户从模型菜单或设置菜单选择模型、服务商、MCP 或审计日志配置
 - **THEN** 系统 MUST 显示对应二级页，审计页使用现有 `audit.list` 只读数据，并保留 `Synapse Term` Header 外观
-
-### Requirement: Prototype Fonts and Desktop Scope
-Renderer MUST 从本地资源加载 `Inter`、`Noto Sans SC` 与 `JetBrains Mono`，不得依赖网络字体；UI MUST 使用 `Inter, "Noto Sans SC", system-ui, sans-serif`，终端与 Audit MUST 使用 `"JetBrains Mono", monospace`。本变更不定义或验收移动端布局。
-
-#### Scenario: Render offline with prototype font declarations
-- **WHEN** Electron 在没有外网字体访问的情况下打开 Renderer
-- **THEN** 页面 MUST 使用打包字体或准确字体回退，并保持两套基准视口的文字尺寸和布局契约
-
-### Requirement: UI Detach and Reconnect
-关闭或重启桌面 UI MUST 不终止仍由 Core 持有的活动 Session。
-
-#### Scenario: Close the desktop window
-- **WHEN** 用户关闭窗口且仍存在活动 Session
-- **THEN** UI 与 Core 分离且 Session 继续运行
-
-#### Scenario: Reopen the desktop
-- **WHEN** 用户重新打开桌面端
-- **THEN** UI 重新连接 Core 并通过增量或快照恢复每个活动 Session 的可见状态
-
-### Requirement: Renderer Isolation
-Electron Renderer MUST 在 sandbox 与 context isolation 下运行，并且 SHALL 无法直接访问 PTY、Node.js 文件系统、模型密钥或 Core Named Pipe。
-
-#### Scenario: Renderer requests a Core action
-- **WHEN** Renderer 需要创建 Session 或提交 Agent 目标
-- **THEN** 请求只能通过经过 Schema 校验的 preload API 和 Electron Main 转发
-
-### Requirement: Visible Failure States
-桌面端 MUST 明确展示 Session 中断、Core 版本不兼容、Provider 错误、日志缺口和不确定命令状态。
-
-#### Scenario: Core restarted
-- **WHEN** UI 发现旧 Session 因 Core 重启而中断
-- **THEN** UI 将 Session 标记为 `interrupted` 且不得显示为仍连接

@@ -1,6 +1,6 @@
 /** Agent 实时时间线（自 app.tsx 拆分）：用户/助手/审批/命令卡片展示 */
 import { useState, type JSX } from 'react';
-import { Check, Clock, Command, FileText, Image as ImageIcon, Play, XCircle } from 'lucide-react';
+import { Check, Clock, FileText, Image as ImageIcon, Play, XCircle } from 'lucide-react';
 
 import {
   groupAgentTimelineItems,
@@ -11,7 +11,6 @@ import {
 import type { AgentTimelineItem } from '../../preload/preload-api.js';
 import { timelineStatusLabel } from './timeline-utils.js';
 import { ToolTimelineCard } from './tool-timeline-card.js';
-import { ProgressTimelineCard } from './progress-timeline-card.js';
 
 export function RuntimeTimeline({
   events,
@@ -57,16 +56,11 @@ export function RuntimeTimeline({
           );
         }
         const event = group.event;
-        if (event.progress !== undefined) {
-          return <ProgressTimelineCard key={event.id} progress={event.progress} />;
-        }
+        if (event.progress !== undefined) return null;
         if (event.kind === 'user') {
           return (
-            <div className="flex gap-3" key={event.id}>
-              <div className="w-8 h-8 rounded bg-secondary flex items-center justify-center shrink-0 text-xs font-bold border border-border shadow-sm">
-                ME
-              </div>
-              <div className="bg-secondary/40 border border-border/50 px-4 py-3 rounded-xl rounded-tl-sm text-[13px] text-foreground/90 leading-relaxed shadow-sm">
+            <div className="agent-timeline-user flex justify-end" key={event.id}>
+              <div className="agent-timeline-user-bubble max-w-[88%] bg-secondary/40 border border-border/50 px-4 py-3 rounded-xl rounded-tr-sm text-[13px] text-foreground/90 leading-relaxed shadow-sm">
                 {event.text}
                 {event.attachments?.map((attachment) => (
                   <div
@@ -112,11 +106,8 @@ export function RuntimeTimeline({
         if (event.kind === 'assistant') {
           const isStreaming = event.status === 'streaming';
           return (
-            <div className="flex gap-3" key={event.id}>
-              <div className="w-8 h-8 rounded bg-white text-black flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(255,255,255,0.15)]">
-                <Command size={16} strokeWidth={2.5} />
-              </div>
-              <div className="flex-1 min-w-0 text-[13px] leading-relaxed text-foreground/90">
+            <div className="agent-timeline-assistant flex justify-start" key={event.id}>
+              <div className="agent-timeline-assistant-content max-w-[92%] min-w-0 text-[13px] leading-relaxed text-foreground/90">
                 {isStreaming ? (
                   <div aria-live="polite" className="agent-streaming-text">
                     {event.text}
@@ -134,7 +125,7 @@ export function RuntimeTimeline({
           const succeeded = event.status === 'completed';
           return (
             <div
-              className={`rounded-lg overflow-hidden shadow-sm ${waiting ? 'border border-amber-500/50 bg-amber-500/5' : succeeded ? 'border border-border/50 bg-[#121214]' : 'border border-red-500/30 bg-[#121214]'}`}
+              className={`agent-timeline-structured w-full rounded-lg overflow-hidden shadow-sm ${waiting ? 'border border-amber-500/50 bg-amber-500/5' : succeeded ? 'border border-border/50 bg-[#121214]' : 'border border-red-500/30 bg-[#121214]'}`}
               key={event.id}
             >
               <div
@@ -204,7 +195,7 @@ export function RuntimeTimeline({
 
         return (
           <div
-            className="border border-border/50 rounded-lg bg-[#121214] overflow-hidden shadow-sm"
+            className="agent-timeline-structured w-full border border-border/50 rounded-lg bg-[#121214] overflow-hidden shadow-sm"
             key={event.id}
           >
             <div className="px-3 py-2.5 flex items-center justify-between gap-3">
@@ -235,10 +226,7 @@ export function RuntimeTimeline({
 
 function ThinkingBubble(): JSX.Element {
   return (
-    <div className="thinking-placeholder flex gap-3">
-      <div className="w-8 h-8 rounded bg-white text-black flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(255,255,255,0.15)]">
-        <Command size={16} strokeWidth={2.5} />
-      </div>
+    <div className="thinking-placeholder agent-timeline-assistant flex justify-start">
       <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
         <span className="flex gap-1">
           <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60" />

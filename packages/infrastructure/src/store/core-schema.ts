@@ -497,6 +497,17 @@ export const CORE_MIGRATIONS: readonly SqliteMigration[] = [
       }
     },
   },
+  {
+    version: 10,
+    migrate: (database) => {
+      database.exec(`
+        ALTER TABLE sessions ADD COLUMN created_at INTEGER;
+        UPDATE sessions SET created_at = rowid WHERE created_at IS NULL;
+        CREATE INDEX IF NOT EXISTS sessions_created_at_idx
+          ON sessions (created_at, id);
+      `);
+    },
+  },
 ];
 
 function record(value: unknown): Record<string, unknown> {
