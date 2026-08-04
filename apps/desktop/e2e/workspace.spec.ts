@@ -11,6 +11,11 @@ test('renders the runtime-backed Synapse Term workspace at the wide prototype ge
 
   await expect(page.locator('.prototype-shell')).toBeVisible();
   await expect(page.getByText('Synapse Term', { exact: true })).toBeVisible();
+  await expect(page.locator('img[alt="Synapse Term logo"]')).toHaveCount(1);
+  await expect(page.locator('img[alt="Synapse Term logo"]')).toHaveAttribute(
+    'src',
+    /(?:\.svg|^data:image\/svg\+xml)/,
+  );
   await expect(
     page.getByRole('tab', { name: 'api-prod / bash Git Bash', exact: true }),
   ).toBeVisible();

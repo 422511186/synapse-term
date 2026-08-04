@@ -3,7 +3,6 @@ import {
   Cpu,
   Settings,
   Plus,
-  Sparkles,
   ShieldAlert,
   Check,
   Search,
@@ -15,7 +14,6 @@ import {
   X,
   Network,
   RefreshCw,
-  Command,
   Box,
   List,
   Clock,
@@ -86,6 +84,7 @@ import { buildSessionLaunch } from './session-launch.js';
 import { getSessionAvailability } from './session-status.js';
 import { errorMessageZh, TerminalView } from '@synapse-term/ui-platform';
 import { chooseInitialSessionId, isInteractiveSession } from './session-selection.js';
+import synapseTermLogoUrl from './assets/synapse-term-logo.svg';
 
 const AGENT_ATTACHMENT_MAX_ITEMS = 8;
 
@@ -1226,13 +1225,13 @@ export function App() {
         <header className="prototype-header h-14 border-b border-border bg-[#09090b] flex items-center justify-between px-4 shrink-0 relative z-50">
           {/* Logo & App Name */}
           <div className="prototype-brand flex items-center gap-3 pr-6 border-r border-border shrink-0">
-            <div className="relative flex items-center justify-center w-7 h-7 bg-white text-black rounded-md shadow-[0_0_15px_rgba(255,255,255,0.2)]">
-              <Command size={16} strokeWidth={2.5} />
-              <Sparkles
-                size={10}
-                className="absolute -top-1 -right-1 text-amber-400 fill-amber-400"
-              />
-            </div>
+            <img
+              alt="Synapse Term logo"
+              className="h-7 w-7 shrink-0"
+              height={28}
+              src={synapseTermLogoUrl}
+              width={28}
+            />
             <span className="prototype-brand-name font-bold text-[15px] tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
               Synapse Term
             </span>

@@ -4,6 +4,7 @@ asar: true
 npmRebuild: false
 electronVersion: 43.2.0
 electronDist: apps/desktop/node_modules/electron/dist
+icon: apps/desktop/src/renderer/assets/synapse-term-logo.svg
 directories:
   output: release
 files:
