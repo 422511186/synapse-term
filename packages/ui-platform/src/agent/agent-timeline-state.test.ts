@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentTimelineItem } from '../contracts.js';
+import type { AgentTextDelta, AgentTimelineItem } from '../contracts.js';
 import {
+  applyAgentTextDelta,
+  applyAgentTimelineEvent,
+  createAgentTimelineState,
   groupAgentTimelineItems,
+  hydrateAgentTimelineState,
   isApprovalActionable,
   mergeHydratedActiveTurnId,
   mergeHydratedTimeline,
@@ -23,7 +27,143 @@ function item(overrides: Partial<AgentTimelineItem> = {}): AgentTimelineItem {
   };
 }
 
+function delta(overrides: Partial<AgentTextDelta> = {}): AgentTextDelta {
+  return {
+    id: 'assistant-1',
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+    operation: 'append',
+    delta: 'a',
+    sequence: 0,
+    occurredAt: '2026-07-29T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 describe('agent timeline state', () => {
+  it('keeps one progress timeline item and ignores stale revisions', () => {
+    const progress = (revision: number, phase: 'planning' | 'executing' | 'completed') =>
+      item({
+        id: 'agent-progress-turn-1',
+        kind: 'system',
+        text: `progress-${phase}`,
+        status: phase,
+        progress: {
+          phase,
+          revision,
+          steps: [
+            {
+              id: 'progress-step-call-1',
+              label: 'terminal_execute',
+              status: phase === 'completed' ? 'completed' : 'running',
+              toolCallId: 'call-1',
+            },
+          ],
+        },
+      });
+
+    const planning = progress(1, 'planning');
+    const executing = progress(2, 'executing');
+    const stale = progress(1, 'planning');
+    const completed = progress(3, 'completed');
+
+    let timeline = upsertTimelineEvent([], planning);
+    timeline = upsertTimelineEvent(timeline, executing);
+    timeline = upsertTimelineEvent(timeline, stale);
+
+    expect(timeline).toEqual([executing]);
+
+    timeline = upsertTimelineEvent(timeline, completed);
+    expect(timeline).toEqual([completed]);
+  });
+
+  it('aggregates ordered assistant append deltas into one timeline item', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'a', sequence: 0 }));
+    state = applyAgentTextDelta(state, delta({ delta: 'bc', sequence: 1 }));
+
+    expect(state.items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-1',
+        kind: 'assistant',
+        text: 'abc',
+        status: 'streaming',
+      }),
+    ]);
+    expect(state.historyRefreshSessions).toEqual([]);
+  });
+
+  it('applies replace deltas by clearing the live assistant accumulator', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'candidate', sequence: 0 }));
+    state = applyAgentTextDelta(
+      state,
+      delta({ operation: 'replace', delta: 'final', sequence: 1 }),
+    );
+
+    expect(state.items).toEqual([expect.objectContaining({ id: 'assistant-1', text: 'final' })]);
+  });
+
+  it('rejects a sequence gap and requests Session history refresh', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'a', sequence: 0 }));
+    state = applyAgentTextDelta(state, delta({ delta: 'c', sequence: 2 }));
+    state = applyAgentTextDelta(state, delta({ delta: 'b', sequence: 1 }));
+
+    expect(state.items).toEqual([expect.objectContaining({ id: 'assistant-1', text: 'a' })]);
+    expect(state.historyRefreshSessions).toEqual(['session-1']);
+  });
+
+  it('ignores stale deltas after the stream cursor has advanced', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'a', sequence: 0 }));
+    state = applyAgentTextDelta(state, delta({ delta: 'b', sequence: 1 }));
+    state = applyAgentTextDelta(state, delta({ delta: 'old', sequence: 0 }));
+
+    expect(state.items).toEqual([expect.objectContaining({ id: 'assistant-1', text: 'ab' })]);
+    expect(state.historyRefreshSessions).toEqual([]);
+  });
+
+  it('hydrates a complete history item and closes the live stream', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'partial', sequence: 0 }));
+    state = hydrateAgentTimelineState(state, [
+      item({
+        id: 'assistant-1',
+        sessionId: 'session-1',
+        kind: 'assistant',
+        text: 'complete answer',
+        status: 'completed',
+        turnId: 'turn-1',
+      }),
+    ]);
+    state = applyAgentTextDelta(state, delta({ delta: 'late', sequence: 1 }));
+
+    expect(state.items).toEqual([
+      expect.objectContaining({ id: 'assistant-1', text: 'complete answer', status: 'completed' }),
+    ]);
+  });
+
+  it('merges timeline events without dropping a live delta accumulator', () => {
+    let state = createAgentTimelineState();
+    state = applyAgentTextDelta(state, delta({ delta: 'partial', sequence: 0 }));
+    state = applyAgentTimelineEvent(
+      state,
+      item({
+        id: 'tool-call-call-1',
+        kind: 'tool',
+        toolCallId: 'call-1',
+        text: 'terminal_observe\n{}',
+        status: 'running',
+      }),
+    );
+
+    expect(state.items).toEqual([
+      expect.objectContaining({ id: 'assistant-1', text: 'partial' }),
+      expect.objectContaining({ id: 'tool-call-call-1', kind: 'tool' }),
+    ]);
+  });
+
   it('replaces a live item with the terminal event using its stable id', () => {
     const live = item({ status: 'waiting_approval' });
     const completed = item({ status: 'completed', text: 'approved' });

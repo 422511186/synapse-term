@@ -1,7 +1,135 @@
-import type { AgentHistoryView, AgentTimelineItem } from '../contracts.js';
+import type { AgentHistoryView, AgentTextDelta, AgentTimelineItem } from '../contracts.js';
 import { historyToTimeline } from './agent-history.js';
 
 const LIVE_TIMELINE_LIMIT = 50;
+
+export interface AgentTimelineState {
+  items: AgentTimelineItem[];
+  historyRefreshSessions: string[];
+  streams: Map<string, AgentTextStreamState>;
+}
+
+interface AgentTextStreamState {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  text: string;
+  nextSequence: number;
+  closed: boolean;
+  desynchronized: boolean;
+}
+
+export function createAgentTimelineState(
+  items: readonly AgentTimelineItem[] = [],
+): AgentTimelineState {
+  const streams = new Map<string, AgentTextStreamState>();
+  for (const entry of items) {
+    if (entry.kind !== 'assistant' || entry.turnId === undefined) continue;
+    streams.set(streamKey(entry.sessionId, entry.id), {
+      id: entry.id,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      text: entry.text,
+      nextSequence: 0,
+      closed: isTerminalTimelineStatus(entry.status),
+      desynchronized: false,
+    });
+  }
+  return { items: [...items], historyRefreshSessions: [], streams };
+}
+
+export function applyAgentTextDelta(
+  state: AgentTimelineState,
+  delta: AgentTextDelta,
+): AgentTimelineState {
+  const key = streamKey(delta.sessionId, delta.id);
+  const current = state.streams.get(key) ?? {
+    id: delta.id,
+    sessionId: delta.sessionId,
+    turnId: delta.turnId,
+    text: '',
+    nextSequence: 0,
+    closed: false,
+    desynchronized: false,
+  };
+  if (current.closed || current.desynchronized || delta.delta.length === 0) return state;
+  if (delta.sequence < current.nextSequence) return state;
+  if (delta.sequence > current.nextSequence) {
+    const streams = new Map(state.streams);
+    streams.set(key, { ...current, desynchronized: true });
+    return {
+      ...state,
+      streams,
+      historyRefreshSessions: state.historyRefreshSessions.includes(delta.sessionId)
+        ? state.historyRefreshSessions
+        : [...state.historyRefreshSessions, delta.sessionId],
+    };
+  }
+
+  const text = delta.operation === 'replace' ? delta.delta : current.text + delta.delta;
+  const liveItem: AgentTimelineItem = {
+    id: delta.id,
+    sessionId: delta.sessionId,
+    kind: 'assistant',
+    text,
+    status: 'streaming',
+    ...(delta.conversationId === undefined ? {} : { conversationId: delta.conversationId }),
+    turnId: delta.turnId,
+    occurredAt: delta.occurredAt,
+  };
+  const streams = new Map(state.streams);
+  streams.set(key, {
+    ...current,
+    turnId: delta.turnId,
+    text,
+    nextSequence: delta.sequence + 1,
+  });
+  return {
+    ...state,
+    items: upsertTimelineEvent(state.items, liveItem),
+    streams,
+  };
+}
+
+export function applyAgentTimelineEvent(
+  state: AgentTimelineState,
+  event: AgentTimelineItem,
+): AgentTimelineState {
+  return { ...state, items: upsertTimelineEvent(state.items, event) };
+}
+
+export function hydrateAgentTimelineState(
+  state: AgentTimelineState,
+  history: AgentHistoryView | readonly AgentTimelineItem[],
+): AgentTimelineState {
+  const hydrated = Array.isArray(history)
+    ? [...history]
+    : historyToTimeline(history as AgentHistoryView);
+  const sessionIds = new Set(hydrated.map((entry) => entry.sessionId));
+  const items =
+    hydrated.length === 0
+      ? state.items
+      : mergeHydratedTimeline(state.items, hydrated[0]?.sessionId ?? '', hydrated);
+  const streams = new Map(state.streams);
+  for (const entry of hydrated) {
+    if (entry.kind !== 'assistant' || !isTerminalTimelineStatus(entry.status)) continue;
+    for (const [key, stream] of streams) {
+      if (
+        stream.sessionId === entry.sessionId &&
+        (stream.id === entry.id || stream.turnId === entry.turnId)
+      ) {
+        streams.set(key, { ...stream, text: entry.text, closed: true, desynchronized: false });
+      }
+    }
+  }
+  return {
+    items,
+    streams,
+    historyRefreshSessions: state.historyRefreshSessions.filter(
+      (sessionId) => !sessionIds.has(sessionId),
+    ),
+  };
+}
 
 export type ApprovalActionState =
   'completed' | 'cancelled' | 'expired' | 'environment_invalidated' | undefined;
@@ -52,6 +180,13 @@ function mergeTimelineEvent(
   existing: AgentTimelineItem,
   event: AgentTimelineItem,
 ): AgentTimelineItem {
+  if (
+    existing.progress !== undefined &&
+    event.progress !== undefined &&
+    event.progress.revision < existing.progress.revision
+  ) {
+    return existing;
+  }
   if (event.kind === 'command') {
     return {
       ...existing,
@@ -458,6 +593,10 @@ function timelineLogicalKey(item: AgentTimelineItem): string | undefined {
     return `tool:${item.toolCallId}:${item.toolRole ?? 'unknown'}`;
   }
   return undefined;
+}
+
+function streamKey(sessionId: string, id: string): string {
+  return `${sessionId}:${id}`;
 }
 
 export function resolveApprovalStatus(

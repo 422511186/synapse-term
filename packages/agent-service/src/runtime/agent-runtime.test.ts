@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { createAgentTask } from '@synapse-term/domain';
 
 import type { ModelAdapter, ModelEvent, ModelRequest } from '@synapse-term/model-providers';
-import { AgentRuntime, type RuntimeToolGateway } from './agent-runtime.js';
+import {
+  AgentRuntime,
+  type AgentProgressSnapshot,
+  type RuntimeToolGateway,
+} from './agent-runtime.js';
 import { AGENT_SYSTEM_PROMPT, ContextBuilder } from '../context/context-builder.js';
 import { estimateModelItemsTokens } from '../context/token-estimator.js';
 
@@ -33,6 +37,270 @@ function task() {
 }
 
 describe('AgentRuntime', () => {
+  it('emits bounded progress for planning, tool execution, verification, and completion', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-host', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-host',
+          name: 'terminal_execute',
+          argumentsJson: '{"command":"uname -a"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '候选答案' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '已完成检查。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const progress: AgentProgressSnapshot[] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => ({ ok: true, result: { status: 'completed' } }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '检查主机' },
+      onProgress: (snapshot) => progress.push(snapshot),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'completed' });
+
+    expect(progress[0]).toMatchObject({ phase: 'planning', steps: [] });
+    expect(progress.some((snapshot) => snapshot.phase === 'executing')).toBe(true);
+    expect(progress.some((snapshot) => snapshot.phase === 'verifying')).toBe(true);
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'completed',
+      steps: [
+        {
+          id: 'progress-step-call-host',
+          label: 'terminal_execute',
+          status: 'completed',
+          toolCallId: 'call-host',
+        },
+      ],
+    });
+    expect(JSON.stringify(progress)).not.toContain('uname - a');
+    expect(JSON.stringify(progress)).not.toContain('uname -a');
+  });
+
+  it('marks failed tool evidence without exposing tool arguments', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-failed', name: 'local_read_file' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-failed',
+          name: 'local_read_file',
+          argumentsJson: '{"path":"secret.txt"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '候选答案' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '已确认文件不可用。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const progress: AgentProgressSnapshot[] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => ({
+          ok: false,
+          error: 'local_file_not_found',
+          message: 'secret.txt not found',
+          recoverable: true,
+        }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '读取文件' },
+      onProgress: (snapshot) => progress.push(snapshot),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'completed' });
+
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'completed',
+      steps: [expect.objectContaining({ label: 'local_read_file', status: 'failed' })],
+    });
+    expect(JSON.stringify(progress)).not.toContain('secret.txt');
+  });
+
+  it('moves from verifying back to executing when review requests another tool', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-one', name: 'terminal_observe' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-one',
+          name: 'terminal_observe',
+          argumentsJson: '{}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '第一项已完成。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'tool_call_started', id: 'call-two', name: 'terminal_observe' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-two',
+          name: 'terminal_observe',
+          argumentsJson: '{}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '两项都已完成。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '已验证两项证据。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const phases: AgentProgressSnapshot['phase'][] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => ({ ok: true, result: { status: 'completed' } }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '完成两项检查' },
+      onProgress: (snapshot) => phases.push(snapshot.phase),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'completed' });
+
+    const verifyingIndex = phases.indexOf('verifying');
+    expect(verifyingIndex).toBeGreaterThanOrEqual(0);
+    expect(phases.slice(verifyingIndex + 1)).toContain('executing');
+  });
+
+  it('restores the pending progress step when an approval checkpoint resumes', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-approval', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-approval',
+          name: 'terminal_execute',
+          argumentsJson: '{"command":"touch approved.txt"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+      [
+        { type: 'text_delta', delta: '审批后已完成。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', delta: '已复核审批后的执行结果。' },
+        { type: 'turn_completed', stopReason: 'stop' },
+      ],
+    ]);
+    const progress: AgentProgressSnapshot[] = [];
+    let approved = false;
+    let calls = 0;
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        call: async () => {
+          calls += 1;
+          return approved
+            ? { ok: true as const, result: { status: 'completed' } }
+            : { ok: true as const, result: { status: 'waiting_approval' } };
+        },
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '执行需要审批的操作' },
+      onProgress: (snapshot) => progress.push(snapshot),
+    });
+
+    await expect(runtime.run()).resolves.toMatchObject({ status: 'waiting_approval' });
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'waiting_approval',
+      steps: [
+        expect.objectContaining({ id: 'progress-step-call-approval', status: 'waiting_approval' }),
+      ],
+    });
+
+    approved = true;
+    await expect(runtime.resumeAfterApproval()).resolves.toMatchObject({ status: 'completed' });
+    expect(calls).toBe(2);
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'completed',
+      steps: [expect.objectContaining({ id: 'progress-step-call-approval', status: 'completed' })],
+    });
+    expect(new Set(progress.at(-1)!.steps.map((step) => step.id)).size).toBe(1);
+  });
+
+  it('terminates the active progress step as cancelled when the tool is cancelled', async () => {
+    const adapter = new ScriptedAdapter([
+      [
+        { type: 'tool_call_started', id: 'call-cancel', name: 'terminal_execute' },
+        {
+          type: 'tool_call_completed',
+          id: 'call-cancel',
+          name: 'terminal_execute',
+          argumentsJson: '{"command":"long-running"}',
+        },
+        { type: 'turn_completed', stopReason: 'tool_call' },
+      ],
+    ]);
+    let started!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const progress: AgentProgressSnapshot[] = [];
+    const runtime = new AgentRuntime({
+      task: task(),
+      model: 'model-1',
+      adapter,
+      gateway: {
+        callWithContext: async (_name, _argumentsValue, context) => {
+          started();
+          await new Promise<void>((resolve) =>
+            context.signal?.addEventListener('abort', () => resolve(), { once: true }),
+          );
+          return { ok: false as const, error: 'cancelled', recoverable: true };
+        },
+        call: async () => ({ ok: true, result: {} }),
+      },
+      contextBuilder: new ContextBuilder(),
+      initialContext: { goal: '取消长任务' },
+      onProgress: (snapshot) => progress.push(snapshot),
+    });
+
+    const result = runtime.run();
+    await toolStarted;
+    runtime.cancel();
+
+    await expect(result).resolves.toMatchObject({ status: 'cancelled' });
+    expect(progress.at(-1)).toMatchObject({
+      phase: 'cancelled',
+      steps: [expect.objectContaining({ status: 'cancelled' })],
+    });
+  });
+
   it('reviews a post-tool candidate and continues missing work before completing', async () => {
     const adapter = new ScriptedAdapter([
       [

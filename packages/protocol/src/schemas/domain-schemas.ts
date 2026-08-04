@@ -186,6 +186,7 @@ export const conversationCompactionSchema = z.strictObject({
   sourceItemCount: z.number().int().positive(),
   estimatedTokensBefore: z.number().int().positive(),
   createdAt: z.string().datetime({ offset: true }),
+  summaryMethod: z.enum(['provider', 'deterministic']).optional(),
 });
 
 export const agentTaskSchema = z.strictObject({

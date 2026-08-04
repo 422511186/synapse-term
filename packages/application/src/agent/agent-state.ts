@@ -16,7 +16,7 @@ import type {
 } from '@synapse-term/domain';
 import type { ModelInputItem } from '@synapse-term/model-providers';
 import type { ModelAdapter } from '@synapse-term/model-providers';
-import type { AgentTimelineItem } from '@synapse-term/protocol';
+import type { AgentProgressSnapshot, AgentTimelineItem } from '@synapse-term/protocol';
 import type { AgentRuntime } from '@synapse-term/agent-service';
 import type { ApprovalManager, TerminalToolGateway } from '@synapse-term/platform-kernel';
 import type {
@@ -63,6 +63,8 @@ export interface AgentState {
   nextModelSequence: number;
   assistantTimelineId: string;
   assistantText: string;
+  assistantSequence: number;
+  progress: AgentProgressSnapshot;
   activeToolCallId: string | undefined;
   transactionToolCallIds: Map<string, string>;
 }

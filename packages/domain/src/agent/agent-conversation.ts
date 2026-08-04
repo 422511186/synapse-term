@@ -106,6 +106,7 @@ export interface ConversationCompaction {
   sourceItemCount: number;
   estimatedTokensBefore: number;
   createdAt: string;
+  summaryMethod?: 'provider' | 'deterministic' | undefined;
 }
 
 export function createConversationCompaction(

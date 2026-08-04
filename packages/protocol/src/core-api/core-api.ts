@@ -32,6 +32,41 @@ const providerProtocolSchema = z.enum([
 const executionDialectSchema = z.enum(['posix', 'powershell', 'observe_only']);
 const terminalTypeSchema = z.string().trim().min(1).max(128);
 
+const agentProgressPhaseSchema = z.enum([
+  'planning',
+  'executing',
+  'verifying',
+  'waiting_approval',
+  'waiting_user',
+  'suspended',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+const agentProgressStepStatusSchema = z.enum([
+  'pending',
+  'running',
+  'waiting_approval',
+  'waiting_user',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+const agentProgressIdSchema = z.string().trim().min(1).max(128);
+
+export const agentProgressStepSchema = z.strictObject({
+  id: agentProgressIdSchema,
+  label: z.string().trim().min(1).max(128),
+  status: agentProgressStepStatusSchema,
+  toolCallId: agentProgressIdSchema.optional(),
+});
+
+export const agentProgressSchema = z.strictObject({
+  phase: agentProgressPhaseSchema,
+  revision: z.number().int().nonnegative(),
+  steps: z.array(agentProgressStepSchema).max(12),
+});
+
 /**
  * 外部调用审批配置（specs/mcp-access、specs/acp-driver）
  *
@@ -186,6 +221,18 @@ export const agentTimelineItemSchema = z.strictObject({
   reasons: z.array(z.string().min(1)).max(32).optional(),
   change: localFileChangeSchema.optional(),
   attachments: z.array(agentAttachmentMetadataSchema).max(8).optional(),
+  progress: agentProgressSchema.optional(),
+  occurredAt: z.string().datetime({ offset: true }),
+});
+
+export const agentTextDeltaSchema = z.strictObject({
+  id: idSchema,
+  sessionId: idSchema,
+  conversationId: idSchema.optional(),
+  turnId: idSchema,
+  operation: z.enum(['append', 'replace']),
+  delta: z.string().min(1).max(65_536),
+  sequence: z.number().int().nonnegative(),
   occurredAt: z.string().datetime({ offset: true }),
 });
 
@@ -653,6 +700,11 @@ export const coreServiceEventSchema = z.discriminatedUnion('type', [
     payload: agentTimelineItemSchema,
   }),
   z.strictObject({
+    type: z.literal('agent.text_delta'),
+    streamId: idSchema,
+    payload: agentTextDeltaSchema,
+  }),
+  z.strictObject({
     type: z.literal('session.changed'),
     streamId: idSchema,
     payload: sessionSummarySchema,
@@ -678,6 +730,10 @@ export type SessionLaunchMetadata = z.infer<typeof sessionLaunchMetadataSchema>;
 export type TerminalReplay = z.infer<typeof terminalReplaySchema>;
 export type LocalFileChange = z.infer<typeof localFileChangeSchema>;
 export type AgentTimelineItem = z.infer<typeof agentTimelineItemSchema>;
+export type AgentTextDelta = z.infer<typeof agentTextDeltaSchema>;
+export type AgentProgressStepStatus = z.infer<typeof agentProgressStepStatusSchema>;
+export type AgentProgressStep = z.infer<typeof agentProgressStepSchema>;
+export type AgentProgressSnapshot = z.infer<typeof agentProgressSchema>;
 export type AgentHistoryView = z.infer<typeof agentHistoryViewSchema>;
 export type SessionResourceSnapshot = z.infer<typeof sessionResourceSnapshotSchema>;
 export type SessionResourceRefreshError = z.infer<typeof sessionResourceRefreshErrorSchema>;

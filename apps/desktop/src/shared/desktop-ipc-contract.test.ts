@@ -56,6 +56,7 @@ describe('desktop IPC contract', () => {
     expect(DESKTOP_IPC_EVENT_CHANNELS).toEqual([
       'terminal:output',
       'agent:timeline',
+      'agent:text-delta',
       'session:resources',
       'session:changed',
       'acp:status-changed',

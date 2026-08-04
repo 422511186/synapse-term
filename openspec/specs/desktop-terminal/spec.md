@@ -57,7 +57,7 @@
 - **THEN** 系统使用 WSL 默认用户 Shell 和发行版内部环境，不把 Windows 侧 CLI 路径作为 Linux PATH 的替代品
 
 ### Requirement: Session-Scoped Agent Panel
-桌面端 MUST 呈现当前 Session 的固定 Agent 面板，包括 40px 的 `Agent Timeline`/`审计日志 (Audit)` Tabs 和底部 Composer；Timeline、审批和 Audit 卡片必须使用原型视觉，但数据来自 `agent.history`、`agent.onTimeline` 与 `audit.list`。
+桌面端 MUST 呈现当前 Session 的固定 Agent 面板，包括 40px 的 `Agent Timeline`/`审计日志 (Audit)` Tabs 和底部 Composer；Timeline、审批、结构化 progress 和 Audit 卡片必须使用原型视觉，但数据来自 `agent.history`、`agent.onTimeline`、Assistant delta event 与 `audit.list`。Assistant 文本 MUST 在流式期间以 delta 传输，并在终态或 history hydration 后收敛为一个完整稳定的 timeline item。
 
 #### Scenario: Start an Agent Task
 - **WHEN** 用户在已就绪 Session 的 Agent 面板提交自然语言目标
@@ -78,6 +78,18 @@
 #### Scenario: View runtime audit rows
 - **WHEN** 用户选择 `审计日志 (Audit)`
 - **THEN** 系统 MUST 请求活动会话的审计记录，并以原型的颜色和等宽字体显示这些记录
+
+#### Scenario: Ask a simple question
+- **WHEN** 用户发送普通对话且模型不调用 Tool
+- **THEN** panel 应用有序 Assistant delta 到一个响应中，不得为每个 delta 渲染独立 timeline item，也不得重复最终文本
+
+#### Scenario: Run a multi-tool task
+- **WHEN** Agent 依次调用 terminal 和本地文件 Tool
+- **THEN** panel 按顺序显示结构化 progress、各个 Tool 状态和基于 evidence 的最终结论
+
+#### Scenario: Delta stream is interrupted
+- **WHEN** Renderer 检测到缺失或乱序的 delta
+- **THEN** Renderer 不得追加不可信片段，刷新 Agent history，并在可用时显示完整的持久化或终态 Assistant item
 
 ### Requirement: Approval and Takeover Controls
 桌面端 MUST 提供命令批准、拒绝、Agent 取消、命令中断和 User Takeover 的明确独立控件。Approval 卡片 MUST 以唯一 approval id 显示生命周期；完成、取消、过期、任务结束或环境失效后不得继续显示可操作的批准按钮。批准、拒绝、取消与中断按钮在请求处理期间 MUST 显示 pending 文案（如"批准中…/拒绝中…/取消中…"）并忽略重复点击。

@@ -306,6 +306,40 @@ AgentCoordinator 在创建 running Agent Task 并持久化后、将 state 入表
 - **WHEN** 新条目 token 总和不超过 `targetTokens` 但加上已有摘要后仍超阈值
 - **THEN** 压缩器 MUST 触发对已有摘要与新条目的合并摘要，MUST NOT 直接返回已有摘要加全部新条目
 
+### Requirement: Post-Tool Completion Review
+AgentRuntime MUST 在本 Turn 调用过任一 Tool 后，将第一个不含 Tool Call 的 Assistant 文本视为候选答案，并使用同一模型选择、原始用户目标、结构化 Tool evidence 和当前结构化 progress snapshot 执行有界 completion review。候选答案 MUST 不进入 Assistant history 或 review context；如果 review 发现工作缺失，Runtime MUST 继续既有有界 Tool Loop 并更新 progress；确认完成后 SHALL 只发布并持久化一个完整、自包含且不引用隐藏候选文本的最终答案。候选文本和内部 review 指令 MUST 不进入用户 Timeline 或 Conversation history。
+
+#### Scenario: Model stops after partial diagnostics
+- **WHEN** 用户请求多个服务器指标，但模型只为其中一部分调用 Tool 后输出无 Tool Call 的候选答案
+- **THEN** Runtime 进入 `verifying` progress，不完成或发布候选答案；当 review 发现 evidence 缺失时继续既有 Terminal Tool loop
+
+#### Scenario: Complete a pure conversation without review
+- **WHEN** 当前 Turn 未调用 Tool 且模型直接回答普通对话
+- **THEN** Runtime 发布文本流并完成，不执行 completion review 或创建 progress Tool steps
+
+#### Scenario: Completion review limit is exhausted
+- **WHEN** Tool task 在 completion review limit 内仍未确认完成
+- **THEN** Runtime 以稳定的可见错误失败，结束 progress 为 failed，不发布未经复核的候选答案，并保留 Tool/audit evidence
+
+#### Scenario: Reviewer would reuse the hidden candidate
+- **WHEN** 候选文本对用户不可见且 review 确认所有目标都有 evidence
+- **THEN** review 从原始目标、Tool evidence 和 progress 状态生成完整自包含答复，不得引用不可见候选文本
+
+### Requirement: Persisted Conversation Compaction
+自动 compaction MUST 在可用时使用无 Tool Provider summary，在不可用时使用确定性 evidence fallback，生成可追踪的持久化 summary；后续 Model Run MUST 用该 summary 替换较旧 Items，同时保留原始 Conversation、Tool 和 audit 记录。返回的 history MUST NOT 超过配置 token threshold。
+
+#### Scenario: Continue after compaction
+- **WHEN** 用户继续已经压缩的 Conversation
+- **THEN** 模型收到有界的 Provider 或 fallback summary 及最近的精确历史，旧消息仍可在本地 history storage 和 audit 中查询
+
+#### Scenario: Provider summarization fails
+- **WHEN** 无 Tool summary Provider 失败或返回无效输出
+- **THEN** Core 持久化有界脱敏的确定性 fallback，用户 Turn 继续执行且不产生 summary Tool Call
+
+#### Scenario: Existing summary already exceeds threshold
+- **WHEN** 既有 summary token count 已超过 `thresholdTokens`
+- **THEN** compactor 在返回 history 前重新 fitting 或确定性截断 summary；如果最小 system item 无法容纳则 fail closed
+
 ### Requirement: Agent Attachment Submission
 `agent.start` MUST 接受可选 `attachments` 列表，每个附件包含稳定 `id`、原始 `name`、`mimeType`、`sizeBytes`、`kind: 'image' | 'file'` 和本地 `sourcePath`。Core 启动 Agent Task 前 MUST 对附件数量、大小、MIME 和当前模型能力做统一校验；校验失败 MUST 拒绝整个任务并返回明确的分类错误。附件列表 MUST 与本次 Agent Turn 一起显示在历史中，重置对话后 MUST 释放对应附件上下文。
 

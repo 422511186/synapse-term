@@ -160,6 +160,13 @@ export class CoreApplication {
           payload: item,
         });
       },
+      emitTextDelta: (item) => {
+        runtime.ipc?.broadcastEvent({
+          type: 'agent.text_delta',
+          streamId: `agent:${item.sessionId}`,
+          payload: item,
+        });
+      },
       onActivityChange: setAgentActivity,
     });
     const resources = new SessionResourceService({

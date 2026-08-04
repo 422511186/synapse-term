@@ -2,6 +2,7 @@ import type {
   AcpHistoryView,
   AcpStatus,
   AcpTurnView,
+  AgentTextDelta,
   AgentTimelineItem,
   AgentHistoryView,
   AuditEventView,
@@ -150,6 +151,7 @@ export function createMockDesktopApi(): DesktopApi {
   const outputListeners = new Set<(event: TerminalOutputEvent) => void>();
   const sessionChangedListeners = new Set<(event: SessionSummary) => void>();
   const timelineListeners = new Set<(event: AgentTimelineItem) => void>();
+  const textDeltaListeners = new Set<(event: AgentTextDelta) => void>();
   const resourceListeners = new Set<(event: SessionResourceEvent) => void>();
   const resourceSnapshots = new Map<string, SessionResourceSnapshot>();
   const discoveryRequests = new Map<string, { cancelled: boolean }>();
@@ -921,6 +923,10 @@ export function createMockDesktopApi(): DesktopApi {
       onTimeline: (listener) => {
         timelineListeners.add(listener);
         return () => timelineListeners.delete(listener);
+      },
+      onTextDelta: (listener) => {
+        textDeltaListeners.add(listener);
+        return () => textDeltaListeners.delete(listener);
       },
     },
     providers: {

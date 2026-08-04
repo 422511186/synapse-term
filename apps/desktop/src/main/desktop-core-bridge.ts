@@ -1,4 +1,5 @@
 import {
+  agentTextDeltaSchema,
   agentTimelineItemSchema,
   parseCoreRequest,
   sessionResourceSnapshotSchema,
@@ -21,8 +22,16 @@ export function createDesktopCoreBridge(
   getSessionEnvironment?: () => unknown | Promise<unknown>,
   emitResources: (event: unknown) => void = () => undefined,
   emitSessionChanged: (event: unknown) => void = () => undefined,
-  attachmentController?: DesktopAttachmentController,
+  attachmentControllerOrEmitTextDelta?: DesktopAttachmentController | ((event: unknown) => void),
+  emitTextDelta: (event: unknown) => void = () => undefined,
 ): DesktopCoreBridge {
+  const attachmentController =
+    typeof attachmentControllerOrEmitTextDelta === 'function'
+      ? undefined
+      : attachmentControllerOrEmitTextDelta;
+  if (typeof attachmentControllerOrEmitTextDelta === 'function') {
+    emitTextDelta = attachmentControllerOrEmitTextDelta;
+  }
   const inheritedEnvironment = Object.fromEntries(
     Object.entries(environment).filter(
       (entry): entry is [string, string] => typeof entry[1] === 'string',
@@ -33,6 +42,11 @@ export function createDesktopCoreBridge(
     if (event.event === 'agent.timeline') {
       const parsed = agentTimelineItemSchema.safeParse(event.payload);
       if (parsed.success) emitTimeline(parsed.data);
+      return;
+    }
+    if (event.event === 'agent.text_delta') {
+      const parsed = agentTextDeltaSchema.safeParse(event.payload);
+      if (parsed.success) emitTextDelta(parsed.data);
       return;
     }
     if (event.event === 'session.resources') {

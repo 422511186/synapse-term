@@ -582,6 +582,109 @@ button:not(:disabled) {
   box-shadow: 0 2px 12px rgb(0 0 0 / 18%);
 }
 
+.agent-streaming-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-progress-card {
+  overflow: hidden;
+  border: 1px solid rgb(63 63 70 / 78%);
+  border-radius: 7px;
+  background: #121214;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 18%);
+}
+
+.agent-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 11px;
+  border-bottom: 1px solid rgb(63 63 70 / 58%);
+}
+
+.agent-progress-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #e4e4e7;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-progress-spinner {
+  flex: 0 0 auto;
+  color: #a78bfa;
+}
+
+.agent-progress-card[data-phase='completed'] .agent-progress-spinner,
+.agent-progress-card[data-phase='failed'] .agent-progress-spinner,
+.agent-progress-card[data-phase='cancelled'] .agent-progress-spinner {
+  animation: none;
+}
+
+.agent-progress-card[data-phase='completed'] .agent-progress-spinner {
+  color: #34d399;
+}
+
+.agent-progress-card[data-phase='failed'] .agent-progress-spinner,
+.agent-progress-card[data-phase='cancelled'] .agent-progress-spinner {
+  color: #f87171;
+}
+
+.agent-progress-revision {
+  flex: 0 0 auto;
+  color: #71717a;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+
+.agent-progress-steps {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 5px 0;
+  list-style: none;
+}
+
+.agent-progress-step {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 11px;
+  color: #a1a1aa;
+  font-size: 11px;
+}
+
+.agent-progress-step > svg {
+  color: #71717a;
+}
+
+.agent-progress-step:has(.agent-progress-step-status) {
+  min-width: 0;
+}
+
+.agent-progress-step-label {
+  min-width: 0;
+  overflow: hidden;
+  color: #d4d4d8;
+  font-family: 'JetBrains Mono', monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-progress-step-status {
+  flex: 0 0 auto;
+  color: #71717a;
+  font-size: 10px;
+}
+
 .agent-tool-call-row {
   display: flex;
   align-items: center;

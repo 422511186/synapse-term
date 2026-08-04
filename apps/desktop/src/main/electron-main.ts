@@ -235,6 +235,7 @@ async function startDesktopMain(): Promise<void> {
     (event) => broadcast('session:resources', event),
     (event) => broadcast('session:changed', event),
     attachmentController,
+    (event) => broadcast('agent:text-delta', event),
   );
   const mcpController = createMcpController({
     settingsDirectory: join(app.getPath('userData'), 'mcp'),

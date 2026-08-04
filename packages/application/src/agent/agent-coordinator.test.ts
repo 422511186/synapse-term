@@ -3,12 +3,14 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 import {
+  createAgentConversation,
   createModelConfiguration,
+  createModelItem,
   createProviderProfile,
   type AgentAttachmentInput,
   type ModelItem,
 } from '@synapse-term/domain';
-import type { AgentTimelineItem } from '@synapse-term/protocol';
+import type { AgentTextDelta, AgentTimelineItem } from '@synapse-term/protocol';
 import { FakePty, withTemporaryDirectory } from '@synapse-term/test-kit';
 
 import { AgentTaskScheduler } from '@synapse-term/platform-kernel';
@@ -116,6 +118,7 @@ class PartialCompletionAdapter implements ModelAdapter {
       yield { type: 'turn_completed', stopReason: 'stop' };
       return;
     }
+    yield { type: 'text_delta', delta: '' };
     yield { type: 'text_delta', delta: '已验证两个检查项均完成。' };
     yield { type: 'turn_completed', stopReason: 'stop' };
   }
@@ -150,6 +153,33 @@ class ChatAdapter implements ModelAdapter {
   async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
     this.requests.push(request);
     yield { type: 'text_delta', delta: '我可以和你对话，也可以按需调用终端或本机文件工具。' };
+    yield { type: 'turn_completed', stopReason: 'stop' };
+  }
+}
+
+class StreamingChatAdapter implements ModelAdapter {
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    void request;
+    yield { type: 'text_delta', delta: '' };
+    yield { type: 'text_delta', delta: 'hello' };
+    yield { type: 'text_delta', delta: ' world' };
+    yield { type: 'turn_completed', stopReason: 'stop' };
+  }
+}
+
+class SummaryAwareAdapter implements ModelAdapter {
+  readonly summaryRequests: ModelRequest[] = [];
+  readonly normalRequests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    if ((request.tools?.length ?? 0) === 0) {
+      this.summaryRequests.push(request);
+      yield { type: 'text_delta', delta: '语义摘要：目标是完成部署并验证结果。' };
+      yield { type: 'turn_completed', stopReason: 'stop' };
+      return;
+    }
+    this.normalRequests.push(request);
+    yield { type: 'text_delta', delta: '已继续处理。' };
     yield { type: 'turn_completed', stopReason: 'stop' };
   }
 }
@@ -638,9 +668,10 @@ describe('AgentCoordinator', () => {
         expect(compactions).toHaveLength(1);
         expect(compactions[0]).toMatchObject({
           throughSequence: expect.any(Number),
-          summary: expect.stringContaining('很长的历史信息'),
+          summary: expect.stringContaining('我可以和你对话'),
+          summaryMethod: 'provider',
         });
-        expect(adapter.requests[3]?.items).toEqual(
+        expect(adapter.requests[4]?.items).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               role: 'system',
@@ -663,7 +694,7 @@ describe('AgentCoordinator', () => {
         expect(conversations).toHaveLength(2);
         const activeConversation = conversations.find((item) => item.status === 'active');
         expect(activeConversation?.id).not.toBe(conversation.id);
-        expect(adapter.requests[4]?.items).not.toEqual(
+        expect(adapter.requests[5]?.items).not.toEqual(
           expect.arrayContaining([
             expect.objectContaining({ role: 'user', content: expect.stringContaining('继续') }),
           ]),
@@ -881,6 +912,146 @@ describe('AgentCoordinator', () => {
             (item): item is Extract<ModelItem, { type: 'user_text' }> => item.type === 'user_text',
           );
         expect(nextUserItems[0]?.attachments).toBeUndefined();
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('emits only non-empty assistant deltas and keeps one complete terminal timeline item', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      const actor = await sessions.create({
+        id: 'session-delta-stream',
+        executionDialect: 'observe_only',
+        launch: configLaunch('bash.exe'),
+      });
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+      saveAvailableModel(repositories, 'provider-delta-stream');
+      const timeline: AgentTimelineItem[] = [];
+      const deltas: AgentTextDelta[] = [];
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        createAdapter: () => new StreamingChatAdapter(),
+        emitTimeline: (item) => timeline.push(item),
+        emitTextDelta: (item) => deltas.push(item),
+      });
+
+      try {
+        await coordinator.start('session-delta-stream', 'say hello');
+        await coordinator.idle();
+
+        expect(
+          deltas.map(({ delta, operation, sequence }) => ({ delta, operation, sequence })),
+        ).toEqual([
+          { delta: 'hello', operation: 'append', sequence: 0 },
+          { delta: ' world', operation: 'append', sequence: 1 },
+        ]);
+        expect(timeline.filter((item) => item.kind === 'assistant')).toEqual([
+          expect.objectContaining({ text: 'hello world', status: 'completed' }),
+        ]);
+      } finally {
+        await coordinator.closeAll();
+        await store.close();
+      }
+    });
+  });
+
+  it('uses a no-Tool Provider summary before compaction without consuming user Tool calls', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      const repositories = new CoreRepositories(store);
+      const pty = new FakePty(1);
+      const sessions = new SessionManager({ spawn: () => pty });
+      const actor = await sessions.create({
+        id: 'session-provider-summary',
+        executionDialect: 'observe_only',
+        launch: configLaunch('bash.exe'),
+      });
+      await actor.transitionShell('probing');
+      await actor.transitionShell('ready');
+      saveAvailableModel(repositories, 'provider-summary', {
+        contextWindowTokens: 4_096,
+        maxOutputTokens: 512,
+        compactThresholdPercent: 60,
+      });
+      const conversation = createAgentConversation({
+        id: 'conversation-summary',
+        sessionId: 'session-provider-summary',
+      });
+      repositories.saveAgentConversation(conversation);
+      repositories.saveModelItem(
+        createModelItem({
+          id: 'summary-old-user',
+          conversationId: conversation.id,
+          turnId: 'summary-old-turn',
+          sequence: 0,
+          type: 'user_text',
+          content: '用户最终目标是部署服务。'.repeat(700),
+        }),
+      );
+      repositories.saveModelItem(
+        createModelItem({
+          id: 'summary-old-assistant',
+          conversationId: conversation.id,
+          turnId: 'summary-old-turn',
+          sequence: 1,
+          type: 'assistant_text',
+          content: '已完成初步检查。'.repeat(700),
+        }),
+      );
+      const adapter = new SummaryAwareAdapter();
+      const audits: Array<{ type?: string; payload?: Record<string, unknown> }> = [];
+      const coordinator = new AgentCoordinator({
+        sessions,
+        repositories,
+        providers: new ProviderProfileService(repositories),
+        models: new ModelCatalogService(repositories),
+        secrets: new MemorySecrets(),
+        scheduler: new AgentTaskScheduler(),
+        policy: new PolicyEngine({ parse: async () => ({ hasError: false, tree: 'program' }) }),
+        createAdapter: () => adapter,
+        emitTimeline: () => undefined,
+        audit: {
+          record: (event) =>
+            audits.push(event as { type?: string; payload?: Record<string, unknown> }),
+          recordCommand: () => undefined,
+        },
+      });
+
+      try {
+        await coordinator.start('session-provider-summary', '继续部署验证', {
+          modelConfigurationId: 'provider-summary',
+        });
+        await coordinator.idle();
+
+        expect(adapter.summaryRequests).toHaveLength(1);
+        expect(adapter.summaryRequests[0]).toMatchObject({
+          tools: [],
+          maxOutputTokens: expect.any(Number),
+        });
+        expect(adapter.summaryRequests[0]!.maxOutputTokens).toBeLessThan(512);
+        expect(adapter.normalRequests).toHaveLength(1);
+        expect(repositories.listToolCalls('summary-old-turn')).toEqual([]);
+        expect(audits).toContainEqual(
+          expect.objectContaining({
+            type: 'conversation.compacted',
+            payload: expect.objectContaining({ summaryMethod: 'provider' }),
+          }),
+        );
       } finally {
         await coordinator.closeAll();
         await store.close();
@@ -1463,7 +1634,7 @@ describe('AgentCoordinator', () => {
       });
 
       const adapter = new ScriptedAdapter();
-      const timeline: Array<{ kind: string; text: string; status?: string | undefined }> = [];
+      const timeline: AgentTimelineItem[] = [];
       const coordinator = new AgentCoordinator({
         sessions,
         repositories,
@@ -1496,6 +1667,25 @@ describe('AgentCoordinator', () => {
           expect.objectContaining({ kind: 'assistant', text: 'Command completed.' }),
         ]),
       );
+      const progressItems = timeline.filter((item) => item.progress !== undefined);
+      expect(progressItems.length).toBeGreaterThan(1);
+      expect(new Set(progressItems.map((item) => item.id)).size).toBe(1);
+      expect(progressItems.at(-1)).toMatchObject({
+        id: expect.stringMatching(/^agent-progress-/),
+        kind: 'system',
+        status: 'completed',
+        progress: {
+          phase: 'completed',
+          steps: [
+            expect.objectContaining({
+              label: 'terminal_execute',
+              status: 'completed',
+              toolCallId: 'call-1',
+            }),
+          ],
+        },
+      });
+      expect(JSON.stringify(progressItems)).not.toContain('printf ok');
       expect(adapter.requests[0]?.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -1725,6 +1915,7 @@ describe('AgentCoordinator', () => {
       });
       const adapter = new PartialCompletionAdapter();
       const timeline: AgentTimelineItem[] = [];
+      const deltas: AgentTextDelta[] = [];
       const coordinator = new AgentCoordinator({
         sessions,
         repositories,
@@ -1740,6 +1931,7 @@ describe('AgentCoordinator', () => {
         contextBuilder: new ContextBuilder(),
         createAdapter: () => adapter,
         emitTimeline: (item) => timeline.push(item),
+        emitTextDelta: (item) => deltas.push(item),
       });
 
       try {
@@ -1761,6 +1953,12 @@ describe('AgentCoordinator', () => {
             status: 'completed',
           }),
         );
+        expect(
+          deltas.some(
+            (item) => item.delta === '已验证两个检查项均完成。' && item.operation === 'replace',
+          ),
+        ).toBe(true);
+        expect(deltas.some((item) => item.delta.length === 0)).toBe(false);
         const conversation = repositories.listAgentConversations('session-completion-review')[0]!;
         expect(
           repositories

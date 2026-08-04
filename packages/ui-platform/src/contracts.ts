@@ -64,6 +64,7 @@ export interface AgentTimelineItem {
     diff: string;
     truncated: boolean;
   };
+  progress?: AgentProgressSnapshot;
   conversationId?: string;
   turnId?: string;
   toolCallId?: string;
@@ -71,6 +72,50 @@ export interface AgentTimelineItem {
   toolResult?: string;
   attachments?: AgentAttachmentMetadata[];
   occurredAt: string;
+}
+
+export interface AgentTextDelta {
+  id: string;
+  sessionId: string;
+  conversationId?: string;
+  turnId: string;
+  operation: 'append' | 'replace';
+  delta: string;
+  sequence: number;
+  occurredAt: string;
+}
+
+export type AgentProgressPhase =
+  | 'planning'
+  | 'executing'
+  | 'verifying'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'suspended'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export type AgentProgressStepStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_approval'
+  | 'waiting_user'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface AgentProgressStep {
+  id: string;
+  label: string;
+  status: AgentProgressStepStatus;
+  toolCallId?: string;
+}
+
+export interface AgentProgressSnapshot {
+  phase: AgentProgressPhase;
+  revision: number;
+  steps: AgentProgressStep[];
 }
 
 export interface AgentHistoryView {

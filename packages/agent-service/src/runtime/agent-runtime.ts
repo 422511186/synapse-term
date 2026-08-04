@@ -5,6 +5,18 @@ import {
   type ReasoningEffort,
 } from '@synapse-term/domain';
 
+import type {
+  AgentProgressSnapshot,
+  AgentProgressStep,
+  AgentProgressStepStatus,
+} from '@synapse-term/protocol';
+
+export type {
+  AgentProgressSnapshot,
+  AgentProgressStep,
+  AgentProgressStepStatus,
+} from '@synapse-term/protocol';
+
 import type { ContextBuildInput, ContextBuilder } from '../context/context-builder.js';
 import { SecretRedactor } from '@synapse-term/infrastructure';
 import type {
@@ -123,6 +135,8 @@ export const TERMINAL_MODEL_TOOLS = [
 
 export const COMPLETION_REVIEW_PROMPT = `完成性复核（内部）：对照最初目标与全部 Tool Call/Result，不采信或引用候选答案。若有子目标缺少成功证据、仍在运行或结果不确定，立即调用现有 Tool 补全且不要输出结论；仅当全部目标均有证据时，不调用 Tool，并输出完整、自包含的最终答复，直接重述决定性证据、结论与必要限制。候选答案不会展示给用户；不得引用“候选答案”“上一条/前述答复或报告”，也不得仅说“无需修正”或“沿用原答案”。`;
 
+const MAX_PROGRESS_STEPS = 12;
+
 export interface RuntimeToolGateway {
   call(
     name: string,
@@ -156,6 +170,7 @@ export interface AgentRuntimeOptions {
   redactor?: SecretRedactor;
   onTaskChange?: (task: AgentTask) => void;
   onModelEvent?: (event: ModelEvent, delivery?: { replaceAssistantText?: boolean }) => void;
+  onProgress?: (progress: AgentProgressSnapshot) => void;
   onItem?: (item: ModelInputItem) => void;
   /**
    * 批次中未实际执行（被跳过）的 tool call 的占位结果（H-13 补全）。
@@ -188,6 +203,7 @@ interface ApprovalCheckpoint {
   toolCallCount: number;
   completionReviewCount: number;
   hasUsedTool: boolean;
+  progress: AgentProgressSnapshot;
 }
 
 type CallOutcome =
@@ -214,6 +230,7 @@ export class AgentRuntime {
   #lastProgressSignature: string | undefined;
   #repeatedNoProgress = 0;
   #lastUnavailableCallSignature: string | undefined;
+  #progress: AgentProgressSnapshot = { phase: 'planning', revision: 0, steps: [] };
 
   constructor(options: AgentRuntimeOptions) {
     this.#options = options;
@@ -274,6 +291,10 @@ export class AgentRuntime {
     return structuredClone(this.#task);
   }
 
+  get progress(): AgentProgressSnapshot {
+    return structuredClone(this.#progress);
+  }
+
   async #runTimed(checkpoint?: ApprovalCheckpoint): Promise<AgentRuntimeResult> {
     const remaining = this.#maxActiveDurationMs - this.#activeDurationMs;
     if (remaining <= 0) {
@@ -315,6 +336,7 @@ export class AgentRuntime {
     let firstTurn = 1;
 
     if (checkpoint !== undefined) {
+      this.#restoreProgress(checkpoint.progress);
       const outcome = await this.#executeCalls(
         checkpoint.calls,
         checkpoint.turn,
@@ -329,6 +351,8 @@ export class AgentRuntime {
       toolCallCount += checkpoint.calls.length;
       answer = '';
       firstTurn = checkpoint.turn + 1;
+    } else {
+      this.#publishProgress('planning', []);
     }
 
     for (let turn = firstTurn; turn <= this.#maxTurns; turn += 1) {
@@ -417,6 +441,7 @@ export class AgentRuntime {
       }
       if (calls.length === 0) {
         if (hasUsedTool && !isCompletionReview) {
+          this.#publishProgress('verifying');
           if (completionReviewCount >= this.#maxCompletionReviews) {
             return this.#finish(
               'failed',
@@ -443,13 +468,13 @@ export class AgentRuntime {
           }
           let replaceAssistantText = true;
           for (const event of modelEvents) {
+            const shouldReplace =
+              event.type === 'text_delta' && event.delta.length > 0 && replaceAssistantText;
             this.#options.onModelEvent?.(
               event,
-              event.type === 'text_delta' && replaceAssistantText
-                ? { replaceAssistantText: true }
-                : undefined,
+              shouldReplace ? { replaceAssistantText: true } : undefined,
             );
-            if (event.type === 'text_delta') replaceAssistantText = false;
+            if (event.type === 'text_delta' && event.delta.length > 0) replaceAssistantText = false;
           }
         }
         answer = turnText;
@@ -464,6 +489,8 @@ export class AgentRuntime {
           'agent_loop_limit_reached: maximum tool calls exceeded',
         );
       }
+
+      this.#ensureProgressSteps(calls);
 
       // Once a tool has been used, model events are buffered so a speculative
       // completion candidate is not shown before the completion review. A
@@ -528,6 +555,7 @@ export class AgentRuntime {
     for (let index = 0; index < calls.length; index += 1) {
       const call = calls[index]!;
       if (this.#cancelRequested) {
+        this.#updateProgressStep(call.id, 'cancelled', 'cancelled');
         // H-13 补全：取消时本批次所有未执行 call 同样缺 tool_result，需补占位结果。
         this.#appendSkippedToolResults(calls, index, items, toolResults, 'cancelled');
         return { kind: 'paused', result: this.#finish('cancelled', answer, toolResults, turn) };
@@ -549,6 +577,7 @@ export class AgentRuntime {
         };
         items.push(item);
         this.#emitItem(item);
+        this.#updateProgressStep(call.id, 'failed', 'failed');
         this.#appendSkippedToolResults(
           calls,
           index + 1,
@@ -564,6 +593,7 @@ export class AgentRuntime {
       if (this.#lastUnavailableCallSignature !== undefined) {
         this.#lastUnavailableCallSignature = undefined;
       }
+      this.#updateProgressStep(call.id, 'running', 'executing');
       this.#toolActive = true;
       let result: Awaited<ReturnType<RuntimeToolGateway['call']>>;
       try {
@@ -583,6 +613,12 @@ export class AgentRuntime {
         const item = { type: 'tool_result' as const, toolCallId: call.id, content, isError: true };
         items.push(item);
         this.#emitItem(item);
+        if (this.#cancelRequested) {
+          this.#updateProgressStep(call.id, 'cancelled', 'cancelled');
+          this.#appendSkippedToolResults(calls, index + 1, items, toolResults, 'cancelled');
+          return { kind: 'paused', result: this.#finish('cancelled', answer, toolResults, turn) };
+        }
+        this.#updateProgressStep(call.id, 'failed', 'executing');
         if (this.#recordNoProgress(call, result)) {
           this.#appendSkippedToolResults(
             calls,
@@ -631,6 +667,7 @@ export class AgentRuntime {
         } as const;
         items.push(item);
         this.#emitItem(item);
+        this.#updateProgressStep(call.id, 'cancelled', 'cancelled');
         this.#appendSkippedToolResults(calls, index + 1, items, toolResults, 'cancelled');
         return { kind: 'paused', result: this.#finish('cancelled', answer, toolResults, turn) };
       }
@@ -651,12 +688,14 @@ export class AgentRuntime {
         };
         items.push(item);
         this.#emitItem(item);
+        this.#updateProgressStep(call.id, 'failed', 'executing');
         // 同 H-13：为剩余未执行 call 生成占位 tool_result。
         this.#appendSkippedToolResults(calls, index + 1, items, toolResults);
         return { kind: 'continue' };
       }
       const status = resultStatus(result.result);
       if (status === 'waiting_approval') {
+        this.#updateProgressStep(call.id, 'waiting_approval', 'waiting_approval');
         this.#approvalCheckpoint = {
           items: structuredClone(items),
           toolResults: structuredClone(toolResults),
@@ -669,6 +708,7 @@ export class AgentRuntime {
           toolCallCount: toolCallCount + index,
           completionReviewCount,
           hasUsedTool,
+          progress: this.progress,
         };
         return {
           kind: 'paused',
@@ -684,6 +724,11 @@ export class AgentRuntime {
       } as const;
       items.push(item);
       this.#emitItem(item);
+      this.#updateProgressStep(
+        call.id,
+        status === 'interaction_required' ? 'waiting_user' : 'completed',
+        status === 'interaction_required' ? 'waiting_user' : 'executing',
+      );
       if (this.#recordNoProgress(call, result)) {
         this.#appendSkippedToolResults(
           calls,
@@ -744,6 +789,57 @@ export class AgentRuntime {
       }
     }
     return { kind: 'completed' };
+  }
+
+  #publishProgress(
+    phase: AgentProgressSnapshot['phase'],
+    steps: readonly AgentProgressStep[] = this.#progress.steps,
+  ): void {
+    this.#progress = {
+      phase,
+      revision: this.#progress.revision + 1,
+      steps: steps.slice(0, MAX_PROGRESS_STEPS).map((step) => ({ ...step })),
+    };
+    this.#options.onProgress?.(structuredClone(this.#progress));
+  }
+
+  #restoreProgress(snapshot: AgentProgressSnapshot): void {
+    this.#progress = {
+      phase: snapshot.phase,
+      revision: snapshot.revision,
+      steps: snapshot.steps.slice(0, MAX_PROGRESS_STEPS).map((step) => ({ ...step })),
+    };
+    this.#publishProgress(this.#progress.phase, this.#progress.steps);
+  }
+
+  #ensureProgressSteps(calls: readonly AssembledToolCall[]): void {
+    const steps = [...this.#progress.steps];
+    let changed = false;
+    for (const call of calls) {
+      if (steps.some((step) => step.toolCallId === call.id)) continue;
+      if (steps.length >= MAX_PROGRESS_STEPS) break;
+      steps.push({
+        id: progressStepId(call.id),
+        label: safeProgressLabel(call.name),
+        status: 'pending',
+        toolCallId: call.id,
+      });
+      changed = true;
+    }
+    if (changed || this.#progress.phase !== 'executing') this.#publishProgress('executing', steps);
+  }
+
+  #updateProgressStep(
+    toolCallId: string,
+    status: AgentProgressStepStatus,
+    phase: AgentProgressSnapshot['phase'] = this.#progress.phase,
+  ): void {
+    const index = this.#progress.steps.findIndex((step) => step.toolCallId === toolCallId);
+    if (index < 0) return;
+    const steps = this.#progress.steps.map((step, stepIndex) =>
+      stepIndex === index ? { ...step, status } : step,
+    );
+    this.#publishProgress(phase, steps);
   }
 
   #recordNoProgress(
@@ -810,6 +906,7 @@ export class AgentRuntime {
       };
       items.push(item);
       this.#emitItem(item);
+      this.#updateProgressStep(skipped.id, progressStatusForSkippedReason(reason), 'executing');
       this.#options.onSkippedToolResult?.(skipped.id, placeholder);
     }
   }
@@ -832,6 +929,7 @@ export class AgentRuntime {
     error?: string,
   ): AgentRuntimeResult {
     if (this.#task.status !== status) this.#setStatus(status);
+    this.#publishProgress(progressPhaseForRuntimeStatus(status));
     return {
       status,
       task: structuredClone(this.#task),
@@ -859,6 +957,31 @@ function tool(
   inputSchema: Record<string, unknown>,
 ): ModelToolDefinition {
   return { name, description, inputSchema };
+}
+
+function progressPhaseForRuntimeStatus(
+  status: AgentRuntimeResult['status'],
+): AgentProgressSnapshot['phase'] {
+  return status;
+}
+
+function progressStatusForSkippedReason(reason: string): AgentProgressStepStatus {
+  if (reason === 'interaction_required') return 'waiting_user';
+  if (reason === 'cancelled' || reason === 'disconnected') return 'cancelled';
+  return 'failed';
+}
+
+function progressStepId(toolCallId: string): string {
+  const safeId = toolCallId.replaceAll(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 96);
+  return `progress-step-${safeId || 'tool'}`;
+}
+
+function safeProgressLabel(name: string): string {
+  const safeName = name
+    .trim()
+    .replaceAll(/[^a-zA-Z0-9._:-]/g, '_')
+    .slice(0, 128);
+  return safeName || 'tool';
 }
 
 function resultStatus(result: unknown): string | undefined {

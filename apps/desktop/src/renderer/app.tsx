@@ -59,9 +59,11 @@ import {
   getViewportWidth,
 } from './utils/panel-layout.js';
 import {
+  applyAgentTextDelta,
+  applyAgentTimelineEvent,
+  createAgentTimelineState,
+  hydrateAgentTimelineState,
   isTerminalTimelineStatus,
-  mergeHydratedTimeline,
-  upsertTimelineEvent,
 } from '@synapse-term/ui-platform';
 import type {
   AcpHistoryView,
@@ -213,6 +215,8 @@ export function App() {
   const pendingAcpHistoryRefreshes = useRef(new Set<string>());
   const timeoutRecoverySessions = useRef(new Set<string>());
   const activeSessionIdRef = useRef('');
+  const agentTimelineStateRef = useRef(createAgentTimelineState());
+  const textDeltaRenderFrameRef = useRef<number | undefined>(undefined);
 
   // Dynamic Label States
   const [currentDialect, setCurrentDialect] = useState<SessionSummary['executionDialect']>('posix');
@@ -357,7 +361,14 @@ export function App() {
           if (historyVersion(sessionId) !== requestVersion) return;
           timeoutRecoverySessions.current.delete(sessionId);
           setHistories((items) => ({ ...items, [sessionId]: history }));
-          setTimeline((items) => mergeHydratedTimeline(items, sessionId, history));
+          setTimeline((items) => {
+            const hydrated = hydrateAgentTimelineState(
+              { ...agentTimelineStateRef.current, items },
+              history,
+            );
+            agentTimelineStateRef.current = hydrated;
+            return hydrated.items;
+          });
           if (activeSessionIdRef.current === sessionId) {
             setPermissionMode(history.conversation?.permissionMode ?? 'manual');
           }
@@ -469,8 +480,19 @@ export function App() {
 
   useEffect(() => {
     const dispose = api.agent.onTimeline((event) => {
-      setTimeline((items) => upsertTimelineEvent(items, event));
       const eventDriver = event.driver ?? 'builtin';
+      setTimeline(() => {
+        let nextState = applyAgentTimelineEvent(agentTimelineStateRef.current, event);
+        if (
+          eventDriver === 'builtin' &&
+          event.kind === 'assistant' &&
+          isTerminalTimelineStatus(event.status)
+        ) {
+          nextState = hydrateAgentTimelineState(nextState, [event]);
+        }
+        agentTimelineStateRef.current = nextState;
+        return nextState.items;
+      });
       if (
         (event.kind === 'assistant' || event.kind === 'system') &&
         isTerminalTimelineStatus(event.status)
@@ -484,8 +506,31 @@ export function App() {
       if (eventDriver === 'acp') refreshAcpHistory(event.sessionId);
       else refreshAgentHistory(event.sessionId);
     });
+    const disposeTextDelta = api.agent.onTextDelta((event) => {
+      const current = agentTimelineStateRef.current;
+      const next = applyAgentTextDelta(current, event);
+      agentTimelineStateRef.current = next;
+      if (next.items !== current.items && textDeltaRenderFrameRef.current === undefined) {
+        textDeltaRenderFrameRef.current = requestAnimationFrame(() => {
+          textDeltaRenderFrameRef.current = undefined;
+          setTimeline(agentTimelineStateRef.current.items);
+        });
+      }
+      if (
+        !current.historyRefreshSessions.includes(event.sessionId) &&
+        next.historyRefreshSessions.includes(event.sessionId)
+      ) {
+        refreshAgentHistory(event.sessionId);
+      }
+      if (event.sessionId === activeSessionIdRef.current) setHasTurnActivity(true);
+    });
     return () => {
       dispose();
+      disposeTextDelta();
+      if (textDeltaRenderFrameRef.current !== undefined) {
+        cancelAnimationFrame(textDeltaRenderFrameRef.current);
+        textDeltaRenderFrameRef.current = undefined;
+      }
     };
   }, [api, clearActiveTurn, clearAcpActiveTurn, refreshAgentHistory, refreshAcpHistory]);
 

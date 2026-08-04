@@ -8,3 +8,4 @@ export * from './runtime-audit.js';
 export * from './runtime-timeline.js';
 export * from './timeline-utils.js';
 export * from './tool-timeline-card.js';
+export * from './progress-timeline-card.js';

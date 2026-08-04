@@ -4,6 +4,7 @@ import type { DesktopAttachmentKind, PickedAgentAttachment } from '../shared/des
 
 import type {
   AgentHistoryView,
+  AgentTextDelta,
   AgentTimelineItem,
   DiscoveredModel,
   ModelConfigurationInput,
@@ -18,6 +19,7 @@ import type {
 
 export type {
   AgentHistoryView,
+  AgentTextDelta,
   AgentModelSelectionView,
   AgentTimelineItem,
   AgentAttachmentKind,
@@ -230,6 +232,7 @@ export interface DesktopApi {
     approve(sessionId: string, approvalId: string, confirmedDestructive: boolean): Promise<void>;
     takeover(sessionId: string): Promise<void>;
     onTimeline(listener: (event: AgentTimelineItem) => void): () => void;
+    onTextDelta(listener: (event: AgentTextDelta) => void): () => void;
   };
   providers: {
     list(): Promise<ProviderProfileView[]>;
@@ -335,6 +338,8 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
       takeover: (sessionId) => invoke('agent:takeover', sessionId),
       onTimeline: (listener) =>
         ipc.on('agent:timeline', (payload) => listener(payload as AgentTimelineItem)),
+      onTextDelta: (listener) =>
+        ipc.on('agent:text-delta', (payload) => listener(payload as AgentTextDelta)),
     },
     providers: {
       list: () => invoke('providers:list'),

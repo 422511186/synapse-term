@@ -60,6 +60,7 @@ export const DESKTOP_ACP_IPC_CHANNELS = [
 export const DESKTOP_IPC_EVENT_CHANNELS = [
   'terminal:output',
   'agent:timeline',
+  'agent:text-delta',
   'session:resources',
   'session:changed',
   'acp:status-changed',

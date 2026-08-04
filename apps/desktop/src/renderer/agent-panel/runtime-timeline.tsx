@@ -11,6 +11,7 @@ import {
 import type { AgentTimelineItem } from '../../preload/preload-api.js';
 import { timelineStatusLabel } from './timeline-utils.js';
 import { ToolTimelineCard } from './tool-timeline-card.js';
+import { ProgressTimelineCard } from './progress-timeline-card.js';
 
 export function RuntimeTimeline({
   events,
@@ -56,6 +57,9 @@ export function RuntimeTimeline({
           );
         }
         const event = group.event;
+        if (event.progress !== undefined) {
+          return <ProgressTimelineCard key={event.id} progress={event.progress} />;
+        }
         if (event.kind === 'user') {
           return (
             <div className="flex gap-3" key={event.id}>
@@ -106,13 +110,20 @@ export function RuntimeTimeline({
         }
 
         if (event.kind === 'assistant') {
+          const isStreaming = event.status === 'streaming';
           return (
             <div className="flex gap-3" key={event.id}>
               <div className="w-8 h-8 rounded bg-white text-black flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(255,255,255,0.15)]">
                 <Command size={16} strokeWidth={2.5} />
               </div>
               <div className="flex-1 min-w-0 text-[13px] leading-relaxed text-foreground/90">
-                <MarkdownContent>{event.text}</MarkdownContent>
+                {isStreaming ? (
+                  <div aria-live="polite" className="agent-streaming-text">
+                    {event.text}
+                  </div>
+                ) : (
+                  <MarkdownContent>{event.text}</MarkdownContent>
+                )}
               </div>
             </div>
           );

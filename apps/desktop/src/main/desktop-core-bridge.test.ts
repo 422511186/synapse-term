@@ -110,6 +110,7 @@ describe('DesktopCoreBridge', () => {
     const supervisor = new FakeSupervisor();
     const outputs: unknown[] = [];
     const timelines: unknown[] = [];
+    const deltas: unknown[] = [];
     const resources: unknown[] = [];
     const bridge = createDesktopCoreBridge(
       supervisor as unknown as CoreSupervisor,
@@ -118,6 +119,8 @@ describe('DesktopCoreBridge', () => {
       { PATH: 'C:/tools', HOME: 'C:/Users/test' },
       () => ({ home: 'C:/Users/test', shells: [] }),
       (event) => resources.push(event),
+      undefined,
+      (event) => deltas.push(event),
     );
 
     await expect(bridge.invoke('sessions:environment')).resolves.toEqual({
@@ -216,6 +219,19 @@ describe('DesktopCoreBridge', () => {
         },
       } as never);
       listener({
+        event: 'agent.text_delta',
+        payload: {
+          id: 'assistant-1',
+          sessionId: 'session-1',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          operation: 'append',
+          delta: 'done',
+          sequence: 0,
+          occurredAt: '2026-07-27T00:00:00.000Z',
+        },
+      } as never);
+      listener({
         event: 'session.resources',
         payload: {
           sessionId: 'session-1',
@@ -237,6 +253,9 @@ describe('DesktopCoreBridge', () => {
     }
     expect(outputs).toEqual([{ sessionId: 'session-1', sequence: 2, data: 'output' }]);
     expect(timelines).toMatchObject([{ id: 'timeline-1', text: 'done' }]);
+    expect(deltas).toEqual([
+      expect.objectContaining({ id: 'assistant-1', delta: 'done', operation: 'append' }),
+    ]);
     expect(resources).toMatchObject([{ sessionId: 'session-1' }]);
     bridge.dispose();
   });

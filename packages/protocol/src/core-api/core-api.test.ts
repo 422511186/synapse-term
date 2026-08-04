@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentTextDeltaSchema,
   coreApiUseCaseSchema,
   coreRequestSchema,
   coreServiceEventSchema,
@@ -234,6 +235,59 @@ describe('Core API protocol', () => {
         },
       }),
     ).toThrow();
+    expect(
+      coreServiceEventSchema.parse({
+        type: 'agent.text_delta',
+        streamId: 'agent:session-1',
+        payload: {
+          id: 'assistant-1',
+          sessionId: 'session-1',
+          conversationId: 'conversation-1',
+          turnId: 'turn-1',
+          operation: 'append',
+          delta: 'hello',
+          sequence: 0,
+          occurredAt: '2026-07-27T00:00:00.000Z',
+        },
+      }),
+    ).toMatchObject({
+      type: 'agent.text_delta',
+      payload: { id: 'assistant-1', operation: 'append', sequence: 0 },
+    });
+    expect(
+      agentTextDeltaSchema.parse({
+        id: 'assistant-1',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        operation: 'replace',
+        delta: 'final',
+        sequence: 1,
+        occurredAt: '2026-07-27T00:00:00.000Z',
+      }),
+    ).toMatchObject({ operation: 'replace', delta: 'final' });
+    expect(() =>
+      agentTextDeltaSchema.parse({
+        id: 'assistant-1',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        operation: 'append',
+        delta: '',
+        sequence: 2,
+        occurredAt: '2026-07-27T00:00:00.000Z',
+      }),
+    ).toThrow();
+    expect(() =>
+      agentTextDeltaSchema.parse({
+        id: 'assistant-1',
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        operation: 'append',
+        delta: 'bad',
+        sequence: -1,
+        occurredAt: '2026-07-27T00:00:00.000Z',
+      }),
+    ).toThrow();
+
     expect(
       coreServiceEventSchema.parse({
         type: 'agent.timeline',
