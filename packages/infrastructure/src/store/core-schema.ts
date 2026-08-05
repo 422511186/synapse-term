@@ -508,6 +508,17 @@ export const CORE_MIGRATIONS: readonly SqliteMigration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    migrate: (database) => {
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS audit_events_session_idx
+          ON audit_events (session_id, occurred_at, id);
+        CREATE INDEX IF NOT EXISTS audit_events_task_idx
+          ON audit_events (task_id, occurred_at, id);
+      `);
+    },
+  },
 ];
 
 function record(value: unknown): Record<string, unknown> {

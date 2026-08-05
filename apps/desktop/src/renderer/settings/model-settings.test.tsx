@@ -66,7 +66,6 @@ describe('ModelSettings status columns', () => {
         <ModelSettings
           api={{} as DesktopApi}
           models={models}
-          onBack={() => undefined}
           onEdit={() => undefined}
           onNew={() => undefined}
           onRefresh={async () => undefined}
@@ -84,5 +83,27 @@ describe('ModelSettings status columns', () => {
     expect(html).toContain('不支持');
     expect(html).not.toContain('运行状态');
     expect(html).not.toContain('已启用 · 可用');
+  });
+
+  it('renders search and filter controls without adding pagination to saved models', () => {
+    const html = renderToString(
+      <ToastProvider>
+        <ModelSettings
+          api={{} as DesktopApi}
+          models={[view({})]}
+          onEdit={() => undefined}
+          onNew={() => undefined}
+          onRefresh={async () => undefined}
+          onModelsChange={() => undefined}
+        />
+      </ToastProvider>,
+    );
+
+    expect(html).toContain('搜索模型配置');
+    expect(html).toContain('按服务商筛选');
+    expect(html).toContain('按状态筛选');
+    expect(html).toContain('aria-label="模型配置结果统计"');
+    expect(html).toContain('border-t border-border/50');
+    expect(html).not.toContain('模型配置分页');
   });
 });

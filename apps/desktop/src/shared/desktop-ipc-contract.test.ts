@@ -45,6 +45,8 @@ describe('desktop IPC contract', () => {
       'models:remove',
       'models:import-discovered',
       'audit:list',
+      'audit:detail',
+      'audit:retention',
       'audit:cleanup',
       'core:status',
       'core:exit',

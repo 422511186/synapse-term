@@ -212,6 +212,9 @@ button:not(:disabled) {
   height: 30px;
   border: 1px solid rgb(82 82 91 / 78%);
   border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .session-tab-tool:hover,

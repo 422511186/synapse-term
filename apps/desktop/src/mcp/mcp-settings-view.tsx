@@ -14,7 +14,7 @@ import { ConfirmDialog, useAsyncAction, useToast } from '../renderer/feedback/in
 
 interface McpSettingsViewProps {
   api: DesktopApi;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JSX.Element {
@@ -77,14 +77,16 @@ export function McpSettingsView({ api, onBack }: McpSettingsViewProps): React.JS
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-2xl mx-auto space-y-5">
         <div>
-          <button
-            aria-label="返回工作区"
-            className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            onClick={onBack}
-            type="button"
-          >
-            <ArrowLeft size={16} /> 返回工作区
-          </button>
+          {onBack !== undefined && (
+            <button
+              aria-label="返回工作区"
+              className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              onClick={onBack}
+              type="button"
+            >
+              <ArrowLeft size={16} /> 返回工作区
+            </button>
+          )}
           <h2 className="text-base font-semibold">MCP 服务</h2>
           <p className="text-xs text-muted-foreground">
             Codex / Claude Code 等外部客户端通过本机回环地址调用终端与只读文件能力

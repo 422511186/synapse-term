@@ -32,6 +32,8 @@ export const DESKTOP_IPC_REQUEST_CHANNELS = [
   'models:remove',
   'models:import-discovered',
   'audit:list',
+  'audit:detail',
+  'audit:retention',
   'audit:cleanup',
   'core:status',
   'core:exit',

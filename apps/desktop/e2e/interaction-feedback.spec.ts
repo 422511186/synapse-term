@@ -5,7 +5,7 @@ const wideDesktop = { width: 1440, height: 900 };
 async function openModelsPage(page: Page): Promise<void> {
   await page.goto('/');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '模型配置', exact: true }).click();
+  await page.getByRole('button', { name: '模型配置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型配置' })).toBeVisible();
 }
 
@@ -39,7 +39,7 @@ test('reports an unavailable model as failed instead of 检测通过', async ({ 
   await page.setViewportSize(wideDesktop);
   await page.goto('/?modelTestUnavailable=1');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '模型配置', exact: true }).click();
+  await page.getByRole('button', { name: '模型配置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型配置' })).toBeVisible();
 
   const testButton = page.getByRole('button', { name: '检测 快速诊断' });
@@ -72,7 +72,7 @@ test('rolls back the optimistic enable when the API fails', async ({ page }) => 
   await page.setViewportSize(wideDesktop);
   await page.goto('/?modelEnableError=1');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '模型配置', exact: true }).click();
+  await page.getByRole('button', { name: '模型配置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '模型配置' })).toBeVisible();
 
   const toggle = page.getByRole('button', { name: '快速诊断 启用状态' });
@@ -108,7 +108,7 @@ test('shows MCP server start/stop transitions and revoke confirmation', async ({
   await page.setViewportSize(wideDesktop);
   await page.goto('/');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'MCP 服务', exact: true }).click();
+  await page.getByRole('button', { name: 'MCP 服务', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'MCP 服务' })).toBeVisible();
 
   const toggle = page.getByRole('button', { name: '启用 MCP Server', exact: true });
@@ -136,7 +136,7 @@ test('shows ACP integration start/stop transitions', async ({ page }) => {
   await page.setViewportSize(wideDesktop);
   await page.goto('/');
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'ACP 集成', exact: true }).click();
+  await page.getByRole('button', { name: 'ACP 集成', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ACP 集成' })).toBeVisible();
 
   const toggle = page.getByRole('button', { name: '启用 ACP 集成', exact: true });

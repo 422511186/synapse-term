@@ -1,10 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { CommandRisk } from '@synapse-term/domain';
 
 import { hashCommand } from '@synapse-term/domain';
 import { SecretRedactor } from '../security/secret-protection.js';
-import type { AuditEvent, CoreRepositories } from '../store/repositories.js';
+import type {
+  AuditEvent,
+  AuditEventPage,
+  AuditEventPageFilter,
+  CoreRepositories,
+} from '../store/repositories.js';
 
 export interface AuditActor {
   kind: 'user' | 'system' | 'agent' | 'external';
@@ -44,12 +49,14 @@ export interface AuditCommandInput {
 }
 
 export class AuditService {
-  readonly #repositories: Pick<CoreRepositories, 'appendAuditEvent' | 'listAuditEvents'>;
+  readonly #repositories: Pick<CoreRepositories, 'appendAuditEvent' | 'listAuditEvents'> &
+    Partial<Pick<CoreRepositories, 'listAuditEventsPage'>>;
   readonly #now: () => Date;
   readonly #redactor: SecretRedactor;
 
   constructor(
-    repositories: Pick<CoreRepositories, 'appendAuditEvent' | 'listAuditEvents'>,
+    repositories: Pick<CoreRepositories, 'appendAuditEvent' | 'listAuditEvents'> &
+      Partial<Pick<CoreRepositories, 'listAuditEventsPage'>>,
     options: { now?: () => Date; redactor?: SecretRedactor } = {},
   ) {
     this.#repositories = repositories;
@@ -58,7 +65,6 @@ export class AuditService {
   }
 
   record(input: AuditRecordInput): void {
-    const redacted = this.#redactor.redact(JSON.stringify(input.payload));
     this.#repositories.appendAuditEvent({
       id: input.id ?? randomUUID(),
       actor: normalizeActor(input.actor),
@@ -66,11 +72,12 @@ export class AuditService {
       ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
       type: input.type,
       occurredAt: input.occurredAt ?? this.#now().toISOString(),
-      payload: redacted.redacted ? { redacted: redacted.text } : input.payload,
+      payload: redactAuditPayload(input.payload, this.#redactor),
     });
   }
 
   recordCommand(input: AuditCommandInput): void {
+    const commandPreview = this.#redactor.redact(input.command).text;
     this.record({
       ...(input.id === undefined ? {} : { id: input.id }),
       actor: input.actor,
@@ -78,12 +85,13 @@ export class AuditService {
       taskId: input.taskId,
       type: `command.${input.status}`,
       payload: {
+        commandPreview,
         commandHash: input.commandHash ?? hashCommand(input.command),
         risk: input.risk,
+        status: input.status,
         ...(input.grantId === undefined ? {} : { grantId: input.grantId }),
         ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
         ...(input.reason === undefined ? {} : { reason: input.reason }),
-        ...(input.output === undefined ? {} : { output: input.output }),
         ...(input.transportMode === undefined ? {} : { transportMode: input.transportMode }),
         ...(input.sourceKind === undefined ? {} : { sourceKind: input.sourceKind }),
         ...(input.executionDialect === undefined
@@ -104,7 +112,69 @@ export class AuditService {
       return true;
     });
   }
+
+  listEvents(filter: AuditEventPageFilter = {}): AuditEventPage {
+    if (this.#repositories.listAuditEventsPage !== undefined) {
+      return this.#repositories.listAuditEventsPage(filter);
+    }
+    const events = this.#repositories.listAuditEvents().filter((event) => {
+      if (filter.from !== undefined && event.occurredAt < filter.from) return false;
+      if (filter.to !== undefined && event.occurredAt > filter.to) return false;
+      if (filter.sessionId !== undefined && event.sessionId !== filter.sessionId) return false;
+      if (filter.taskId !== undefined && event.taskId !== filter.taskId) return false;
+      return true;
+    });
+    const limit = filter.limit ?? 200;
+    return { items: events.slice(0, limit) };
+  }
 }
+
+function redactAuditPayload(
+  value: Record<string, unknown>,
+  redactor: SecretRedactor,
+): Record<string, unknown> {
+  return redactAuditValue(value, redactor) as Record<string, unknown>;
+}
+
+function redactAuditValue(value: unknown, redactor: SecretRedactor, key?: string): unknown {
+  if (typeof value === 'string') {
+    return key === 'path' || key === 'pathPreview'
+      ? summarizeAuditPath(value, redactor)
+      : redactor.redact(value).text;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactAuditValue(item, redactor));
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !AUDIT_PAYLOAD_EXCLUDED_KEYS.has(key))
+      .map(([key, item]) => [key, redactAuditValue(item, redactor, key)]),
+  );
+}
+
+/**
+ * Paths can identify a user's home directory or a sensitive file even when
+ * they contain no token-like secret. Keep a stable shape and digest for
+ * diagnostics, without retaining any original path segment.
+ */
+export function summarizeAuditPath(value: string, redactor: SecretRedactor): string {
+  if (value.startsWith('[audit-path:')) return value;
+  const redacted = redactor.redact(value);
+  if (redacted.detectorError) return redacted.text;
+  const normalized = redacted.text.replaceAll('\\', '/');
+  const kind = /^(?:[A-Za-z]:\/|\/|\/\/)/.test(normalized) ? 'absolute' : 'relative';
+  const segmentCount = normalized.split('/').filter((segment) => segment.length > 0).length;
+  const digest = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
+  return `[audit-path:${kind};segments=${segmentCount};hash=${digest}]`;
+}
+
+const AUDIT_PAYLOAD_EXCLUDED_KEYS = new Set([
+  'output',
+  'screen',
+  'terminalOutput',
+  'recording',
+  'transcript',
+  'protectedInput',
+]);
 
 function normalizeActor(actor: AuditActor): AuditEvent['actor'] {
   if (actor.kind === 'agent') {

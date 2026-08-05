@@ -69,6 +69,8 @@ const READ_ONLY_REQUESTS = new Set([
   'provider.list',
   'model.list',
   'audit.list',
+  'audit.detail',
+  'audit.retention',
 ]);
 const TRANSPORT_FAILURE_CODES = new Set([
   'ECONNABORTED',

@@ -106,6 +106,12 @@ describe('Electron security boundary', () => {
     const ipc: RendererIpc = {
       invoke: async (channel) => {
         requests.push(channel);
+        if (channel === 'audit:list') return { items: [] };
+        if (channel === 'audit:detail') return null;
+        if (channel === 'audit:retention') {
+          return { auditRetentionDays: 30, rawLogRetentionHours: 24 };
+        }
+        if (channel === 'audit:cleanup') return { rawLogs: 0, auditEvents: 0 };
         return null;
       },
       on: (channel) => {
@@ -176,6 +182,8 @@ describe('Electron security boundary', () => {
     await api.models.remove(model.id);
     await api.models.importDiscovered(provider.id, ['local-model']);
     await api.audit.list({ sessionId: 'session-1' });
+    await api.audit.detail('task:task-1');
+    await api.audit.retention();
     await api.audit.cleanup();
     await api.core.status();
     await api.core.exit('keep_sessions');
@@ -216,6 +224,8 @@ describe('Electron security boundary', () => {
       'models:remove',
       'models:import-discovered',
       'audit:list',
+      'audit:detail',
+      'audit:retention',
       'audit:cleanup',
       'core:status',
       'core:exit',
@@ -226,6 +236,24 @@ describe('Electron security boundary', () => {
       'session:resources',
       'agent:timeline',
     ]);
+  });
+
+  it('normalizes an absent audit detail returned as IPC null', async () => {
+    const api = createDesktopApi({
+      invoke: async () => null,
+      on: () => () => undefined,
+    });
+
+    await expect(api.audit.detail('event:missing')).resolves.toBeUndefined();
+  });
+
+  it('rejects an audit list response that is not a stable DTO', async () => {
+    const api = createDesktopApi({
+      invoke: async () => ({ items: [{ payload: { secret: 'must-not-cross-ipc' } }] }),
+      on: () => () => undefined,
+    });
+
+    await expect(api.audit.list()).rejects.toThrow();
   });
 
   it('ships a renderer Content Security Policy without unsafe script execution', () => {

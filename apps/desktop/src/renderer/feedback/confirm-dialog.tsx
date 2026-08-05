@@ -1,5 +1,6 @@
 /** 统一确认对话框：破坏性操作先确认，确认按钮 pending 与防连点 */
 import { type JSX } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { PendingButton } from './pending-button.js';
@@ -29,11 +30,11 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): JSX.Element | null {
   if (!open) return null;
 
-  return (
+  const dialog = (
     <div
       aria-label="操作确认"
       aria-modal="true"
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       role="alertdialog"
     >
       <div className="w-full max-w-sm rounded-xl border border-border bg-[#18181b] shadow-2xl">
@@ -78,4 +79,5 @@ export function ConfirmDialog({
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
 }

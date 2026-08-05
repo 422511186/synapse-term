@@ -413,6 +413,7 @@ export class AgentCoordinator {
           type: 'approval.requested',
           payload: {
             approvalId: approval.id,
+            commandPreview: approval.approvalTarget,
             commandHash: hashCommand(approval.approvalTarget),
             risk: approval.level,
             reasons: approval.reasons,
@@ -533,7 +534,7 @@ export class AgentCoordinator {
         sessionId,
         taskId: state.task.id,
         type: 'approval.rejected',
-        payload: { approvalId: pending.id },
+        payload: { approvalId: pending.id, commandPreview: pending.approvalTarget },
       });
     }
     const runtime = state.runtime;
@@ -634,6 +635,7 @@ export class AgentCoordinator {
       payload: {
         approvalId,
         grantId: grant.id,
+        commandPreview: pending.approvalTarget,
         commandHash: hashCommand(pending.approvalTarget),
         risk: pending.level,
         confirmedDestructive,
@@ -663,7 +665,7 @@ export class AgentCoordinator {
         sessionId,
         taskId: state.task.id,
         type: 'approval.rejected',
-        payload: { approvalId: pending.id },
+        payload: { approvalId: pending.id, commandPreview: pending.approvalTarget },
       });
     }
     state.runtime?.cancel();

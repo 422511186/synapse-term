@@ -21,4 +21,15 @@ describe('McpSettingsView', () => {
     expect(html).toContain('完全权限模式');
     expect(html).toContain('不审查命令，任何命令直接放行（高风险）');
   });
+
+  it('renders as workspace content without an inner return action', () => {
+    const html = renderToString(
+      <ToastProvider>
+        <McpSettingsView api={createMockDesktopApi()} />
+      </ToastProvider>,
+    );
+
+    expect(html).not.toContain('返回工作区');
+    expect(html).not.toContain('absolute inset-0');
+  });
 });

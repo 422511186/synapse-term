@@ -1,6 +1,6 @@
 /** 模型编辑弹窗（自 app.tsx 拆分）：保存/拉取/检测统一走 useAsyncAction，新建模型可直接检测 */
-import { useState, type JSX } from 'react';
-import { RefreshCw, Save, X } from 'lucide-react';
+import { useMemo, useState, type JSX } from 'react';
+import { ChevronLeft, ChevronRight, RefreshCw, Save, Search, X } from 'lucide-react';
 
 import { errorMessageZh } from '@synapse-term/ui-platform';
 import type {
@@ -11,6 +11,7 @@ import type {
   ProviderProfileView,
 } from '../../preload/preload-api.js';
 import { PendingButton, useAsyncAction, useToast } from '../feedback/index.js';
+import { paginateItems, REMOTE_MODEL_PAGE_SIZE } from './configuration-list-ops.js';
 import { modelInput, newModelInput } from './inputs.js';
 import { formatTestDuration, modelTestOutcome } from './model-list-ops.js';
 
@@ -33,6 +34,10 @@ export function ModelEditModal({
     model === undefined ? newModelInput(providers[0]?.id ?? '') : modelInput(model),
   );
   const [discovered, setDiscovered] = useState<DiscoveredModel[]>([]);
+  const [discoveryLoaded, setDiscoveryLoaded] = useState(false);
+  const [discoveryTruncated, setDiscoveryTruncated] = useState(false);
+  const [discoveryQuery, setDiscoveryQuery] = useState('');
+  const [discoveryPage, setDiscoveryPage] = useState(0);
   const [error, setError] = useState<string>();
   const fetchAction = useAsyncAction();
   const saveAction = useAsyncAction();
@@ -60,6 +65,10 @@ export function ModelEditModal({
       async () => {
         const result = await api.providers.discoverModels(selectedProvider.id);
         setDiscovered(result.models);
+        setDiscoveryLoaded(true);
+        setDiscoveryTruncated(result.truncated);
+        setDiscoveryQuery('');
+        setDiscoveryPage(0);
         return result;
       },
       { onError: (caught) => toast.error(errorMessageZh(caught)) },
@@ -106,6 +115,19 @@ export function ModelEditModal({
   };
 
   const busy = saveAction.pending || testAction.pending || fetchAction.pending;
+  const filteredDiscovered = useMemo(() => {
+    const query = discoveryQuery.trim().toLocaleLowerCase();
+    if (query.length === 0) return discovered;
+    return discovered.filter((candidate) =>
+      [candidate.id, candidate.displayName, candidate.ownedBy]
+        .filter((value): value is string => value !== undefined)
+        .some((value) => value.toLocaleLowerCase().includes(query)),
+    );
+  }, [discovered, discoveryQuery]);
+  const discoveryPagination = useMemo(
+    () => paginateItems(filteredDiscovered, discoveryPage, REMOTE_MODEL_PAGE_SIZE),
+    [discoveryPage, filteredDiscovered],
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -144,6 +166,10 @@ export function ModelEditModal({
               onChange={(event) => {
                 setDraft({ ...draft, providerProfileId: event.target.value, modelId: '' });
                 setDiscovered([]);
+                setDiscoveryLoaded(false);
+                setDiscoveryTruncated(false);
+                setDiscoveryQuery('');
+                setDiscoveryPage(0);
               }}
               className="w-full appearance-none rounded-lg border border-border bg-[#09090b] px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-60"
             >
@@ -182,25 +208,112 @@ export function ModelEditModal({
                 placeholder="手动输入或点击右上角拉取..."
                 className="w-full rounded-lg border border-border bg-[#09090b] px-3 py-2 font-mono text-sm text-foreground outline-none transition-colors focus:border-primary"
               />
-              {discovered.length > 0 && (
-                <div className="custom-scrollbar absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border/80 bg-[#18181b] shadow-2xl">
-                  {discovered.map((candidate) => (
+              {discoveryLoaded && (
+                <div className="mt-2 rounded-lg border border-border/80 bg-[#18181b] shadow-lg">
+                  <div className="flex items-center justify-between gap-3 border-b border-border/50 px-3 py-2.5">
+                    <div>
+                      <div className="text-xs font-medium text-foreground">远程模型</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        显示 {filteredDiscovered.length} / {discovered.length} 个结果
+                      </div>
+                    </div>
                     <button
-                      key={candidate.id}
-                      onClick={() => {
-                        setDraft({
-                          ...draft,
-                          modelId: candidate.id,
-                          name: draft.name || candidate.displayName || candidate.id,
-                        });
-                        setDiscovered([]);
-                      }}
-                      className="w-full border-b border-border/30 px-3 py-2 text-left font-mono text-[13px] text-muted-foreground transition-colors last:border-0 hover:bg-secondary hover:text-foreground"
+                      aria-label="关闭远程模型列表"
+                      className="text-muted-foreground transition-colors hover:text-foreground"
+                      onClick={() => setDiscoveryLoaded(false)}
                       type="button"
                     >
-                      {candidate.id}
+                      <X size={14} />
                     </button>
-                  ))}
+                  </div>
+                  <div className="p-3">
+                    <label className="relative flex items-center" htmlFor="remote-model-search">
+                      <Search
+                        className="pointer-events-none absolute left-2 text-muted-foreground"
+                        size={14}
+                      />
+                      <input
+                        aria-label="搜索远程模型"
+                        className="w-full rounded-md border border-border bg-[#09090b] py-2 pl-8 pr-2.5 font-mono text-xs text-foreground outline-none transition-colors focus:border-primary"
+                        id="remote-model-search"
+                        onChange={(event) => {
+                          setDiscoveryQuery(event.target.value);
+                          setDiscoveryPage(0);
+                        }}
+                        placeholder="搜索模型 ID、名称或归属"
+                        type="search"
+                        value={discoveryQuery}
+                      />
+                    </label>
+                    {discoveryTruncated && (
+                      <div className="mt-2 text-xs text-amber-400" role="status">
+                        服务商只返回了部分模型，当前列表可能不完整。
+                      </div>
+                    )}
+                    {discoveryPagination.items.length > 0 ? (
+                      <div className="custom-scrollbar mt-2 max-h-48 overflow-y-auto rounded-md border border-border/50">
+                        {discoveryPagination.items.map((candidate) => (
+                          <button
+                            aria-label={candidate.id}
+                            className="w-full border-b border-border/30 px-3 py-2 text-left transition-colors last:border-0 hover:bg-secondary hover:text-foreground"
+                            key={candidate.id}
+                            onClick={() => {
+                              setDraft({
+                                ...draft,
+                                modelId: candidate.id,
+                                name: draft.name || candidate.displayName || candidate.id,
+                              });
+                              setDiscoveryLoaded(false);
+                            }}
+                            type="button"
+                          >
+                            <div className="font-mono text-sm text-foreground">{candidate.id}</div>
+                            {(candidate.displayName !== undefined ||
+                              candidate.ownedBy !== undefined) && (
+                              <div className="mt-0.5 text-xs text-muted-foreground">
+                                {[candidate.displayName, candidate.ownedBy]
+                                  .filter((value): value is string => value !== undefined)
+                                  .join(' · ')}
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="py-5 text-center text-xs text-muted-foreground">
+                        {discovered.length === 0 ? '服务商没有返回模型。' : '没有匹配的远程模型。'}
+                      </div>
+                    )}
+                    {discoveryPagination.pageCount > 1 && (
+                      <div
+                        aria-label="远程模型分页"
+                        className="mt-2 flex items-center justify-between text-xs text-muted-foreground"
+                        role="navigation"
+                      >
+                        <button
+                          aria-label="上一页远程模型"
+                          className="flex items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                          disabled={discoveryPagination.page === 0}
+                          onClick={() => setDiscoveryPage(discoveryPagination.page - 1)}
+                          type="button"
+                        >
+                          <ChevronLeft size={13} /> 上一页
+                        </button>
+                        <span>
+                          第 {discoveryPagination.page + 1} / {discoveryPagination.pageCount} 页
+                        </span>
+                        <button
+                          aria-label="下一页远程模型"
+                          className="flex items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                          disabled={discoveryPagination.page >= discoveryPagination.pageCount - 1}
+                          onClick={() => setDiscoveryPage(discoveryPagination.page + 1)}
+                          type="button"
+                        >
+                          下一页 <ChevronRight size={13} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

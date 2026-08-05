@@ -5,7 +5,11 @@ import type {
   AgentTextDelta,
   AgentTimelineItem,
   AgentHistoryView,
-  AuditEventView,
+  AuditListRequest,
+  AuditListResponse,
+  AuditTraceDetailView,
+  AuditTraceEventView,
+  AuditTraceView,
   DesktopApi,
   McpApprovalMode,
   ModelConfigurationInput,
@@ -139,15 +143,195 @@ export function createMockDesktopApi(): DesktopApi {
       revision: 1,
     },
   ];
-  const audit: AuditEventView[] = [
-    {
-      id: 'audit-1',
-      type: 'session.created',
-      sessionId: 'session-local',
-      occurredAt: new Date(Date.now() - 180_000).toISOString(),
-      summary: '本机终端会话已连接',
-    },
+  const auditEvent: AuditTraceEventView = {
+    id: 'audit-1',
+    type: 'session.created',
+    sessionId: 'session-local',
+    occurredAt: new Date(Date.now() - 180_000).toISOString(),
+    actor: { kind: 'system' },
+    category: 'session',
+    outcome: 'success',
+    risk: 'read_only',
+    summary: '本机终端会话已连接',
+  };
+  const demoCommand = 'df -h && systemctl --failed --no-pager';
+  const demoTaskId = 'task-demo-command';
+  const demoTaskStarted: AuditTraceEventView = {
+    id: 'audit-demo-task-started',
+    type: 'task.started',
+    sessionId: 'session-local',
+    taskId: demoTaskId,
+    occurredAt: new Date(Date.now() - 50_000).toISOString(),
+    actor: { kind: 'user' },
+    category: 'session',
+    outcome: 'in_progress',
+    risk: 'read_only',
+    summary: 'Agent 任务开始',
+  };
+  const demoCommandEvent: AuditTraceEventView = {
+    id: 'audit-demo-command',
+    type: 'command.completed',
+    sessionId: 'session-local',
+    taskId: demoTaskId,
+    occurredAt: new Date(Date.now() - 45_000).toISOString(),
+    actor: { kind: 'agent', taskId: demoTaskId },
+    category: 'command',
+    outcome: 'success',
+    risk: 'read_only',
+    summary: demoCommand,
+    commandPreview: demoCommand,
+    commandHash: 'sha256:mock-demo-command',
+    exitCode: 0,
+    details: [
+      { label: '执行状态', value: 'completed' },
+      { label: '执行方言', value: 'posix' },
+    ],
+  };
+  const demoTaskCompleted: AuditTraceEventView = {
+    id: 'audit-demo-task-completed',
+    type: 'task.completed',
+    sessionId: 'session-local',
+    taskId: demoTaskId,
+    occurredAt: new Date(Date.now() - 40_000).toISOString(),
+    actor: { kind: 'system' },
+    category: 'session',
+    outcome: 'success',
+    risk: 'read_only',
+    summary: 'Agent 任务完成',
+  };
+  const demoCommandTrace: AuditTraceView = {
+    traceId: `task:${demoTaskId}`,
+    subject: 'agent_task',
+    sessionId: 'session-local',
+    taskId: demoTaskId,
+    actor: { kind: 'agent', taskId: demoTaskId },
+    category: 'command',
+    startedAt: demoTaskStarted.occurredAt,
+    lastActivityAt: demoTaskCompleted.occurredAt,
+    outcome: 'success',
+    risk: 'read_only',
+    summary: `命令：${demoCommand}`,
+    eventCount: 3,
+    containsObservations: false,
+  };
+  const auditTrace: AuditTraceView = {
+    traceId: 'event:audit-1',
+    subject: 'event',
+    sessionId: 'session-local',
+    actor: { kind: 'system' },
+    category: 'session',
+    startedAt: auditEvent.occurredAt,
+    lastActivityAt: auditEvent.occurredAt,
+    outcome: 'success',
+    risk: 'read_only',
+    summary: auditEvent.summary,
+    eventCount: 1,
+    containsObservations: false,
+  };
+  const auditEventTwo: AuditTraceEventView = {
+    ...auditEvent,
+    id: 'audit-2',
+    type: 'session.renamed',
+    occurredAt: new Date(Date.now() - 120_000).toISOString(),
+    summary: '本机终端会话名称已更新',
+  };
+  const auditTraceTwo: AuditTraceView = {
+    ...auditTrace,
+    traceId: 'event:audit-2',
+    startedAt: auditEventTwo.occurredAt,
+    lastActivityAt: auditEventTwo.occurredAt,
+    summary: auditEventTwo.summary,
+  };
+  const auditObservationEvent: AuditTraceEventView = {
+    ...auditEvent,
+    id: 'audit-observation',
+    type: 'external.observe',
+    occurredAt: new Date(Date.now() - 60_000).toISOString(),
+    actor: { kind: 'external', callerKind: 'mcp', callerId: 'mock-client' },
+    category: 'observation',
+    outcome: 'information',
+    summary: '终端状态已观察',
+  };
+  const auditObservationTrace: AuditTraceView = {
+    ...auditTrace,
+    traceId: 'event:audit-observation',
+    actor: auditObservationEvent.actor,
+    category: 'observation',
+    startedAt: auditObservationEvent.occurredAt,
+    lastActivityAt: auditObservationEvent.occurredAt,
+    outcome: 'information',
+    summary: auditObservationEvent.summary,
+    containsObservations: true,
+  };
+  let audit: AuditTraceView[] = [
+    demoCommandTrace,
+    auditTrace,
+    auditTraceTwo,
+    auditObservationTrace,
   ];
+  let auditDetails: AuditTraceDetailView[] = [
+    {
+      ...demoCommandTrace,
+      events: [demoTaskStarted, demoCommandEvent, demoTaskCompleted],
+    },
+    { ...auditTrace, events: [auditEvent] },
+    { ...auditTraceTwo, events: [auditEventTwo] },
+    { ...auditObservationTrace, events: [auditObservationEvent] },
+  ];
+
+  const recordMockAuditEvent = (event: AuditTraceEventView): void => {
+    const traceId =
+      event.taskId === undefined
+        ? event.transactionId === undefined
+          ? `event:${event.id}`
+          : `transaction:${event.transactionId}`
+        : `task:${event.taskId}`;
+    const current = auditDetails.find((detail) => detail.traceId === traceId);
+    const events = [...(current?.events ?? []), event].sort(
+      (left, right) =>
+        left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id),
+    );
+    const command = [...events].reverse().find((item) => item.commandPreview !== undefined);
+    const latest = events.at(-1)!;
+    const outcome = events.some((item) => item.outcome === 'rejected')
+      ? 'rejected'
+      : events.some((item) => item.outcome === 'failure')
+        ? 'failure'
+        : events.some((item) => item.outcome === 'interrupted')
+          ? 'interrupted'
+          : events.some((item) => item.outcome === 'success')
+            ? 'success'
+            : events.some((item) => item.outcome === 'in_progress')
+              ? 'in_progress'
+              : 'information';
+    const trace: AuditTraceView = {
+      traceId,
+      subject:
+        event.taskId === undefined
+          ? event.transactionId === undefined
+            ? 'event'
+            : 'external_transaction'
+          : 'agent_task',
+      ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
+      ...(event.taskId === undefined ? {} : { taskId: event.taskId }),
+      ...(event.transactionId === undefined ? {} : { transactionId: event.transactionId }),
+      actor: command?.actor ?? current?.actor ?? event.actor,
+      category: command?.category ?? current?.category ?? event.category,
+      startedAt: events[0]!.occurredAt,
+      lastActivityAt: latest.occurredAt,
+      outcome,
+      risk: command?.risk ?? current?.risk ?? event.risk,
+      summary:
+        command?.commandPreview === undefined ? latest.summary : `命令：${command.commandPreview}`,
+      eventCount: events.length,
+      containsObservations: events.some((item) => item.category === 'observation'),
+    };
+    auditDetails = [
+      ...auditDetails.filter((detail) => detail.traceId !== traceId),
+      { ...trace, events },
+    ];
+    audit = [...audit.filter((item) => item.traceId !== traceId), trace];
+  };
   const outputListeners = new Set<(event: TerminalOutputEvent) => void>();
   const sessionChangedListeners = new Set<(event: SessionSummary) => void>();
   const timelineListeners = new Set<(event: AgentTimelineItem) => void>();
@@ -173,6 +357,7 @@ export function createMockDesktopApi(): DesktopApi {
       sessionId: string;
       conversationId: string;
       turnId: string;
+      taskId: string;
       command: string;
       risk: 'mutating' | 'destructive';
       reasons: string[];
@@ -181,7 +366,14 @@ export function createMockDesktopApi(): DesktopApi {
   >();
   const runningCommands = new Map<
     string,
-    { id: string; text: string; turnId: string; conversationId: string; toolCallId: string }
+    {
+      id: string;
+      text: string;
+      taskId: string;
+      turnId: string;
+      conversationId: string;
+      toolCallId: string;
+    }
   >();
   let historyCalls = 0;
   let sequence = 0;
@@ -494,6 +686,18 @@ export function createMockDesktopApi(): DesktopApi {
         for (const attachment of attachments) {
           attachmentTickets.delete(attachment.attachmentId);
         }
+        recordMockAuditEvent({
+          id: `audit-${taskId}-started`,
+          type: 'task.started',
+          sessionId,
+          taskId,
+          occurredAt: new Date().toISOString(),
+          actor: { kind: 'user' },
+          category: 'session',
+          outcome: 'in_progress',
+          risk: 'read_only',
+          summary: 'Agent 任务开始',
+        });
         emitTimeline({
           id: `timeline-${Date.now()}-user`,
           sessionId,
@@ -541,6 +745,19 @@ export function createMockDesktopApi(): DesktopApi {
             const activeTurn = history!.turns.find((turn) => turn.id === turnId);
             if (activeTurn !== undefined) activeTurn.status = 'failed';
             delete history!.activeTurnId;
+            recordMockAuditEvent({
+              id: `audit-${taskId}-failed`,
+              type: 'task.failed',
+              sessionId,
+              taskId,
+              occurredAt: new Date().toISOString(),
+              actor: { kind: 'system' },
+              category: 'session',
+              outcome: 'failure',
+              risk: 'read_only',
+              summary: `Agent 执行失败：provider_stream_error: 424 (${goal})`,
+              reason: 'provider_stream_error: 424',
+            });
             emitProgress('failed', 1, [
               { id: 'mock-plan', label: '分析任务目标', status: 'failed' },
             ]);
@@ -563,6 +780,7 @@ export function createMockDesktopApi(): DesktopApi {
             sessionId,
             conversationId: history.conversation.id,
             turnId,
+            taskId,
             command: '编辑本机文件 notes/runbook.md',
             risk: 'mutating' as const,
             reasons: ['local file write changes filesystem state'],
@@ -578,6 +796,20 @@ export function createMockDesktopApi(): DesktopApi {
           };
           pendingApprovals.set(approval.id, approval);
           globalThis.setTimeout(() => {
+            recordMockAuditEvent({
+              id: `audit-${approval.id}-requested`,
+              type: 'approval.requested',
+              sessionId,
+              taskId,
+              occurredAt: new Date().toISOString(),
+              actor: { kind: 'agent', taskId },
+              category: 'approval',
+              outcome: 'in_progress',
+              risk: approval.risk,
+              summary: `待审批：${approval.command}`,
+              commandPreview: approval.command,
+              reason: approval.reasons.join('；'),
+            });
             emitProgress('waiting_approval', 1, [
               { id: 'mock-plan', label: '等待命令审批', status: 'waiting_approval' },
             ]);
@@ -604,6 +836,7 @@ export function createMockDesktopApi(): DesktopApi {
             sessionId,
             conversationId: history.conversation.id,
             turnId,
+            taskId,
             command: destructive ? 'rm -rf /tmp/cache' : 'systemctl restart api',
             risk: destructive ? ('destructive' as const) : ('mutating' as const),
             reasons: destructive
@@ -612,6 +845,20 @@ export function createMockDesktopApi(): DesktopApi {
           };
           pendingApprovals.set(approval.id, approval);
           globalThis.setTimeout(() => {
+            recordMockAuditEvent({
+              id: `audit-${approval.id}-requested`,
+              type: 'approval.requested',
+              sessionId,
+              taskId,
+              occurredAt: new Date().toISOString(),
+              actor: { kind: 'agent', taskId },
+              category: 'approval',
+              outcome: 'in_progress',
+              risk: approval.risk,
+              summary: `待审批：${approval.command}`,
+              commandPreview: approval.command,
+              reason: approval.reasons.join('；'),
+            });
             emitProgress('waiting_approval', 1, [
               { id: 'mock-plan', label: '等待命令审批', status: 'waiting_approval' },
             ]);
@@ -646,9 +893,25 @@ export function createMockDesktopApi(): DesktopApi {
           runningCommands.set(sessionId, {
             id: commandId,
             text: commandText,
+            taskId,
             turnId,
             conversationId: history!.conversation.id,
             toolCallId,
+          });
+          recordMockAuditEvent({
+            id: `audit-${commandId}-running`,
+            type: 'command.running',
+            sessionId,
+            taskId,
+            occurredAt: new Date().toISOString(),
+            actor: { kind: 'agent', taskId },
+            category: 'command',
+            outcome: 'in_progress',
+            risk: 'read_only',
+            summary: commandText,
+            commandPreview: commandText,
+            commandHash: 'sha256:mock-command',
+            details: [{ label: '执行状态', value: 'running' }],
           });
           history!.items.push({
             id: `item-${crypto.randomUUID()}`,
@@ -688,6 +951,25 @@ export function createMockDesktopApi(): DesktopApi {
           if (history!.activeTurnId !== turnId) return;
           if (runningCommands.get(sessionId)?.id !== commandId) return;
           runningCommands.delete(sessionId);
+          recordMockAuditEvent({
+            id: `audit-${commandId}-completed`,
+            type: 'command.completed',
+            sessionId,
+            taskId,
+            occurredAt: new Date().toISOString(),
+            actor: { kind: 'agent', taskId },
+            category: 'command',
+            outcome: 'success',
+            risk: 'read_only',
+            summary: commandText,
+            commandPreview: commandText,
+            commandHash: 'sha256:mock-command',
+            exitCode: 0,
+            details: [
+              { label: '执行状态', value: 'completed' },
+              { label: '执行方言', value: 'posix' },
+            ],
+          });
           emitProgress('verifying', 2, [
             { id: 'mock-plan', label: '复核检查结果', status: 'running' },
           ]);
@@ -747,6 +1029,18 @@ export function createMockDesktopApi(): DesktopApi {
           });
           history!.turns.find((turn) => turn.id === turnId)!.status = 'completed';
           delete history!.activeTurnId;
+          recordMockAuditEvent({
+            id: `audit-${taskId}-completed`,
+            type: 'task.completed',
+            sessionId,
+            taskId,
+            occurredAt: new Date().toISOString(),
+            actor: { kind: 'system' },
+            category: 'session',
+            outcome: 'success',
+            risk: 'read_only',
+            summary: 'Agent 任务完成',
+          });
           emitProgress('completed', 3, [
             { id: 'mock-plan', label: '复核检查结果', status: 'completed' },
           ]);
@@ -774,6 +1068,17 @@ export function createMockDesktopApi(): DesktopApi {
           const activeTurnId = history.activeTurnId;
           if (active !== undefined) active.status = 'cancelled';
           delete history.activeTurnId;
+          recordMockAuditEvent({
+            id: `audit-${activeTurnId}-cancelled`,
+            type: 'task.cancelled',
+            sessionId,
+            occurredAt: new Date().toISOString(),
+            actor: { kind: 'user' },
+            category: 'session',
+            outcome: 'interrupted',
+            risk: 'read_only',
+            summary: 'Agent 任务已取消',
+          });
           emitTimeline({
             id: `mock-progress-${activeTurnId}`,
             sessionId,
@@ -878,6 +1183,25 @@ export function createMockDesktopApi(): DesktopApi {
         }
         if (running !== undefined) {
           runningCommands.delete(sessionId);
+          const taskIdForAudit = running.taskId;
+          recordMockAuditEvent({
+            id: `audit-${running.id}-interrupted`,
+            type: 'command.interrupted',
+            sessionId,
+            ...(taskIdForAudit === undefined ? {} : { taskId: taskIdForAudit }),
+            occurredAt: new Date().toISOString(),
+            actor:
+              taskIdForAudit === undefined
+                ? { kind: 'system' }
+                : { kind: 'agent', taskId: taskIdForAudit },
+            category: 'command',
+            outcome: 'interrupted',
+            risk: 'read_only',
+            summary: running.text,
+            commandPreview: running.text,
+            commandHash: 'sha256:mock-command',
+            reason: 'user requested interrupt',
+          });
           emitTimeline({
             id: running.id,
             sessionId,
@@ -920,6 +1244,20 @@ export function createMockDesktopApi(): DesktopApi {
           throw new Error('模拟审批失败');
         }
         pendingApprovals.delete(approvalId);
+        recordMockAuditEvent({
+          id: `audit-${approvalId}-granted`,
+          type: 'approval.granted',
+          sessionId,
+          taskId: pending.taskId,
+          occurredAt: new Date().toISOString(),
+          actor: { kind: 'user' },
+          category: 'approval',
+          outcome: 'success',
+          risk: pending.risk,
+          summary: `已批准：${pending.command}`,
+          commandPreview: pending.command,
+          details: [{ label: '确认破坏性操作', value: String(confirmedDestructive) }],
+        });
         emitTimeline({
           id: approvalId,
           sessionId,
@@ -952,6 +1290,34 @@ export function createMockDesktopApi(): DesktopApi {
         const activeTurn = history?.turns.find((turn) => turn.id === history.activeTurnId);
         if (activeTurn !== undefined) activeTurn.status = 'completed';
         if (history !== undefined) delete history.activeTurnId;
+        recordMockAuditEvent({
+          id: `audit-${approvalId}-completed`,
+          type: 'command.completed',
+          sessionId,
+          taskId: pending.taskId,
+          occurredAt: new Date().toISOString(),
+          actor: { kind: 'agent', taskId: pending.taskId },
+          category: 'command',
+          outcome: 'success',
+          risk: pending.risk,
+          summary: pending.command,
+          commandPreview: pending.command,
+          commandHash: 'sha256:mock-approved-command',
+          exitCode: 0,
+          details: [{ label: '执行状态', value: 'completed' }],
+        });
+        recordMockAuditEvent({
+          id: `audit-${pending.turnId}-completed`,
+          type: 'task.completed',
+          sessionId,
+          taskId: pending.taskId,
+          occurredAt: new Date().toISOString(),
+          actor: { kind: 'system' },
+          category: 'session',
+          outcome: 'success',
+          risk: pending.risk,
+          summary: 'Agent 任务完成',
+        });
         emitTimeline({
           id: `command-${Date.now()}`,
           sessionId,
@@ -982,6 +1348,20 @@ export function createMockDesktopApi(): DesktopApi {
         for (const approval of [...pendingApprovals.values()]) {
           if (approval.sessionId !== sessionId) continue;
           pendingApprovals.delete(approval.id);
+          recordMockAuditEvent({
+            id: `audit-${approval.id}-rejected`,
+            type: 'approval.rejected',
+            sessionId,
+            taskId: approval.taskId,
+            occurredAt: new Date().toISOString(),
+            actor: { kind: 'user' },
+            category: 'approval',
+            outcome: 'rejected',
+            risk: approval.risk,
+            summary: `已拒绝：${approval.command}`,
+            commandPreview: approval.command,
+            reason: '用户接管并拒绝待审批操作',
+          });
           emitTimeline({
             id: approval.id,
             sessionId,
@@ -1222,7 +1602,10 @@ export function createMockDesktopApi(): DesktopApi {
       },
     },
     audit: {
-      list: async (filter) => {
+      list: async (filter: AuditListRequest = {}): Promise<AuditListResponse> => {
+        if (searchParam('auditTraceCalls') === '1' && typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('mock-audit-list-call'));
+        }
         const configuredDelayMs = Number(searchParam('auditDelayMs') ?? '0');
         const delayedSessionId = searchParam('auditDelaySessionId');
         const delayMs =
@@ -1233,14 +1616,72 @@ export function createMockDesktopApi(): DesktopApi {
           await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(delayMs, 2_000)));
         }
         if (searchParam('auditError') === '1') throw new Error('审计事件暂时不可用');
-        return structuredClone(
-          audit.filter(
-            (event) =>
-              (filter?.sessionId === undefined || event.sessionId === filter.sessionId) &&
-              (filter?.taskId === undefined || event.taskId === filter.taskId),
-          ),
-        );
+        const search = filter.search?.trim().toLocaleLowerCase();
+        const actorFilter = filter.actor?.trim().toLocaleLowerCase();
+        const items = audit
+          .filter((trace) => {
+            if (filter.from !== undefined && trace.lastActivityAt < filter.from) return false;
+            if (filter.to !== undefined && trace.startedAt > filter.to) return false;
+            if (filter.sessionId !== undefined && trace.sessionId !== filter.sessionId)
+              return false;
+            if (filter.taskId !== undefined && trace.taskId !== filter.taskId) return false;
+            if (filter.category !== undefined && trace.category !== filter.category) return false;
+            if (filter.outcome !== undefined && trace.outcome !== filter.outcome) return false;
+            if (filter.risk !== undefined && trace.risk !== filter.risk) return false;
+            if (
+              !filter.includeObservations &&
+              trace.containsObservations &&
+              trace.outcome === 'information'
+            )
+              return false;
+            if (actorFilter !== undefined && actorFilter.length > 0) {
+              const actorText = [
+                trace.actor.kind,
+                ...(trace.actor.kind === 'agent' ? [trace.actor.taskId] : []),
+                ...(trace.actor.kind === 'external'
+                  ? [trace.actor.callerKind, trace.actor.callerId]
+                  : []),
+              ]
+                .filter((value): value is string => value !== undefined)
+                .join(' ')
+                .toLocaleLowerCase();
+              if (!actorText.includes(actorFilter)) return false;
+            }
+            if (search !== undefined && search.length > 0) {
+              const searchable = [
+                trace.traceId,
+                trace.sessionId,
+                trace.taskId,
+                trace.transactionId,
+                trace.summary,
+              ]
+                .filter((value): value is string => value !== undefined)
+                .join(' ')
+                .toLocaleLowerCase();
+              if (!searchable.includes(search)) return false;
+            }
+            return true;
+          })
+          .sort(
+            (left, right) =>
+              right.lastActivityAt.localeCompare(left.lastActivityAt) ||
+              right.traceId.localeCompare(left.traceId),
+          );
+        const offset = parseMockAuditCursor(filter.cursor);
+        const limit = filter.limit ?? 50;
+        const page = items.slice(offset, offset + limit);
+        return structuredClone({
+          items: page,
+          ...(offset + page.length < items.length
+            ? { nextCursor: String(offset + page.length) }
+            : {}),
+        });
       },
+      detail: async (traceId): Promise<AuditTraceDetailView | undefined> => {
+        if (searchParam('auditError') === '1') throw new Error('审计事件暂时不可用');
+        return structuredClone(auditDetails.find((detail) => detail.traceId === traceId));
+      },
+      retention: async () => ({ auditRetentionDays: 30, rawLogRetentionHours: 24 }),
       cleanup: async () => ({ rawLogs: 0, auditEvents: 0 }),
     },
     mcp: (() => {
@@ -1428,6 +1869,12 @@ export function createMockDesktopApi(): DesktopApi {
       },
     },
   };
+}
+
+function parseMockAuditCursor(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  const offset = Number(cursor);
+  return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
 }
 
 function isEligibleModel(model: ModelConfigurationView): boolean {

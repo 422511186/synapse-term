@@ -82,7 +82,22 @@ describe('CoreRequestRouter agent and governance methods', () => {
               calls.push('takeover');
             },
           },
-          audit: { query: () => [] },
+          audit: {
+            query: () => [],
+            listEvents: () => ({
+              items: [
+                {
+                  id: 'audit-router',
+                  actor: { kind: 'agent', taskId: 'task-router' },
+                  sessionId: 'session-router',
+                  taskId: 'task-router',
+                  type: 'task.completed',
+                  occurredAt: '2026-08-04T00:00:00.000Z',
+                  payload: { status: 'completed' },
+                },
+              ],
+            }),
+          },
           resources: {
             get: () => undefined,
             refresh: async () => ({ ok: true, snapshot }),
@@ -130,7 +145,21 @@ describe('CoreRequestRouter agent and governance methods', () => {
           'approve',
           'takeover',
         ]);
-        await expect(router.handle('audit.list', {}, 'connection-1')).resolves.toEqual([]);
+        await expect(
+          router.handle('audit.list', { limit: 10 }, 'connection-1'),
+        ).resolves.toMatchObject({
+          items: [expect.objectContaining({ traceId: 'task:task-router', outcome: 'success' })],
+        });
+        await expect(
+          router.handle('audit.detail', { traceId: 'task:task-router' }, 'connection-1'),
+        ).resolves.toMatchObject({
+          traceId: 'task:task-router',
+          events: [expect.objectContaining({ id: 'audit-router' })],
+        });
+        await expect(router.handle('audit.retention', {}, 'connection-1')).resolves.toEqual({
+          auditRetentionDays: 30,
+          rawLogRetentionHours: 24,
+        });
         await expect(
           router.handle('resources.get', { sessionId: 'session-1' }, 'connection-1'),
         ).resolves.toBeUndefined();

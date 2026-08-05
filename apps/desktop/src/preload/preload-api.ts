@@ -1,4 +1,18 @@
 import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
+import {
+  auditCleanupResponseSchema,
+  auditDetailResponseSchema,
+  auditListResponseSchema,
+  auditRetentionResponseSchema,
+} from '@synapse-term/protocol';
+import type {
+  AuditCleanupResponse,
+  AuditListRequest,
+  AuditListResponse,
+  AuditRetentionResponse,
+  AuditTraceDetailView,
+  AuditTraceEventView,
+} from '@synapse-term/protocol';
 
 import type { DesktopAttachmentKind, PickedAgentAttachment } from '../shared/desktop-attachment.js';
 
@@ -36,6 +50,19 @@ export type {
   TerminalOutputEvent,
   TerminalReplay,
 } from '@synapse-term/ui-platform';
+
+export type {
+  AuditCategory,
+  AuditCleanupResponse,
+  AuditListRequest,
+  AuditListResponse,
+  AuditOutcome,
+  AuditRetentionResponse,
+  AuditRisk,
+  AuditTraceDetailView,
+  AuditTraceEventView,
+  AuditTraceView,
+} from '@synapse-term/protocol';
 
 export type { DesktopAttachmentKind, PickedAgentAttachment } from '../shared/desktop-attachment.js';
 
@@ -117,14 +144,8 @@ export interface SessionResourceEvent {
   snapshot: SessionResourceSnapshot;
 }
 
-export interface AuditEventView {
-  id: string;
-  type: string;
-  sessionId?: string;
-  taskId?: string;
-  occurredAt: string;
-  summary: string;
-}
+/** 兼容旧 RuntimeAudit 的单事件投影；新的审计查询返回 AuditListResponse。 */
+export type AuditEventView = AuditTraceEventView;
 
 export type McpApprovalMode = 'read_only' | 'managed' | 'full';
 
@@ -257,8 +278,10 @@ export interface DesktopApi {
     ): Promise<{ created: string[]; skipped: string[] }>;
   };
   audit: {
-    list(filter?: { sessionId?: string; taskId?: string }): Promise<AuditEventView[]>;
-    cleanup(): Promise<{ rawLogs: number; auditEvents: number }>;
+    list(filter?: AuditListRequest): Promise<AuditListResponse>;
+    detail(traceId: string): Promise<AuditTraceDetailView | undefined>;
+    retention(): Promise<AuditRetentionResponse>;
+    cleanup(): Promise<AuditCleanupResponse>;
   };
   mcp: {
     status(): Promise<McpStatus>;
@@ -297,6 +320,11 @@ export interface DesktopApi {
 export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopApi {
   const invoke = async <T>(channel: string, ...argumentsValue: unknown[]): Promise<T> =>
     (await ipc.invoke(channel, ...argumentsValue)) as T;
+  const invokeParsed = async <T>(
+    channel: string,
+    schema: { parse(value: unknown): T },
+    ...argumentsValue: unknown[]
+  ): Promise<T> => schema.parse(await ipc.invoke(channel, ...argumentsValue));
   return {
     ...(platform === undefined ? {} : { platform }),
     sessions: {
@@ -363,8 +391,17 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
         invoke('models:import-discovered', providerProfileId, modelIds),
     },
     audit: {
-      list: (filter) => invoke('audit:list', filter),
-      cleanup: () => invoke('audit:cleanup'),
+      list: (filter) => invokeParsed('audit:list', auditListResponseSchema, filter),
+      detail: async (traceId) => {
+        const detail = await invokeParsed(
+          'audit:detail',
+          auditDetailResponseSchema.nullable(),
+          traceId,
+        );
+        return detail ?? undefined;
+      },
+      retention: () => invokeParsed('audit:retention', auditRetentionResponseSchema),
+      cleanup: () => invokeParsed('audit:cleanup', auditCleanupResponseSchema),
     },
     mcp: {
       status: () => invoke('mcp:get-status'),

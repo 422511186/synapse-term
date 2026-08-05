@@ -130,9 +130,15 @@ test.describe('真实模型与 SSH 只读环境', () => {
       }
 
       const audit = await page.evaluate(async (currentSessionId) => {
-        return window.terminalAgent.audit.list({ sessionId: currentSessionId });
+        const page = await window.terminalAgent.audit.list({ sessionId: currentSessionId });
+        const details = await Promise.all(
+          page.items.map((trace) => window.terminalAgent.audit.detail(trace.traceId)),
+        );
+        return { page, details };
       }, sessionId);
-      const approvalRequests = audit.filter((event) => event.type === 'approval.requested');
+      const approvalRequests = audit.details
+        .flatMap((detail) => detail?.events ?? [])
+        .filter((event) => event.type === 'approval.requested');
       expect(approvalRequests).toHaveLength(terminalExecuteCalls.length);
       const authorizations = readAuthorizationAudit(
         join(userDataDirectory, 'core', 'core.sqlite'),

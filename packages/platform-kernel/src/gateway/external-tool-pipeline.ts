@@ -207,7 +207,13 @@ export class ExternalToolPipeline {
       'mutate',
     );
     if (authorization === 'denied') {
-      this.#recordDenied('external.command', decision, context, 'approval_mode_denied');
+      this.#recordDenied(
+        'external.command',
+        decision,
+        context,
+        'approval_mode_denied',
+        input.command,
+      );
       return {
         ok: false,
         error: 'policy_denied',
@@ -290,6 +296,7 @@ export class ExternalToolPipeline {
       sessionId: this.#actor.snapshot.id,
       type: 'external.command',
       payload: {
+        commandPreview: this.#redactor.redact(input.command).text,
         source: context.caller.kind,
         callerId: context.caller.id,
         ...(context.caller.displayName === undefined
@@ -335,7 +342,14 @@ export class ExternalToolPipeline {
           ? {}
           : { displayName: context.caller.displayName }),
         transactionId: input.transactionId,
+        commandPreview: this.#redactor.redact(result.transaction.command).text,
+        ...(result.commandHash === undefined ? {} : { commandHash: result.commandHash }),
+        ...(result.transaction.risk === undefined ? {} : { risk: result.transaction.risk }),
         status: result.status,
+        ...(result.transaction.exitCode === undefined
+          ? {}
+          : { exitCode: result.transaction.exitCode }),
+        ...(result.transaction.reason === undefined ? {} : { reason: result.transaction.reason }),
       },
     });
     if (TERMINAL_LEGACY_STATUSES.has(result.status)) {
@@ -465,6 +479,7 @@ export class ExternalToolPipeline {
     decision: { level: CommandRisk; reasons: readonly string[]; commandHash?: string },
     context: ExternalToolContext,
     reason: string,
+    command?: string,
   ): void {
     this.#audit?.record({
       actor: this.#externalActor(context.caller),
@@ -474,6 +489,7 @@ export class ExternalToolPipeline {
         tool,
         source: context.caller.kind,
         callerId: context.caller.id,
+        ...(command === undefined ? {} : { commandPreview: this.#redactor.redact(command).text }),
         ...(decision.commandHash === undefined ? {} : { commandHash: decision.commandHash }),
         risk: decision.level,
         reasons: decision.reasons,

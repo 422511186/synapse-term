@@ -10,18 +10,16 @@ import {
   Image as ImageIcon,
   Paperclip,
   ChevronDown,
-  Key,
   X,
-  Network,
-  RefreshCw,
   Box,
   List,
   Clock,
-  Power,
   GripVertical,
   Link2,
   Loader2,
   Pencil,
+  PanelRightClose,
+  PanelRightOpen,
   Send,
   Square,
 } from 'lucide-react';
@@ -53,6 +51,9 @@ import {
   ModelSettings,
   ProviderEditModal,
   ProviderSettings,
+  SettingsWorkspace,
+  type SettingsTopic,
+  type SettingsTopicContent,
 } from './settings/index.js';
 import { ResourceMonitorPanel, type ResourceViewState } from './resource/index.js';
 import {
@@ -119,8 +120,7 @@ type PendingConfirm =
   | { kind: 'approve'; item: AgentTimelineItem }
   | { kind: 'closeSession'; sessionId: string; keepAllSessionsOpen?: boolean }
   | { kind: 'resetAcp' }
-  | { kind: 'resetBuiltin' }
-  | { kind: 'exitCore' };
+  | { kind: 'resetBuiltin' };
 
 const permissionLabels: Record<PermissionMode, string> = {
   manual: '人工审批',
@@ -157,7 +157,6 @@ export function App() {
   const [isResourceMonitorOpen, setIsResourceMonitorOpen] = useState(false);
 
   // Dropdown states
-  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isAllSessionsOpen, setIsAllSessionsOpen] = useState(false);
   const [sessionContextMenu, setSessionContextMenu] = useState<
     { sessionId: string; x: number; y: number } | undefined
@@ -181,9 +180,8 @@ export function App() {
   >();
 
   // App contextual states
-  const [currentView, setCurrentView] = useState<
-    'workspace' | 'models' | 'providers' | 'mcp' | 'acp' | 'audit'
-  >('workspace');
+  const [currentView, setCurrentView] = useState<'workspace' | 'settings'>('workspace');
+  const [settingsTopic, setSettingsTopic] = useState<SettingsTopic>('provider');
   const [chatInput, setChatInput] = useState('');
   const [chatHistoryIndex, setChatHistoryIndex] = useState<number | undefined>();
   const [chatHistoryDraft, setChatHistoryDraft] = useState<string | undefined>();
@@ -213,11 +211,12 @@ export function App() {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>();
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string>();
-  const [coreClosed, setCoreClosed] = useState(false);
+  const [coreClosed] = useState(false);
   const [sessionSearch, setSessionSearch] = useState('');
   const [agentPanelWidth, setAgentPanelWidth] = useState(getDefaultAgentPanelWidth);
+  const [isAgentPanelVisible, setIsAgentPanelVisible] = useState(true);
   const [isAgentPanelResizing, setIsAgentPanelResizing] = useState(false);
-  const [driver, setDriver] = useState<'builtin' | 'acp'>('builtin');
+  const [driver] = useState<'builtin' | 'acp'>('builtin');
   const sessionTabRefs = useRef(new Map<string, HTMLButtonElement>());
   const agentTimelineRef = useRef<HTMLDivElement>(null);
   const terminalSearchInputRef = useRef<HTMLInputElement>(null);
@@ -244,13 +243,18 @@ export function App() {
   }, [sessionActionMessage]);
 
   const closeAllDropdowns = () => {
-    setIsSettingsMenuOpen(false);
     setIsAllSessionsOpen(false);
     setIsModelMenuOpen(false);
     setIsDialectMenuOpen(false);
     setIsPermissionMenuOpen(false);
     setSessionContextMenu(undefined);
     setSessionSearch('');
+  };
+
+  const openSettingsTopic = (topic: SettingsTopic): void => {
+    closeAllDropdowns();
+    setSettingsTopic(topic);
+    setCurrentView('settings');
   };
 
   const interactiveSessions = sessions.filter(isInteractiveSession);
@@ -1081,37 +1085,6 @@ export function App() {
     }
   };
 
-  const closeCore = async (): Promise<void> => {
-    if (coreClosed) return;
-    setPendingConfirm({ kind: 'exitCore' });
-  };
-
-  const performCloseCore = async (): Promise<void> => {
-    try {
-      await api.core.exit('terminate_sessions');
-      setCoreClosed(true);
-      setSessions([]);
-      setActiveSessionId('');
-      setHistories({});
-      setAcpHistories({});
-      setAcpActiveTurnIds({});
-      setDriver('builtin');
-      setTimeline([]);
-      setResources({});
-      setChatInput('');
-      setChatHistoryIndex(undefined);
-      setChatHistoryDraft(undefined);
-      setPendingAttachments([]);
-      setAttachmentError(undefined);
-      setComposerPanel(undefined);
-      setCurrentView('workspace');
-      closeAllDropdowns();
-      setRuntimeError('Core 已关闭，请重新启动应用以继续使用。');
-    } catch (caught) {
-      setRuntimeError(errorMessageZh(caught));
-    }
-  };
-
   const runPendingConfirm = async (): Promise<void> => {
     const pending = pendingConfirm;
     if (pending === undefined || confirmBusy) return;
@@ -1129,8 +1102,6 @@ export function App() {
         await performResetAcp();
       } else if (pending.kind === 'resetBuiltin') {
         await performResetBuiltin();
-      } else {
-        await performCloseCore();
       }
       setPendingConfirm(undefined);
     } finally {
@@ -1165,12 +1136,6 @@ export function App() {
           title: '清空当前 Agent 会话',
           description: '该操作会移除当前会话的历史消息。',
           confirmLabel: '清空会话',
-        };
-      case 'exitCore':
-        return {
-          title: '退出 Core',
-          description: '所有当前终端会话和 PTY 都会结束，但本地配置和审计数据会保留。',
-          confirmLabel: '退出 Core',
         };
       default:
         return undefined;
@@ -1216,6 +1181,31 @@ export function App() {
       event.preventDefault();
       setAgentPanelWidth(maxWidth);
     }
+  };
+
+  const settingsTopicContent: SettingsTopicContent = {
+    provider: (
+      <ProviderSettings
+        api={api}
+        onEdit={(provider) => setProviderEditor({ mode: 'edit', providerId: provider.id })}
+        onNew={() => setProviderEditor({ mode: 'new' })}
+        onRefresh={refreshConfigurations}
+        providers={providers}
+      />
+    ),
+    model: (
+      <ModelSettings
+        api={api}
+        models={models}
+        onEdit={(model) => setModelEditor({ mode: 'edit', modelId: model.id })}
+        onNew={() => setModelEditor({ mode: 'new' })}
+        onModelsChange={setModels}
+        onRefresh={refreshConfigurations}
+      />
+    ),
+    mcp: <McpSettingsView api={api} />,
+    acp: <AcpSettingsView api={api} />,
+    audit: <AuditSettings api={api} sessions={interactiveSessions} />,
   };
 
   return (
@@ -1422,6 +1412,22 @@ export function App() {
 
           {/* Global Actions */}
           <div className="prototype-global-actions flex items-center gap-3 shrink-0">
+            {currentView === 'workspace' && (
+              <button
+                aria-label={isAgentPanelVisible ? '隐藏 Agent 面板' : '显示 Agent 面板'}
+                className="w-8 h-8 flex items-center justify-center border border-border rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                onClick={() => setIsAgentPanelVisible((visible) => !visible)}
+                title={isAgentPanelVisible ? '隐藏 Agent 面板' : '显示 Agent 面板'}
+                type="button"
+              >
+                {isAgentPanelVisible ? (
+                  <PanelRightClose aria-hidden="true" size={16} />
+                ) : (
+                  <PanelRightOpen aria-hidden="true" size={16} />
+                )}
+              </button>
+            )}
+
             <button
               aria-label="资源监控"
               disabled={coreClosed}
@@ -1484,8 +1490,7 @@ export function App() {
                   <div className="border-t border-border/50 bg-[#09090b]">
                     <button
                       onClick={() => {
-                        setCurrentView('models');
-                        closeAllDropdowns();
+                        openSettingsTopic('model');
                       }}
                       className="w-full px-3 py-2.5 text-xs text-primary hover:bg-secondary/50 text-left transition-colors font-medium flex items-center gap-1.5"
                       role="menuitem"
@@ -1565,119 +1570,16 @@ export function App() {
 
             <div className="h-4 w-[1px] bg-border mx-1"></div>
 
-            {/* Global Settings Dropdown */}
+            {/* Settings Workspace */}
             <div className="relative z-50">
               <button
-                onClick={() => {
-                  const wasOpen = isSettingsMenuOpen;
-                  closeAllDropdowns();
-                  setIsSettingsMenuOpen(!wasOpen);
-                }}
+                onClick={() => openSettingsTopic('provider')}
                 aria-label="设置"
                 className="w-8 h-8 flex items-center justify-center border border-border rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
                 type="button"
               >
                 <Settings size={16} />
               </button>
-
-              {isSettingsMenuOpen && (
-                <div
-                  aria-label="设置菜单"
-                  className="absolute top-10 right-0 w-64 bg-[#18181b] border border-border rounded-lg shadow-2xl overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-200"
-                  role="menu"
-                >
-                  <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border/50 mb-1">
-                    全局配置
-                  </div>
-                  <button
-                    disabled={coreClosed}
-                    onClick={() => {
-                      setCurrentView('providers');
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Key size={14} /> 服务商配置
-                  </button>
-                  <button
-                    disabled={coreClosed}
-                    onClick={() => {
-                      setCurrentView('models');
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Box size={14} /> 模型配置
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCurrentView('mcp');
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Network size={14} /> MCP 服务
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCurrentView('acp');
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Sparkles size={14} /> ACP 集成
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCurrentView('audit');
-                      closeAllDropdowns();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors"
-                    role="menuitem"
-                    type="button"
-                  >
-                    <FileText size={14} /> 审计日志
-                  </button>
-                  <button
-                    aria-label="清空当前 Agent 会话"
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-secondary text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={
-                      activeTurn ||
-                      (driver === 'acp'
-                        ? activeAcpHistory?.conversation === undefined
-                        : activeHistory?.conversation === undefined)
-                    }
-                    onClick={() => {
-                      closeAllDropdowns();
-                      void resetConversation();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <RefreshCw size={14} /> 清空当前 Agent 会话
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2 whitespace-nowrap px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={coreClosed}
-                    onClick={() => {
-                      closeAllDropdowns();
-                      void closeCore();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Power size={14} /> 退出 Core
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </header>
@@ -1698,7 +1600,7 @@ export function App() {
               >
                 {/* Terminal Search Bar (Floating) */}
                 <div className="absolute top-4 right-4 z-20 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
-                  <div className="flex items-center bg-[#18181b]/90 backdrop-blur-md border border-border/80 rounded-lg text-muted-foreground overflow-hidden shadow-2xl focus-within:border-primary/50 transition-colors px-2.5 py-1.5">
+                  <div className="flex items-center bg-[#18181b] backdrop-blur-md border border-border/80 rounded-lg text-muted-foreground overflow-hidden shadow-2xl focus-within:border-primary/50 transition-colors px-2.5 py-1.5">
                     <Search size={14} className="mr-2 text-muted-foreground/70" />
                     <input
                       aria-label="搜索终端输出"
@@ -1727,94 +1629,142 @@ export function App() {
               </div>
 
               {/* Agent Pane (Right) */}
-              <div
-                className={`prototype-agent min-w-0 flex flex-col bg-[#09090b] shrink-0 z-10 ${isAgentPanelResizing ? 'is-resizing' : ''}`}
-                style={{ width: `${agentPanelWidth}px` }}
-              >
+              {isAgentPanelVisible && (
                 <div
-                  aria-label="调整 Agent 面板宽度"
-                  aria-orientation="vertical"
-                  aria-valuemax={agentPanelMaxWidth}
-                  aria-valuemin={AGENT_PANEL_MIN_WIDTH}
-                  aria-valuenow={agentPanelWidth}
-                  className={`agent-panel-resize-handle ${isAgentPanelResizing ? 'is-resizing' : ''}`}
-                  onKeyDown={handleAgentPanelResizeKeyDown}
-                  onPointerCancel={finishAgentPanelResize}
-                  onPointerDown={startAgentPanelResize}
-                  onPointerMove={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      updateAgentPanelWidth(event.clientX);
-                    }
-                  }}
-                  onPointerUp={finishAgentPanelResize}
-                  role="separator"
-                  tabIndex={0}
-                  title="拖动调整 Agent 面板宽度"
+                  className={`prototype-agent min-w-0 flex flex-col bg-[#09090b] shrink-0 z-10 ${isAgentPanelResizing ? 'is-resizing' : ''}`}
+                  style={{ width: `${agentPanelWidth}px` }}
                 >
-                  <GripVertical aria-hidden="true" size={14} />
-                </div>
-
-                <div className="flex min-h-0 flex-1 flex-col">
                   <div
-                    aria-label="Agent 时间线"
-                    className="flex-1 overflow-y-auto p-5 space-y-7"
-                    onScroll={(event) => {
-                      const element = event.currentTarget;
-                      shouldStickTimelineToBottom.current =
-                        element.scrollHeight - element.scrollTop - element.clientHeight <= 64;
+                    aria-label="调整 Agent 面板宽度"
+                    aria-orientation="vertical"
+                    aria-valuemax={agentPanelMaxWidth}
+                    aria-valuemin={AGENT_PANEL_MIN_WIDTH}
+                    aria-valuenow={agentPanelWidth}
+                    className={`agent-panel-resize-handle ${isAgentPanelResizing ? 'is-resizing' : ''}`}
+                    onKeyDown={handleAgentPanelResizeKeyDown}
+                    onPointerCancel={finishAgentPanelResize}
+                    onPointerDown={startAgentPanelResize}
+                    onPointerMove={(event) => {
+                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                        updateAgentPanelWidth(event.clientX);
+                      }
                     }}
-                    ref={agentTimelineRef}
-                    role="tabpanel"
+                    onPointerUp={finishAgentPanelResize}
+                    role="separator"
+                    tabIndex={0}
+                    title="拖动调整 Agent 面板宽度"
                   >
-                    <RuntimeTimeline
-                      events={activeTimeline}
-                      onApprove={approve}
-                      onInterrupt={interruptCommand}
-                      onTakeOver={takeOver}
-                      thinking={shouldShowThinkingPlaceholder(activeTurn, hasTurnActivity)}
-                    />
+                    <GripVertical aria-hidden="true" size={14} />
                   </div>
 
-                  <RunningStatusBar
-                    modelName={activeModel?.name}
-                    running={activeTurn}
-                    startedAt={turnStartedAt}
-                  />
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div
+                      aria-label="Agent 时间线"
+                      className="flex-1 overflow-y-auto p-5 space-y-7"
+                      onScroll={(event) => {
+                        const element = event.currentTarget;
+                        shouldStickTimelineToBottom.current =
+                          element.scrollHeight - element.scrollTop - element.clientHeight <= 64;
+                      }}
+                      ref={agentTimelineRef}
+                      role="tabpanel"
+                    >
+                      <RuntimeTimeline
+                        events={activeTimeline}
+                        onApprove={approve}
+                        onInterrupt={interruptCommand}
+                        onTakeOver={takeOver}
+                        thinking={shouldShowThinkingPlaceholder(activeTurn, hasTurnActivity)}
+                      />
+                    </div>
 
-                  {/* Input Box */}
-                  <div className="p-4 border-t border-border bg-[#09090b]">
-                    <div className="relative border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
-                      {slashPopoverOpen && (
-                        <SlashCommandPopover
-                          commands={slashCommands}
-                          onSelect={executeSlashCommand}
-                          selectedIndex={slashSelectedIndex}
-                        />
-                      )}
-                      {composerPanel !== undefined && (
-                        <div className="absolute bottom-full left-0 right-0 mb-2 z-30 max-h-64 overflow-y-auto rounded-lg border border-border bg-[#0e0e10] shadow-2xl">
-                          {composerPanel.kind === 'model' && (
-                            <div aria-label="Composer 模型选择" className="p-2" role="group">
-                              <div className="flex items-center justify-between px-1 py-1">
-                                <span className="text-[11px] font-medium text-muted-foreground">
-                                  选择当前模型
-                                </span>
-                                <button
-                                  aria-label="关闭模型选择"
-                                  className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-secondary"
-                                  onClick={() => setComposerPanel(undefined)}
-                                  type="button"
-                                >
-                                  <X size={13} />
-                                </button>
-                              </div>
-                              {eligibleModels.length === 0 ? (
-                                <div className="px-3 py-2 text-xs text-muted-foreground">
-                                  没有已启用的模型，请先到模型配置中启用。
+                    <RunningStatusBar
+                      modelName={activeModel?.name}
+                      running={activeTurn}
+                      startedAt={turnStartedAt}
+                    />
+
+                    {/* Input Box */}
+                    <div className="p-4 border-t border-border bg-[#09090b]">
+                      <div className="relative border border-border focus-within:border-primary/50 focus-within:bg-secondary/10 transition-colors rounded-xl bg-[#121214] flex flex-col shadow-sm">
+                        {slashPopoverOpen && (
+                          <SlashCommandPopover
+                            commands={slashCommands}
+                            onSelect={executeSlashCommand}
+                            selectedIndex={slashSelectedIndex}
+                          />
+                        )}
+                        {composerPanel !== undefined && (
+                          <div className="absolute bottom-full left-0 right-0 mb-2 z-30 max-h-64 overflow-y-auto rounded-lg border border-border bg-[#0e0e10] shadow-2xl">
+                            {composerPanel.kind === 'model' && (
+                              <div aria-label="Composer 模型选择" className="p-2" role="group">
+                                <div className="flex items-center justify-between px-1 py-1">
+                                  <span className="text-[11px] font-medium text-muted-foreground">
+                                    选择当前模型
+                                  </span>
+                                  <button
+                                    aria-label="关闭模型选择"
+                                    className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-secondary"
+                                    onClick={() => setComposerPanel(undefined)}
+                                    type="button"
+                                  >
+                                    <X size={13} />
+                                  </button>
                                 </div>
-                              ) : (
+                                {eligibleModels.length === 0 ? (
+                                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                                    没有已启用的模型，请先到模型配置中启用。
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1 px-1 pb-1" role="listbox">
+                                    {eligibleModels.map((model, index) => {
+                                      const selected = composerSelectedIndex === index;
+                                      return (
+                                        <button
+                                          aria-selected={selected}
+                                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-left text-[12px] transition-colors border ${
+                                            selected
+                                              ? 'bg-primary/10 border-primary/30 text-foreground'
+                                              : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+                                          } ${activeTurn ? 'opacity-40' : ''}`}
+                                          disabled={activeTurn}
+                                          key={model.id}
+                                          onClick={() => {
+                                            setActiveModelId(model.id);
+                                            setComposerPanel(undefined);
+                                          }}
+                                          role="option"
+                                          type="button"
+                                        >
+                                          <Box size={13} className="shrink-0 text-primary" />
+                                          <span className="truncate">{model.name}</span>
+                                          {activeModel?.id === model.id && (
+                                            <Check size={12} className="shrink-0 text-primary" />
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {composerPanel.kind === 'permission' && (
+                              <div aria-label="Composer 权限选择" className="p-2" role="group">
+                                <div className="flex items-center justify-between px-1 py-1">
+                                  <span className="text-[11px] font-medium text-muted-foreground">
+                                    切换权限模式
+                                  </span>
+                                  <button
+                                    aria-label="关闭权限选择"
+                                    className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-secondary rounded"
+                                    onClick={() => setComposerPanel(undefined)}
+                                    type="button"
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                </div>
                                 <div className="space-y-1 px-1 pb-1" role="listbox">
-                                  {eligibleModels.map((model, index) => {
+                                  {PERMISSION_MODES.map((mode, index) => {
                                     const selected = composerSelectedIndex === index;
                                     return (
                                       <button
@@ -1825,330 +1775,260 @@ export function App() {
                                             : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                                         } ${activeTurn ? 'opacity-40' : ''}`}
                                         disabled={activeTurn}
-                                        key={model.id}
+                                        key={mode}
                                         onClick={() => {
-                                          setActiveModelId(model.id);
+                                          setPermissionMode(mode);
                                           setComposerPanel(undefined);
                                         }}
                                         role="option"
                                         type="button"
                                       >
-                                        <Box size={13} className="shrink-0 text-primary" />
-                                        <span className="truncate">{model.name}</span>
-                                        {activeModel?.id === model.id && (
+                                        <ShieldAlert size={13} className="shrink-0 text-primary" />
+                                        <span>{permissionLabels[mode]}</span>
+                                        {permissionMode === mode && (
                                           <Check size={12} className="shrink-0 text-primary" />
                                         )}
                                       </button>
                                     );
                                   })}
                                 </div>
-                              )}
-                            </div>
-                          )}
-                          {composerPanel.kind === 'permission' && (
-                            <div aria-label="Composer 权限选择" className="p-2" role="group">
-                              <div className="flex items-center justify-between px-1 py-1">
-                                <span className="text-[11px] font-medium text-muted-foreground">
-                                  切换权限模式
-                                </span>
-                                <button
-                                  aria-label="关闭权限选择"
-                                  className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-secondary rounded"
-                                  onClick={() => setComposerPanel(undefined)}
-                                  type="button"
-                                >
-                                  <X size={13} />
-                                </button>
                               </div>
-                              <div className="space-y-1 px-1 pb-1" role="listbox">
-                                {PERMISSION_MODES.map((mode, index) => {
-                                  const selected = composerSelectedIndex === index;
-                                  return (
-                                    <button
-                                      aria-selected={selected}
-                                      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-left text-[12px] transition-colors border ${
-                                        selected
-                                          ? 'bg-primary/10 border-primary/30 text-foreground'
-                                          : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
-                                      } ${activeTurn ? 'opacity-40' : ''}`}
-                                      disabled={activeTurn}
-                                      key={mode}
-                                      onClick={() => {
-                                        setPermissionMode(mode);
-                                        setComposerPanel(undefined);
-                                      }}
-                                      role="option"
-                                      type="button"
-                                    >
-                                      <ShieldAlert size={13} className="shrink-0 text-primary" />
-                                      <span>{permissionLabels[mode]}</span>
-                                      {permissionMode === mode && (
-                                        <Check size={12} className="shrink-0 text-primary" />
-                                      )}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <textarea
-                        aria-keyshortcuts={
-                          api.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
-                        }
-                        disabled={coreClosed}
-                        value={chatInput}
-                        onChange={(e) => {
-                          setChatInput(e.target.value);
-                          setChatHistoryIndex(undefined);
-                          setChatHistoryDraft(undefined);
-                          if (e.target.value.trim() !== '') setComposerPanel(undefined);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Escape') {
-                            if (composerPanel !== undefined) {
-                              event.preventDefault();
-                              setComposerPanel(undefined);
+                            )}
+                          </div>
+                        )}
+                        <textarea
+                          aria-keyshortcuts={
+                            api.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter'
+                          }
+                          disabled={coreClosed}
+                          value={chatInput}
+                          onChange={(e) => {
+                            setChatInput(e.target.value);
+                            setChatHistoryIndex(undefined);
+                            setChatHistoryDraft(undefined);
+                            if (e.target.value.trim() !== '') setComposerPanel(undefined);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              if (composerPanel !== undefined) {
+                                event.preventDefault();
+                                setComposerPanel(undefined);
+                                return;
+                              }
+                              if (slashPopoverOpen) {
+                                event.preventDefault();
+                                setChatInput('');
+                              }
                               return;
                             }
                             if (slashPopoverOpen) {
-                              event.preventDefault();
-                              setChatInput('');
-                            }
-                            return;
-                          }
-                          if (slashPopoverOpen) {
-                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                              event.preventDefault();
-                              if (slashEnabledIndices.length > 0) {
-                                const currentPosition =
-                                  slashEnabledIndices.indexOf(slashSelectedIndex);
-                                const nextOffset = event.key === 'ArrowDown' ? 1 : -1;
-                                const nextPosition =
-                                  (currentPosition + nextOffset + slashEnabledIndices.length) %
-                                  slashEnabledIndices.length;
-                                setSlashSelectedIndex(slashEnabledIndices[nextPosition]!);
-                              }
-                              return;
-                            }
-                            if (event.key === 'Enter' && !event.shiftKey) {
-                              const selected = slashCommands[slashSelectedIndex];
-                              if (selected !== undefined && selected.disabled !== true) {
+                              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                                 event.preventDefault();
-                                executeSlashCommand(selected);
+                                if (slashEnabledIndices.length > 0) {
+                                  const currentPosition =
+                                    slashEnabledIndices.indexOf(slashSelectedIndex);
+                                  const nextOffset = event.key === 'ArrowDown' ? 1 : -1;
+                                  const nextPosition =
+                                    (currentPosition + nextOffset + slashEnabledIndices.length) %
+                                    slashEnabledIndices.length;
+                                  setSlashSelectedIndex(slashEnabledIndices[nextPosition]!);
+                                }
+                                return;
+                              }
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                const selected = slashCommands[slashSelectedIndex];
+                                if (selected !== undefined && selected.disabled !== true) {
+                                  event.preventDefault();
+                                  executeSlashCommand(selected);
+                                  return;
+                                }
+                              }
+                            }
+                            if (composerPanel !== undefined) {
+                              const optionCount =
+                                composerPanel.kind === 'model'
+                                  ? eligibleModels.length
+                                  : PERMISSION_MODES.length;
+                              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                if (optionCount > 0) {
+                                  event.preventDefault();
+                                  const offset = event.key === 'ArrowDown' ? 1 : -1;
+                                  setComposerSelectedIndex(
+                                    (current) => (current + offset + optionCount) % optionCount,
+                                  );
+                                }
+                                return;
+                              }
+                              if (event.key === 'Enter' && !event.shiftKey && !activeTurn) {
+                                event.preventDefault();
+                                if (composerPanel.kind === 'model') {
+                                  const model = eligibleModels[composerSelectedIndex];
+                                  if (model !== undefined) {
+                                    setActiveModelId(model.id);
+                                    setComposerPanel(undefined);
+                                  }
+                                } else {
+                                  const mode = PERMISSION_MODES[composerSelectedIndex];
+                                  if (mode !== undefined) {
+                                    setPermissionMode(mode);
+                                    setComposerPanel(undefined);
+                                  }
+                                }
                                 return;
                               }
                             }
-                          }
-                          if (composerPanel !== undefined) {
-                            const optionCount =
-                              composerPanel.kind === 'model'
-                                ? eligibleModels.length
-                                : PERMISSION_MODES.length;
-                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                              if (optionCount > 0) {
-                                event.preventDefault();
-                                const offset = event.key === 'ArrowDown' ? 1 : -1;
-                                setComposerSelectedIndex(
-                                  (current) => (current + offset + optionCount) % optionCount,
-                                );
-                              }
-                              return;
-                            }
-                            if (event.key === 'Enter' && !event.shiftKey && !activeTurn) {
+                            if (
+                              composerPanel === undefined &&
+                              (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+                            ) {
+                              const navigation = movePromptHistory(
+                                event.key === 'ArrowUp' ? 'previous' : 'next',
+                                promptHistory,
+                                chatInput,
+                                {
+                                  index: chatHistoryIndex,
+                                  draft: chatHistoryDraft,
+                                },
+                              );
+                              if (navigation === undefined) return;
+                              setChatInput(navigation.input);
+                              setChatHistoryIndex(navigation.state.index);
+                              setChatHistoryDraft(navigation.state.draft);
                               event.preventDefault();
-                              if (composerPanel.kind === 'model') {
-                                const model = eligibleModels[composerSelectedIndex];
-                                if (model !== undefined) {
-                                  setActiveModelId(model.id);
-                                  setComposerPanel(undefined);
-                                }
-                              } else {
-                                const mode = PERMISSION_MODES[composerSelectedIndex];
-                                if (mode !== undefined) {
-                                  setPermissionMode(mode);
-                                  setComposerPanel(undefined);
-                                }
-                              }
                               return;
                             }
-                          }
-                          if (
-                            composerPanel === undefined &&
-                            (event.key === 'ArrowUp' || event.key === 'ArrowDown')
-                          ) {
-                            const navigation = movePromptHistory(
-                              event.key === 'ArrowUp' ? 'previous' : 'next',
-                              promptHistory,
-                              chatInput,
-                              {
-                                index: chatHistoryIndex,
-                                draft: chatHistoryDraft,
-                              },
-                            );
-                            if (navigation === undefined) return;
-                            setChatInput(navigation.input);
-                            setChatHistoryIndex(navigation.state.index);
-                            setChatHistoryDraft(navigation.state.draft);
+                            const modifierPressed =
+                              api.platform === 'darwin' ? event.metaKey : event.ctrlKey;
+                            if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) {
+                              return;
+                            }
                             event.preventDefault();
-                            return;
-                          }
-                          const modifierPressed =
-                            api.platform === 'darwin' ? event.metaKey : event.ctrlKey;
-                          if (event.key !== 'Enter' || event.shiftKey || !modifierPressed) {
-                            return;
-                          }
-                          event.preventDefault();
-                          void submitGoal();
-                        }}
-                        placeholder="输入目标，Command/Ctrl+Enter 发送"
-                        className="w-full bg-transparent outline-none resize-none text-[13px] p-3.5 min-h-[60px] text-foreground placeholder:text-muted-foreground/70"
-                      />
-                      {pendingAttachments.length > 0 && (
-                        <div className="px-3 pb-2 flex flex-wrap gap-2">
-                          {pendingAttachments.map((attachment) => (
-                            <span
-                              className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-secondary/60 border border-border/70 text-[11px] text-muted-foreground"
-                              key={attachment.attachmentId}
-                            >
-                              {attachment.kind === 'image' ? (
-                                <ImageIcon size={13} className="text-primary shrink-0" />
-                              ) : (
-                                <FileText size={13} className="text-primary shrink-0" />
-                              )}
-                              <span className="max-w-[170px] truncate">{attachment.name}</span>
-                              <span className="shrink-0 text-[10px] opacity-70">
-                                {formatAttachmentSize(attachment.sizeBytes)}
-                              </span>
-                              <button
-                                aria-label={`移除 ${attachment.name}`}
-                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                                onClick={() => removeAttachment(attachment.attachmentId)}
-                                type="button"
+                            void submitGoal();
+                          }}
+                          placeholder="输入目标，Command/Ctrl+Enter 发送"
+                          className="w-full bg-transparent outline-none resize-none text-[13px] p-3.5 min-h-[60px] text-foreground placeholder:text-muted-foreground/70"
+                        />
+                        {pendingAttachments.length > 0 && (
+                          <div className="px-3 pb-2 flex flex-wrap gap-2">
+                            {pendingAttachments.map((attachment) => (
+                              <span
+                                className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-secondary/60 border border-border/70 text-[11px] text-muted-foreground"
+                                key={attachment.attachmentId}
                               >
-                                <X size={11} />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {attachmentError !== undefined && (
-                        <div aria-live="polite" className="px-3 pb-2 text-[11px] text-red-400">
-                          {attachmentError}
-                        </div>
-                      )}
-                      <div className="px-3 pb-2.5 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1">
-                          <button
-                            aria-label="添加图片"
-                            className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                            disabled={imageAttachmentsDisabled || attachmentBusy}
-                            onClick={() => void pickAttachments('image')}
-                            title={
-                              driver === 'acp'
-                                ? '外部 Agent 不支持附件'
-                                : activeModel?.declaredCapabilities.multimodal === true
-                                  ? '添加图片'
-                                  : '当前模型不支持图片输入'
-                            }
-                            type="button"
-                          >
-                            <ImageIcon size={14} />
-                          </button>
-                          <button
-                            aria-label="添加文件"
-                            className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                            disabled={attachmentsDisabled || attachmentBusy}
-                            onClick={() => void pickAttachments('file')}
-                            title={driver === 'acp' ? '外部 Agent 不支持附件' : '添加任意本地文件'}
-                            type="button"
-                          >
-                            <Paperclip size={14} />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            aria-label="提示词历史"
-                            onClick={() => setIsSearchHistoryOpen(true)}
-                            disabled={coreClosed}
-                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
-                            title="提示词历史"
-                            type="button"
-                          >
-                            <Clock size={14} />
-                          </button>
-                          <button
-                            aria-label={
-                              composerAction.kind === 'stop'
-                                ? '停止当前 Agent 任务'
-                                : '发送给 Agent'
-                            }
-                            onClick={() =>
-                              void (composerAction.kind === 'stop' ? cancelTurn() : submitGoal())
-                            }
-                            disabled={coreClosed || composerAction.disabled}
-                            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
-                              composerAction.disabled
-                                ? 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
-                                : composerAction.kind === 'stop'
-                                  ? 'border border-red-400/35 bg-red-500/10 text-red-300 hover:bg-red-500/20 active:scale-[0.98]'
-                                  : 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
-                            }`}
-                            type="button"
-                          >
-                            {composerAction.kind === 'stop' ? (
-                              composerAction.disabled ? (
-                                <Loader2 className="animate-spin" size={12} />
+                                {attachment.kind === 'image' ? (
+                                  <ImageIcon size={13} className="text-primary shrink-0" />
+                                ) : (
+                                  <FileText size={13} className="text-primary shrink-0" />
+                                )}
+                                <span className="max-w-[170px] truncate">{attachment.name}</span>
+                                <span className="shrink-0 text-[10px] opacity-70">
+                                  {formatAttachmentSize(attachment.sizeBytes)}
+                                </span>
+                                <button
+                                  aria-label={`移除 ${attachment.name}`}
+                                  className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                                  onClick={() => removeAttachment(attachment.attachmentId)}
+                                  type="button"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {attachmentError !== undefined && (
+                          <div aria-live="polite" className="px-3 pb-2 text-[11px] text-red-400">
+                            {attachmentError}
+                          </div>
+                        )}
+                        <div className="px-3 pb-2.5 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              aria-label="添加图片"
+                              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              disabled={imageAttachmentsDisabled || attachmentBusy}
+                              onClick={() => void pickAttachments('image')}
+                              title={
+                                driver === 'acp'
+                                  ? '外部 Agent 不支持附件'
+                                  : activeModel?.declaredCapabilities.multimodal === true
+                                    ? '添加图片'
+                                    : '当前模型不支持图片输入'
+                              }
+                              type="button"
+                            >
+                              <ImageIcon size={14} />
+                            </button>
+                            <button
+                              aria-label="添加文件"
+                              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              disabled={attachmentsDisabled || attachmentBusy}
+                              onClick={() => void pickAttachments('file')}
+                              title={
+                                driver === 'acp' ? '外部 Agent 不支持附件' : '添加任意本地文件'
+                              }
+                              type="button"
+                            >
+                              <Paperclip size={14} />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              aria-label="提示词历史"
+                              onClick={() => setIsSearchHistoryOpen(true)}
+                              disabled={coreClosed}
+                              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition px-2 py-1 rounded hover:bg-secondary"
+                              title="提示词历史"
+                              type="button"
+                            >
+                              <Clock size={14} />
+                            </button>
+                            <button
+                              aria-label={
+                                composerAction.kind === 'stop'
+                                  ? '停止当前 Agent 任务'
+                                  : '发送给 Agent'
+                              }
+                              onClick={() =>
+                                void (composerAction.kind === 'stop' ? cancelTurn() : submitGoal())
+                              }
+                              disabled={coreClosed || composerAction.disabled}
+                              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-300 ${
+                                composerAction.disabled
+                                  ? 'bg-white/5 text-muted-foreground/40 border border-white/5 cursor-not-allowed'
+                                  : composerAction.kind === 'stop'
+                                    ? 'border border-red-400/35 bg-red-500/10 text-red-300 hover:bg-red-500/20 active:scale-[0.98]'
+                                    : 'bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.15)] hover:bg-white/90 active:scale-[0.98]'
+                              }`}
+                              type="button"
+                            >
+                              {composerAction.kind === 'stop' ? (
+                                composerAction.disabled ? (
+                                  <Loader2 className="animate-spin" size={12} />
+                                ) : (
+                                  <Square fill="currentColor" size={11} />
+                                )
                               ) : (
-                                <Square fill="currentColor" size={11} />
-                              )
-                            ) : (
-                              <Send size={12} />
-                            )}
-                            {composerAction.label}
-                          </button>
+                                <Send size={12} />
+                              )}
+                              {composerAction.label}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </>
           )}
 
-          {currentView === 'models' && (
-            <ModelSettings
-              api={api}
-              models={models}
+          {currentView === 'settings' && (
+            <SettingsWorkspace
+              activeTopic={settingsTopic}
               onBack={() => setCurrentView('workspace')}
-              onEdit={(model) => setModelEditor({ mode: 'edit', modelId: model.id })}
-              onNew={() => setModelEditor({ mode: 'new' })}
-              onModelsChange={setModels}
-              onRefresh={refreshConfigurations}
-            />
-          )}
-          {currentView === 'providers' && (
-            <ProviderSettings
-              api={api}
-              onBack={() => setCurrentView('workspace')}
-              onEdit={(provider) => setProviderEditor({ mode: 'edit', providerId: provider.id })}
-              onNew={() => setProviderEditor({ mode: 'new' })}
-              onRefresh={refreshConfigurations}
-              providers={providers}
-            />
-          )}
-          {currentView === 'mcp' && (
-            <McpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
-          )}
-          {currentView === 'acp' && (
-            <AcpSettingsView api={api} onBack={() => setCurrentView('workspace')} />
-          )}
-          {currentView === 'audit' && (
-            <AuditSettings
-              api={api}
-              onBack={() => setCurrentView('workspace')}
-              sessionId={activeSession?.id}
+              onTopicChange={setSettingsTopic}
+              topicContent={settingsTopicContent}
             />
           )}
         </main>
@@ -2326,8 +2206,7 @@ export function App() {
         )}
 
         {/* Dropdown Click Catcher */}
-        {(isSettingsMenuOpen ||
-          isAllSessionsOpen ||
+        {(isAllSessionsOpen ||
           isModelMenuOpen ||
           isDialectMenuOpen ||
           isPermissionMenuOpen ||

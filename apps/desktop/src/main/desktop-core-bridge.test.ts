@@ -12,9 +12,19 @@ class FakeSupervisor {
     (event: { sessionId: string; sequence: number; data: string }) => void
   >();
   state = 'connected' as const;
+  invalidAuditResponse = false;
 
   async request<T>(method: string, payload: unknown): Promise<T> {
     this.requests.push({ method, payload });
+    if (this.invalidAuditResponse && method === 'audit.list') {
+      return { items: [{ payload: { secret: 'must-not-cross-ipc' } }] } as T;
+    }
+    if (method === 'audit.list') return { items: [] } as T;
+    if (method === 'audit.detail') return null as T;
+    if (method === 'audit.retention') {
+      return { auditRetentionDays: 30, rawLogRetentionHours: 24 } as T;
+    }
+    if (method === 'audit.cleanup') return { rawLogs: 0, auditEvents: 0 } as T;
     return { ok: true } as T;
   }
 
@@ -378,6 +388,8 @@ describe('DesktopCoreBridge', () => {
     await bridge.invoke('models:remove', model.id);
     await bridge.invoke('models:import-discovered', provider.id, [model.modelId]);
     await bridge.invoke('audit:list', { sessionId: 'session-1' });
+    await bridge.invoke('audit:detail', 'task:task-1');
+    await bridge.invoke('audit:retention');
     await bridge.invoke('audit:cleanup');
     await bridge.invoke('core:status');
     await bridge.invoke('core:exit', 'keep_sessions');
@@ -413,6 +425,8 @@ describe('DesktopCoreBridge', () => {
       'model.remove',
       'model.importDiscovered',
       'audit.list',
+      'audit.detail',
+      'audit.retention',
       'audit.cleanup',
       'core.status',
     ]);
@@ -521,6 +535,19 @@ describe('DesktopCoreBridge', () => {
       }),
     ).rejects.toThrow();
     expect(supervisor.requests).toEqual([]);
+    bridge.dispose();
+  });
+
+  it('rejects an invalid audit response before it crosses the desktop IPC bridge', async () => {
+    const supervisor = new FakeSupervisor();
+    supervisor.invalidAuditResponse = true;
+    const bridge = createDesktopCoreBridge(
+      supervisor as unknown as CoreSupervisor,
+      () => undefined,
+      () => undefined,
+    );
+
+    await expect(bridge.invoke('audit:list')).rejects.toThrow();
     bridge.dispose();
   });
 });

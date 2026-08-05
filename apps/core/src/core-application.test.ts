@@ -82,11 +82,15 @@ describe('CoreApplication', () => {
           ok: false,
           error: { code: 'execution_dialect_unsupported' },
         });
-        await expect(app.request('audit.list', { sessionId: session.id })).resolves.toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ type: 'session.resources_failed', sessionId: session.id }),
+        await expect(app.request('audit.list', { sessionId: session.id })).resolves.toMatchObject({
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              summary: '原因：execution_dialect_unsupported',
+              outcome: 'failure',
+              sessionId: session.id,
+            }),
           ]),
-        );
+        });
         await expectUpgradeState(join(directory, 'data', 'upgrade-state.ini'), 'sessions=1');
         expect(app.token.length).toBeGreaterThanOrEqual(32);
         await app.close();

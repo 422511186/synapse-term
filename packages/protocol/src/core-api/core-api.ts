@@ -126,6 +126,8 @@ export const coreApiUseCaseSchema = z.enum([
   'model.remove',
   'model.importDiscovered',
   'audit.list',
+  'audit.detail',
+  'audit.retention',
   'audit.cleanup',
   'core.status',
   'core.shutdown',
@@ -489,14 +491,137 @@ export const modelImportResultSchema = z.strictObject({
   skipped: z.array(z.string().min(1)),
 });
 
-export const auditEventViewSchema = z.strictObject({
+export const auditOutcomeSchema = z.enum([
+  'in_progress',
+  'success',
+  'failure',
+  'rejected',
+  'interrupted',
+  'information',
+]);
+
+export const auditRiskSchema = z.enum([
+  'read_only',
+  'unknown',
+  'mutating',
+  'privileged',
+  'destructive',
+]);
+
+export const auditCategorySchema = z.enum([
+  'command',
+  'approval',
+  'file',
+  'session',
+  'configuration',
+  'external',
+  'observation',
+]);
+
+const auditSubjectSchema = z.enum(['agent_task', 'external_transaction', 'event']);
+const auditTraceIdSchema = z.string().trim().min(1).max(256);
+const auditTextSchema = z.string().min(1).max(4_096);
+const auditIdentifierSchema = z.string().trim().min(1).max(256);
+const auditTraceFieldSchema = z.strictObject({
+  label: z.string().trim().min(1).max(64),
+  value: auditTextSchema,
+});
+
+export const auditActorViewSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('user') }),
+  z.strictObject({ kind: z.literal('system') }),
+  z.strictObject({ kind: z.literal('agent'), taskId: idSchema }),
+  z.strictObject({
+    kind: z.literal('external'),
+    callerKind: z.enum(['mcp', 'acp']),
+    callerId: auditIdentifierSchema,
+  }),
+]);
+
+export const auditTraceEventViewSchema = z.strictObject({
   id: idSchema,
-  type: z.string().min(1),
+  type: auditIdentifierSchema,
+  occurredAt: z.string().datetime({ offset: true }),
   sessionId: idSchema.optional(),
   taskId: idSchema.optional(),
-  occurredAt: z.string().datetime({ offset: true }),
-  summary: z.string(),
+  transactionId: idSchema.optional(),
+  actor: auditActorViewSchema,
+  category: auditCategorySchema,
+  outcome: auditOutcomeSchema,
+  risk: auditRiskSchema,
+  summary: auditTextSchema,
+  commandPreview: auditTextSchema.optional(),
+  pathPreview: auditTextSchema.optional(),
+  commandHash: auditIdentifierSchema.optional(),
+  authorization: auditTextSchema.optional(),
+  policy: auditTextSchema.optional(),
+  approval: auditTextSchema.optional(),
+  exitCode: z.number().int().optional(),
+  reason: auditTextSchema.optional(),
+  details: z.array(auditTraceFieldSchema).max(32).optional(),
 });
+
+export const auditTraceViewSchema = z.strictObject({
+  traceId: auditTraceIdSchema,
+  subject: auditSubjectSchema,
+  sessionId: idSchema.optional(),
+  taskId: idSchema.optional(),
+  transactionId: idSchema.optional(),
+  actor: auditActorViewSchema,
+  category: auditCategorySchema,
+  startedAt: z.string().datetime({ offset: true }),
+  lastActivityAt: z.string().datetime({ offset: true }),
+  outcome: auditOutcomeSchema,
+  risk: auditRiskSchema,
+  summary: auditTextSchema,
+  eventCount: z.number().int().nonnegative(),
+  containsObservations: z.boolean(),
+});
+
+export const auditTraceDetailViewSchema = auditTraceViewSchema.extend({
+  events: z.array(auditTraceEventViewSchema).max(500),
+});
+
+const auditListLimitSchema = z.number().int().min(1).max(100);
+
+export const auditListRequestSchema = z.strictObject({
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  sessionId: idSchema.optional(),
+  taskId: idSchema.optional(),
+  actor: auditIdentifierSchema.optional(),
+  category: auditCategorySchema.optional(),
+  outcome: auditOutcomeSchema.optional(),
+  risk: auditRiskSchema.optional(),
+  search: z.string().max(256).optional(),
+  includeObservations: z.boolean().optional(),
+  limit: auditListLimitSchema.optional(),
+  cursor: z.string().trim().min(1).max(512).optional(),
+});
+
+export const auditDetailRequestSchema = z.strictObject({ traceId: auditTraceIdSchema });
+export const auditRetentionRequestSchema = emptyPayloadSchema;
+export const auditCleanupRequestSchema = emptyPayloadSchema;
+
+export const auditListResponseSchema = z.strictObject({
+  items: z.array(auditTraceViewSchema).max(100),
+  nextCursor: z.string().trim().min(1).max(512).optional(),
+});
+
+export const auditDetailResponseSchema = auditTraceDetailViewSchema;
+
+export const auditRetentionResponseSchema = z.strictObject({
+  auditRetentionDays: z.number().int().positive(),
+  rawLogRetentionHours: z.number().int().positive(),
+});
+
+export const auditCleanupResponseSchema = z.strictObject({
+  rawLogs: nonNegativeIntegerSchema,
+  auditEvents: nonNegativeIntegerSchema,
+});
+
+/** Compatibility alias for callers that still refer to list traces as audit events. */
+export const auditEventViewSchema = auditTraceViewSchema;
 
 export const coreStatusViewSchema = z.strictObject({
   connected: z.boolean(),
@@ -641,9 +766,17 @@ export const coreRequestSchema = z.discriminatedUnion('method', [
   }),
   z.strictObject({
     method: z.literal('audit.list'),
-    payload: z.strictObject({ sessionId: idSchema.optional(), taskId: idSchema.optional() }),
+    payload: auditListRequestSchema,
   }),
-  z.strictObject({ method: z.literal('audit.cleanup'), payload: emptyPayloadSchema }),
+  z.strictObject({
+    method: z.literal('audit.detail'),
+    payload: auditDetailRequestSchema,
+  }),
+  z.strictObject({
+    method: z.literal('audit.retention'),
+    payload: auditRetentionRequestSchema,
+  }),
+  z.strictObject({ method: z.literal('audit.cleanup'), payload: auditCleanupRequestSchema }),
   z.strictObject({ method: z.literal('core.status'), payload: emptyPayloadSchema }),
   z.strictObject({
     method: z.literal('core.shutdown'),
@@ -754,7 +887,22 @@ export type ModelConfigurationView = z.infer<typeof modelConfigurationViewSchema
 export type DiscoveredModel = z.infer<typeof discoveredModelSchema>;
 export type ProviderModelDiscoveryResult = z.infer<typeof providerModelDiscoveryResultSchema>;
 export type ModelImportResult = z.infer<typeof modelImportResultSchema>;
-export type AuditEventView = z.infer<typeof auditEventViewSchema>;
+export type AuditOutcome = z.infer<typeof auditOutcomeSchema>;
+export type AuditRisk = z.infer<typeof auditRiskSchema>;
+export type AuditCategory = z.infer<typeof auditCategorySchema>;
+export type AuditActorView = z.infer<typeof auditActorViewSchema>;
+export type AuditTraceEventView = z.infer<typeof auditTraceEventViewSchema>;
+export type AuditTraceView = z.infer<typeof auditTraceViewSchema>;
+export type AuditTraceDetailView = z.infer<typeof auditTraceDetailViewSchema>;
+export type AuditListRequest = z.infer<typeof auditListRequestSchema>;
+export type AuditDetailRequest = z.infer<typeof auditDetailRequestSchema>;
+export type AuditRetentionRequest = z.infer<typeof auditRetentionRequestSchema>;
+export type AuditCleanupRequest = z.infer<typeof auditCleanupRequestSchema>;
+export type AuditListResponse = z.infer<typeof auditListResponseSchema>;
+export type AuditDetailResponse = z.infer<typeof auditDetailResponseSchema>;
+export type AuditRetentionResponse = z.infer<typeof auditRetentionResponseSchema>;
+export type AuditCleanupResponse = z.infer<typeof auditCleanupResponseSchema>;
+export type AuditEventView = AuditTraceView;
 export type CoreStatusView = z.infer<typeof coreStatusViewSchema>;
 export type CoreRequest = z.infer<typeof coreRequestSchema>;
 export type CoreRequestMethod = CoreRequest['method'];

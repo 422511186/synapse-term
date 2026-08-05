@@ -70,11 +70,19 @@
 - **THEN** 系统 MUST 返回原型工作区的 Header、Terminal 和 Agent 默认布局
 
 ### Requirement: Global Settings Menu Order
-桌面全局设置菜单 MUST 将“服务商配置”入口排列在“模型配置”入口上方；其余菜单项（MCP 服务、ACP 驱动等）顺序 MUST 保持不变。
+桌面端 MUST 使用独立 Settings Workspace 承载全局设置主题，而不得继续使用把配置和其他动作混在一起的全局设置下拉菜单。Settings Workspace 左侧 MUST 按“配置 → 外部接入 → 安全与诊断”分组展示主题；“服务商配置” MUST 位于“模型配置”上方；服务商和模型 MUST 仍然是两个独立的配置页面。
 
-#### Scenario: Open the global settings menu
-- **WHEN** 用户打开桌面 Header 的全局设置菜单
-- **THEN** 菜单按“服务商配置 → 模型配置 → MCP 服务 → ACP 驱动”顺序展示，且两个入口的图标与点击行为不变
+#### Scenario: Open the global Settings Workspace
+- **WHEN** 用户点击桌面 Header 的“设置”按钮
+- **THEN** 系统 MUST 进入 Settings Workspace，左侧 MUST 显示“服务商配置 → 模型配置 → MCP 服务 → ACP 集成 → 审计日志”的可导航主题顺序，并默认选中“服务商配置”
+
+#### Scenario: Open the Provider topic before the Model topic
+- **WHEN** 用户首次进入 Settings Workspace
+- **THEN** 系统 MUST 先显示 Provider 配置内容；用户选择“模型配置”后 MUST 进入独立 Model 配置内容，不得把两类配置合并为同一页面
+
+#### Scenario: Switch from Provider to Model settings
+- **WHEN** 用户在 Settings Workspace 左侧从“服务商配置”切换到“模型配置”
+- **THEN** 右侧 MUST 显示实际 `models.list()` 驱动的模型管理页，Provider 已保存的数据 MUST 保持不变
 
 ### Requirement: Multimodal Capability Declaration
 模型配置 MUST 提供手动的“支持多模态”能力声明。无论是新增还是编辑模型，用户都 MUST 能切换该声明；未显式配置的历史模型 MUST 按 `multimodal: false` 处理。修改 `multimodal` 声明后 MUST 将该模型的检测状态重置为 `unverified`，不得沿用旧 capabilities。

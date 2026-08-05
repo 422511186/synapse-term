@@ -6,3 +6,4 @@ export * from './model-edit-modal.js';
 export * from './model-settings.js';
 export * from './provider-edit-modal.js';
 export * from './provider-settings.js';
+export * from './settings-workspace.js';

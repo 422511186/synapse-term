@@ -343,6 +343,7 @@ describe('TerminalToolGateway', () => {
         payload: expect.objectContaining({
           tool: 'terminal_execute',
           toolCallId: 'call-command',
+          commandPreview: 'systemctl restart api',
           permissionMode: 'auto',
           risk: 'mutating',
           authorization: 'automatic',
@@ -375,6 +376,7 @@ describe('TerminalToolGateway', () => {
         type: 'tool.authorization',
         payload: expect.objectContaining({
           toolCallId: 'call-powershell-delete',
+          commandPreview: 'Remove-Item -Recurse -Force ./cache',
           executionDialect: 'powershell',
           permissionMode: 'auto',
           risk: 'destructive',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   approvalReasonZh,
+  auditTypeZh,
   commandRiskZh,
   errorMessageZh,
   providerReasonZh,
@@ -63,5 +64,11 @@ describe('zh-CN product copy', () => {
       '命令包含不可逆或破坏性操作',
     );
     expect(approvalReasonZh('touch can change system state')).toBe('touch 可能修改系统状态');
+  });
+
+  it('localizes audit event types so a trace explains the operation', () => {
+    expect(auditTypeZh('command.completed')).toBe('命令：已完成');
+    expect(auditTypeZh('model.updated')).toBe('更新模型配置');
+    expect(auditTypeZh('external.command')).toBe('执行外部命令');
   });
 });

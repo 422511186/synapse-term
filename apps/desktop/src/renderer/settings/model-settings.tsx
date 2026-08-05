@@ -1,16 +1,19 @@
 /** 模型配置页（自 app.tsx 拆分）：乐观启用/停用、检测三态、删除确认与防连点 */
-import { useState, type JSX } from 'react';
-import { ArrowLeft, Check, Plus, X } from 'lucide-react';
+import { useMemo, useState, type JSX } from 'react';
+import { Check, Plus, Search, X } from 'lucide-react';
 
 import { errorMessageZh } from '@synapse-term/ui-platform';
 import type { DesktopApi, ModelConfigurationView } from '../../preload/preload-api.js';
 import { ConfirmDialog, PendingButton, useToast } from '../feedback/index.js';
+import {
+  filterModelConfigurations,
+  type ModelConfigurationStatusFilter,
+} from './configuration-list-ops.js';
 import { formatTestDuration, modelTestOutcome, optimisticSetEnabled } from './model-list-ops.js';
 
 export function ModelSettings({
   api,
   models,
-  onBack,
   onEdit,
   onNew,
   onRefresh,
@@ -18,7 +21,6 @@ export function ModelSettings({
 }: {
   api: DesktopApi;
   models: ModelConfigurationView[];
-  onBack: () => void;
   onEdit: (model: ModelConfigurationView) => void;
   onNew: () => void;
   onRefresh: () => Promise<void>;
@@ -26,7 +28,28 @@ export function ModelSettings({
 }): JSX.Element {
   const [pendingId, setPendingId] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<ModelConfigurationView>();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [providerFilter, setProviderFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<ModelConfigurationStatusFilter>('all');
   const toast = useToast();
+  const visibleModels = useMemo(
+    () =>
+      filterModelConfigurations(models, {
+        query: searchQuery,
+        providerId: providerFilter,
+        status: statusFilter,
+      }),
+    [models, providerFilter, searchQuery, statusFilter],
+  );
+  const providerOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          models.map((model) => [model.providerProfileId, model.providerName] as const),
+        ).entries(),
+      ),
+    [models],
+  );
 
   /** 启用/停用：乐观更新 + 失败回滚（快操作，不转圈） */
   const toggleEnabled = async (model: ModelConfigurationView): Promise<void> => {
@@ -99,17 +122,72 @@ export function ModelSettings({
   const rowBusy = pendingId !== undefined;
 
   return (
-    <div className="absolute inset-0 z-30 animate-in fade-in duration-200 overflow-y-auto bg-[#09090b] p-8">
-      <div className="max-w-5xl mx-auto">
-        <button
-          className="mb-6 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          onClick={onBack}
-          type="button"
-        >
-          <ArrowLeft size={16} /> 返回工作区
-        </button>
-        <h1 className="text-2xl font-bold mb-2">模型配置</h1>
+    <div className="min-h-full bg-[#09090b] p-6 lg:p-8">
+      <div className="mx-auto max-w-5xl">
+        <h1 className="mb-2 text-2xl font-bold">模型配置</h1>
         <p className="mb-8 text-muted-foreground">管理用于 Terminal Agent 的推理模型与权限级别。</p>
+
+        <div className="mb-6 rounded-xl border border-border/50 bg-[#18181b] p-4 shadow-sm">
+          <div className="flex flex-col items-center gap-3 sm:flex-row">
+            <label className="relative flex min-w-0 flex-1 items-center" htmlFor="model-search">
+              <Search
+                className="pointer-events-none absolute left-2 text-muted-foreground"
+                size={16}
+              />
+              <input
+                aria-label="搜索模型配置"
+                className="w-full rounded-lg border border-border bg-[#09090b] py-2.5 pl-8 pr-2 text-sm text-foreground outline-none transition-colors focus:border-primary"
+                id="model-search"
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索名称、模型 ID 或服务商"
+                type="search"
+                value={searchQuery}
+              />
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="shrink-0">服务商</span>
+              <select
+                aria-label="按服务商筛选"
+                className="min-w-0 rounded-lg border border-border bg-[#09090b] px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary"
+                onChange={(event) => setProviderFilter(event.target.value)}
+                value={providerFilter}
+              >
+                <option value="all">全部服务商</option>
+                {providerOptions.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="shrink-0">状态</span>
+              <select
+                aria-label="按状态筛选"
+                className="min-w-0 rounded-lg border border-border bg-[#09090b] px-3 py-2.5 text-sm text-foreground outline-none transition-colors focus:border-primary"
+                onChange={(event) =>
+                  setStatusFilter(event.target.value as ModelConfigurationStatusFilter)
+                }
+                value={statusFilter}
+              >
+                <option value="all">全部状态</option>
+                <option value="enabled">已启用</option>
+                <option value="disabled">已停用</option>
+                <option value="available">可用</option>
+                <option value="unavailable">不可用</option>
+                <option value="validating">检测中</option>
+                <option value="unverified">待检测</option>
+              </select>
+            </label>
+          </div>
+          <div
+            aria-label="模型配置结果统计"
+            className="mt-3 flex items-center justify-end border-t border-border/50 pt-3 text-xs text-muted-foreground"
+            role="status"
+          >
+            显示 {visibleModels.length} / {models.length} 个模型配置
+          </div>
+        </div>
 
         <div className="overflow-hidden rounded-xl border border-border/50 bg-[#18181b] shadow-sm">
           <table aria-label="模型配置列表" className="w-full text-left text-sm">
@@ -125,7 +203,7 @@ export function ModelSettings({
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {models.map((model) => {
+              {visibleModels.map((model) => {
                 const pending = pendingId === model.id;
                 return (
                   <tr className="transition-colors hover:bg-secondary/20" key={model.id}>
@@ -251,6 +329,11 @@ export function ModelSettings({
           </table>
           {models.length === 0 && (
             <div className="px-5 py-8 text-sm text-muted-foreground">暂无模型配置。</div>
+          )}
+          {models.length > 0 && visibleModels.length === 0 && (
+            <div className="px-5 py-8 text-sm text-muted-foreground">
+              没有符合筛选条件的模型配置。
+            </div>
           )}
         </div>
         <button

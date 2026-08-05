@@ -43,6 +43,20 @@ export interface AuditEvent {
   payload: Record<string, unknown>;
 }
 
+export interface AuditEventPageFilter {
+  from?: string;
+  to?: string;
+  sessionId?: string;
+  taskId?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface AuditEventPage {
+  items: AuditEvent[];
+  nextCursor?: string;
+}
+
 export class CoreRepositories {
   readonly #store: SqliteStore;
 
@@ -471,6 +485,62 @@ export class CoreRepositories {
     }));
   }
 
+  listAuditEventsPage(filter: AuditEventPageFilter = {}): AuditEventPage {
+    const limit = normalizeAuditLimit(filter.limit);
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (filter.from !== undefined) {
+      clauses.push('occurred_at >= ?');
+      parameters.push(filter.from);
+    }
+    if (filter.to !== undefined) {
+      clauses.push('occurred_at <= ?');
+      parameters.push(filter.to);
+    }
+    if (filter.sessionId !== undefined) {
+      clauses.push('session_id = ?');
+      parameters.push(filter.sessionId);
+    }
+    if (filter.taskId !== undefined) {
+      clauses.push('task_id = ?');
+      parameters.push(filter.taskId);
+    }
+    if (filter.cursor !== undefined) {
+      const cursor = decodeAuditCursor(filter.cursor);
+      clauses.push('(occurred_at > ? OR (occurred_at = ? AND id > ?))');
+      parameters.push(cursor.occurredAt, cursor.occurredAt, cursor.id);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    const rows = this.#store
+      .database()
+      .prepare(
+        `SELECT id, actor_json, session_id, task_id, type, occurred_at, payload_json
+         FROM audit_events ${where}
+         ORDER BY occurred_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(...parameters, limit + 1) as Array<Record<string, string | null>>;
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const items = pageRows.map((row) => ({
+      id: row.id!,
+      actor: JSON.parse(row.actor_json!) as AuditEvent['actor'],
+      sessionId: row.session_id ?? undefined,
+      taskId: row.task_id ?? undefined,
+      type: row.type!,
+      occurredAt: row.occurred_at!,
+      payload: JSON.parse(row.payload_json!) as Record<string, unknown>,
+    }));
+    const last = items.at(-1);
+    return {
+      items,
+      ...(hasMore && last === undefined ? {} : {}),
+      ...(hasMore && last !== undefined
+        ? { nextCursor: encodeAuditCursor({ occurredAt: last.occurredAt, id: last.id }) }
+        : {}),
+    };
+  }
+
   deleteAuditEventsBefore(cutoff: string): number {
     return this.#store.transaction((database) => {
       const result = database.prepare('DELETE FROM audit_events WHERE occurred_at < ?').run(cutoff);
@@ -543,5 +613,30 @@ export class CoreRepositories {
             .prepare(`SELECT state_json FROM ${table} WHERE ${filter[0]} = ? ORDER BY id ASC`)
             .all(filter[1]);
     return (rows as Array<{ state_json: string }>).map((row) => parse(JSON.parse(row.state_json)));
+  }
+}
+
+function normalizeAuditLimit(value: number | undefined): number {
+  if (value === undefined) return 200;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 500) {
+    throw new RangeError('audit page limit must be between 1 and 500');
+  }
+  return value;
+}
+
+function encodeAuditCursor(cursor: { occurredAt: string; id: string }): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeAuditCursor(value: string): { occurredAt: string; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as {
+      occurredAt?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.occurredAt !== 'string' || typeof parsed.id !== 'string') throw new Error();
+    return { occurredAt: parsed.occurredAt, id: parsed.id };
+  } catch {
+    throw new RangeError('invalid audit cursor');
   }
 }

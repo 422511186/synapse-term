@@ -11,10 +11,17 @@ import type {
   ProviderProfile,
   ReasoningEffort,
 } from '@synapse-term/domain';
-import type { AuditEvent, AuditRecordInput } from '@synapse-term/infrastructure';
+import type {
+  AuditEvent,
+  AuditEventPage,
+  AuditEventPageFilter,
+  AuditRecordInput,
+} from '@synapse-term/infrastructure';
 import type { ModelAdapter } from '@synapse-term/model-providers';
 import type { ProviderModelDiscoveryService } from '@synapse-term/model-providers';
 import type { AgentHistoryView } from '@synapse-term/protocol';
+
+import type { AuditCategory, AuditOutcome, AuditRisk } from './handlers/audit-projection.js';
 
 /** 密钥存储端口：引用式保存 Provider 凭据，不直接持有明文 */
 export interface CoreSecretStore {
@@ -64,7 +71,23 @@ export interface AgentCoordinatorLike {
 /** 审计查询端口 */
 export interface AuditQueryLike {
   query(filter?: { sessionId?: string; taskId?: string }): AuditEvent[];
+  listEvents?(filter?: AuditEventPageFilter): AuditEventPage;
   record?(input: AuditRecordInput): void;
+}
+
+export interface AuditListFilter {
+  from?: string | undefined;
+  to?: string | undefined;
+  sessionId?: string | undefined;
+  taskId?: string | undefined;
+  actor?: string | undefined;
+  category?: AuditCategory | undefined;
+  outcome?: AuditOutcome | undefined;
+  risk?: AuditRisk | undefined;
+  search?: string | undefined;
+  includeObservations?: boolean | undefined;
+  limit?: number | undefined;
+  cursor?: string | undefined;
 }
 
 /** 会话资源服务端口 */

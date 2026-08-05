@@ -25,6 +25,78 @@ import { CoreRepositories } from './repositories.js';
 import { SqliteStore } from './sqlite-store.js';
 
 describe('CoreRepositories', () => {
+  it('reads a bounded audit page with time, session, task, and cursor filters', async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
+      await store.open();
+      try {
+        const repositories = new CoreRepositories(store);
+        const append = (event: Parameters<CoreRepositories['appendAuditEvent']>[0]): void =>
+          repositories.appendAuditEvent(event);
+        append({
+          id: 'audit-old',
+          actor: { kind: 'system' },
+          sessionId: 'session-page',
+          taskId: 'task-page',
+          type: 'task.started',
+          occurredAt: '2026-08-01T00:00:00.000Z',
+          payload: {},
+        });
+        append({
+          id: 'audit-middle',
+          actor: { kind: 'system' },
+          sessionId: 'session-page',
+          taskId: 'task-page',
+          type: 'command.completed',
+          occurredAt: '2026-08-02T00:00:00.000Z',
+          payload: {},
+        });
+        append({
+          id: 'audit-other-session',
+          actor: { kind: 'system' },
+          sessionId: 'session-other',
+          type: 'session.created',
+          occurredAt: '2026-08-02T12:00:00.000Z',
+          payload: {},
+        });
+        append({
+          id: 'audit-new',
+          actor: { kind: 'system' },
+          sessionId: 'session-page',
+          taskId: 'task-page',
+          type: 'task.completed',
+          occurredAt: '2026-08-03T00:00:00.000Z',
+          payload: {},
+        });
+
+        const first = repositories.listAuditEventsPage({
+          from: '2026-08-01T00:00:00.000Z',
+          to: '2026-08-04T00:00:00.000Z',
+          sessionId: 'session-page',
+          taskId: 'task-page',
+          limit: 2,
+        });
+        expect(first.items.map((event) => event.id)).toEqual(['audit-old', 'audit-middle']);
+        expect(first.nextCursor).toBeDefined();
+
+        const second = repositories.listAuditEventsPage(
+          first.nextCursor === undefined
+            ? { sessionId: 'session-page', taskId: 'task-page', limit: 2 }
+            : {
+                sessionId: 'session-page',
+                taskId: 'task-page',
+                limit: 2,
+                cursor: first.nextCursor,
+              },
+        );
+        expect(second.items.map((event) => event.id)).toEqual(['audit-new']);
+        expect(second.nextCursor).toBeUndefined();
+      } finally {
+        await store.close();
+      }
+    });
+  });
+
   it('lists Session metadata in creation order instead of UUID order', async () => {
     await withTemporaryDirectory(async (directory) => {
       const store = new SqliteStore(join(directory, 'core.sqlite'), CORE_MIGRATIONS);
@@ -368,7 +440,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(10);
+        expect(upgraded.schemaVersion).toBe(11);
         const upgradedRepositories = new CoreRepositories(upgraded);
         expect(upgradedRepositories.getSession(legacySession.id)).toMatchObject({
           executionDialect: 'observe_only',
@@ -505,7 +577,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(10);
+        expect(upgraded.schemaVersion).toBe(11);
         const modelRow = upgraded
           .database()
           .prepare('SELECT state_json FROM model_configurations WHERE id = ?')
@@ -647,7 +719,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(10);
+        expect(upgraded.schemaVersion).toBe(11);
         const repositories = new CoreRepositories(upgraded);
         expect(repositories.getAgentConversation('conversation-legacy')).toMatchObject({
           driver: 'builtin',

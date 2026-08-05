@@ -110,6 +110,7 @@ describe('ExternalToolPipeline', () => {
         tool: 'external.command',
         source: 'mcp',
         callerId: 'mcp-client',
+        commandPreview: 'ls',
         risk: 'read_only',
         approvalMode: 'read_only',
         reason: 'approval_mode_denied',
@@ -137,6 +138,7 @@ describe('ExternalToolPipeline', () => {
       payload: {
         source: 'mcp',
         callerId: 'mcp-client',
+        commandPreview: 'printf ok',
         risk: 'read_only',
         approvalMode: 'managed',
         authorization: 'auto_allowed',
@@ -253,7 +255,7 @@ describe('ExternalToolPipeline', () => {
   });
 
   it('keeps a running command under the external lease and releases it after wait', async () => {
-    const { pty, actor, pipeline, clock } = await setup();
+    const { pty, actor, pipeline, clock, audit } = await setup();
     const execution = pipeline.execute({ command: 'df -P', observationWindowMs: 10 }, context());
     await waitForDispatch(actor, pty);
     pty.emitData('__TA_START__partial');
@@ -275,6 +277,10 @@ describe('ExternalToolPipeline', () => {
       result: { status: 'completed' },
     });
     expect(actor.snapshot.lease.owner).toEqual({ kind: 'none' });
+    expect(audit.at(-1)?.payload).toMatchObject({
+      transactionId,
+      commandPreview: 'df -P',
+    });
   });
 
   it('observes journal output in read-only mode with redaction and external audit identity', async () => {

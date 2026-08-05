@@ -251,7 +251,11 @@ export class CoreRequestRouter {
           request.payload.modelIds,
         );
       case 'audit.list':
-        return this.#auditHandler.listAudit(request.payload.sessionId, request.payload.taskId);
+        return this.#auditHandler.listAudit(request.payload);
+      case 'audit.detail':
+        return this.#auditHandler.getAuditTrace(request.payload.traceId);
+      case 'audit.retention':
+        return this.#auditHandler.retention();
       case 'audit.cleanup':
         return this.#auditHandler.cleanup();
       case 'core.status':

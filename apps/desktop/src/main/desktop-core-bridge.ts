@@ -1,6 +1,10 @@
 import {
   agentTextDeltaSchema,
   agentTimelineItemSchema,
+  auditCleanupResponseSchema,
+  auditDetailResponseSchema,
+  auditListResponseSchema,
+  auditRetentionResponseSchema,
   parseCoreRequest,
   sessionResourceSnapshotSchema,
   sessionSummarySchema,
@@ -226,9 +230,23 @@ export function createDesktopCoreBridge(
             modelIds: stringArrayAt(argumentsValue, 1),
           });
         case 'audit:list':
-          return request(supervisor, 'audit.list', objectAt(argumentsValue, 0, {}));
+          return request(
+            supervisor,
+            'audit.list',
+            objectAt(argumentsValue, 0, {}),
+            auditListResponseSchema,
+          );
+        case 'audit:detail':
+          return request(
+            supervisor,
+            'audit.detail',
+            { traceId: stringAt(argumentsValue, 0) },
+            auditDetailResponseSchema.nullable(),
+          );
+        case 'audit:retention':
+          return request(supervisor, 'audit.retention', {}, auditRetentionResponseSchema);
         case 'audit:cleanup':
-          return request(supervisor, 'audit.cleanup', {});
+          return request(supervisor, 'audit.cleanup', {}, auditCleanupResponseSchema);
         case 'core:status':
           return request(supervisor, 'core.status', {});
         case 'core:exit': {
@@ -252,9 +270,11 @@ async function request(
   supervisor: Pick<CoreSupervisor, 'request'>,
   method: string,
   payload: unknown,
+  responseSchema?: { parse(value: unknown): unknown },
 ): Promise<unknown> {
   const parsed = parseCoreRequest(method, payload);
-  return supervisor.request(method, parsed.payload);
+  const response = await supervisor.request(method, parsed.payload);
+  return responseSchema === undefined ? response : responseSchema.parse(response);
 }
 
 function objectAt(

@@ -221,6 +221,26 @@ describe('CoreSupervisor', () => {
     expect(connector.connections).toHaveLength(2);
   });
 
+  it('reconnects and retries the audit detail and retention reads after transport failure', async () => {
+    const connector = new FakeConnector();
+    const supervisor = new CoreSupervisor({
+      protocolVersion: CURRENT_PROTOCOL_VERSION,
+      connector,
+      launcher: new FakeLauncher(),
+    });
+
+    await supervisor.connect();
+    connector.connections[0]!.requestError = Object.assign(new Error('socket hang up'), {
+      code: 'ECONNRESET',
+    });
+
+    await expect(supervisor.request('audit.detail', { traceId: 'task:task-1' })).resolves.toEqual({
+      accepted: true,
+    });
+    await expect(supervisor.request('audit.retention', {})).resolves.toEqual({ accepted: true });
+    expect(connector.connections).toHaveLength(2);
+  });
+
   it('retries a read request when the initial Core startup attempt fails', async () => {
     const connector = new FakeConnector();
     connector.failuresRemaining = 2;

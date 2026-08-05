@@ -104,6 +104,7 @@ test('opens terminal search with Ctrl+F while the terminal has focus', async ({ 
 
   await expect(searchInput).toBeFocused();
   await expect(searchInput).toBeVisible();
+  await expect(searchInput.locator('..')).toHaveCSS('background-color', 'rgb(24, 24, 27)');
 });
 
 test('backs the prototype resource, agent, approval, and audit surfaces with runtime APIs', async ({
@@ -130,9 +131,75 @@ test('backs the prototype resource, agent, approval, and audit surfaces with run
   ).toHaveCount(0);
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '审计日志', exact: true }).click();
-  await expect(page.getByText('创建终端会话', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: '审计日志', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '审计日志', exact: true })).toBeVisible();
+  const commandTrace = page
+    .getByTestId('audit-trace-row')
+    .filter({ hasText: 'systemctl restart api' })
+    .first();
+  await expect(commandTrace).toBeVisible();
+  await commandTrace.click();
+  const commandDetail = page.getByRole('dialog', { name: '审计记录详情' });
+  await expect(commandDetail).toContainText('执行命令');
+  await expect(
+    commandDetail.getByText('执行命令', { exact: true }).locator('..').first(),
+  ).toHaveCSS('grid-column', '1 / -1');
+  await expect(
+    commandDetail.getByText('systemctl restart api', { exact: true }).first(),
+  ).toBeVisible();
+  await expect(commandDetail).toContainText('command.completed');
+  await expect(commandDetail).toContainText('成功');
+  await expect(commandDetail).toContainText('退出码');
+  await expect(commandDetail).toContainText('0');
+  const modalAtHeaderPoint = await page.evaluate(() => {
+    const settingsButton = document.querySelector<HTMLButtonElement>('button[aria-label="设置"]');
+    if (settingsButton === null) return undefined;
+    const bounds = settingsButton.getBoundingClientRect();
+    return document
+      .elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+      ?.closest('[role="dialog"]')
+      ?.getAttribute('aria-label');
+  });
+  expect(modalAtHeaderPoint).toBe('审计记录详情');
+  await commandDetail.getByRole('button', { name: '关闭审计记录详情', exact: true }).click();
+  await page.getByRole('button', { name: '打开高级筛选', exact: true }).click();
+  const filterDialog = page.getByRole('dialog', { name: '高级筛选' });
+  await expect(filterDialog.getByText('包含成功观察', { exact: true })).toBeVisible();
+  await filterDialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(filterDialog).toHaveCount(0);
   await page.getByRole('button', { name: '返回工作区', exact: true }).click();
+});
+
+test('stops audit polling after leaving the audit topic', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?auditTraceCalls=1');
+  await page.evaluate(() => {
+    const target = window as Window & { mockAuditListCalls?: number };
+    target.mockAuditListCalls = 0;
+    window.addEventListener('mock-audit-list-call', () => {
+      target.mockAuditListCalls = (target.mockAuditListCalls ?? 0) + 1;
+    });
+  });
+
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '审计日志', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as Window & { mockAuditListCalls?: number }).mockAuditListCalls),
+    )
+    .toBeGreaterThan(0);
+  const callsBeforeLeaving = await page.evaluate(
+    () => (window as Window & { mockAuditListCalls?: number }).mockAuditListCalls ?? 0,
+  );
+
+  await page.getByRole('button', { name: '模型配置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '模型配置', exact: true })).toBeVisible();
+  await page.waitForTimeout(5_500);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as Window & { mockAuditListCalls?: number }).mockAuditListCalls),
+    )
+    .toBe(callsBeforeLeaving);
 });
 
 test('creates, closes, and reuses sessions through the prototype controls', async ({ page }) => {
@@ -397,7 +464,9 @@ test('sends the current Agent goal with Control+Enter in the desktop browser wor
   await expect(composer).toHaveValue('');
 });
 
-test('clears the active Agent conversation from the settings menu', async ({ page }) => {
+test('keeps Agent clearing in /clear and removes the duplicate settings action', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
 
@@ -410,7 +479,15 @@ test('clears the active Agent conversation from the settings menu', async ({ pag
   await page.waitForTimeout(800);
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '清空当前 Agent 会话', exact: true }).click();
+  await expect(page.getByTestId('settings-workspace')).toBeVisible();
+  await expect(
+    page.getByRole('menuitem', { name: '清空当前 Agent 会话', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: '退出 Core', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
+
+  await composer.fill('/clear');
+  await composer.press('Enter');
   const confirm = page.getByRole('alertdialog', { name: '操作确认' });
   await expect(confirm).toBeVisible();
   await confirm.getByRole('button', { name: '清空会话', exact: true }).click();
@@ -428,24 +505,17 @@ test('clears the active Agent conversation from the settings menu', async ({ pag
   ).toHaveCount(0);
 });
 
-test('exposes an explicit Core shutdown action that ends current sessions', async ({ page }) => {
+test('keeps Core shutdown outside the settings workspace', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  const shutdown = page.getByRole('menuitem', { name: '退出 Core', exact: true });
-  await expect(shutdown).toBeVisible();
-  await shutdown.click();
-  const confirm = page.getByRole('alertdialog', { name: '操作确认' });
-  await expect(confirm).toBeVisible();
-  await confirm.getByRole('button', { name: '退出 Core', exact: true }).click();
-
-  await expect(
-    page.getByText('Core 已关闭，请重新启动应用以继续使用。', { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByTestId('settings-workspace')).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '退出 Core', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '返回工作区', exact: true }).click();
   await expect(
     page.getByRole('tab', { name: 'api-prod / bash Git Bash', exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
 
 test('uses runtime model and Provider configuration behind the prototype pages', async ({
@@ -462,6 +532,12 @@ test('uses runtime model and Provider configuration behind the prototype pages',
   await expect(modelEditor.getByLabel('模型 ID (Model ID)')).toHaveValue('gpt-5');
   await modelEditor.getByRole('button', { name: '拉取远程模型', exact: true }).click();
   await expect(modelEditor.getByRole('button', { name: 'gpt-5-nano', exact: true })).toBeVisible();
+  await modelEditor.getByLabel('搜索远程模型').fill('mimo');
+  await expect(modelEditor.getByRole('button', { name: 'gpt-5-nano', exact: true })).toHaveCount(0);
+  await expect(
+    modelEditor.getByRole('button', { name: 'mimo-v2.5-pro', exact: true }),
+  ).toBeVisible();
+  await modelEditor.getByLabel('搜索远程模型').fill('');
   await modelEditor.getByRole('button', { name: 'gpt-5-nano', exact: true }).click();
   await modelEditor.getByLabel('展示名称 (Display Name)').fill('GPT-5 runtime');
   await modelEditor.getByRole('button', { name: '保存配置', exact: true }).click();
@@ -472,10 +548,16 @@ test('uses runtime model and Provider configuration behind the prototype pages',
     page.getByRole('button', { name: '模型: GPT-5 runtime', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('menuitem', { name: '服务商配置', exact: true }).click();
+  await page.getByRole('button', { name: '服务商配置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '服务商凭据' })).toBeVisible();
-  await expect(page.getByText('OpenAI 官方', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '测试连接 / 编辑', exact: true }).click();
+  const providerRow = page
+    .getByRole('table', { name: '服务商配置列表' })
+    .locator('tbody tr')
+    .filter({ hasText: 'OpenAI 官方' });
+  await expect(providerRow).toBeVisible();
+  await providerRow.getByRole('button', { name: '测试连接 OpenAI 官方', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '连接成功' })).toBeVisible();
+  await providerRow.getByRole('button', { name: '编辑 OpenAI 官方', exact: true }).click();
   const providerEditor = page.getByRole('dialog', { name: '配置服务商' });
   await providerEditor.getByRole('button', { name: '测试连接', exact: true }).click();
   await expect(providerEditor.getByRole('button', { name: '测试成功', exact: true })).toBeVisible();

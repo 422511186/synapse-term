@@ -252,4 +252,62 @@ describe('mock desktop API', () => {
       '一次任务最多可携带 8 个附件',
     );
   });
+
+  it('honors audit actor, time, observation, and cursor filters in mock mode', async () => {
+    const api = createMockDesktopApi();
+    const now = new Date();
+    const first = await api.audit.list({
+      from: new Date(now.getTime() - 10 * 60_000).toISOString(),
+      to: now.toISOString(),
+      actor: 'system',
+      includeObservations: false,
+      limit: 1,
+    });
+
+    expect(first.items).toHaveLength(1);
+    expect(first.nextCursor).toBeDefined();
+    await expect(
+      api.audit.list({
+        from: new Date(now.getTime() - 10 * 60_000).toISOString(),
+        to: now.toISOString(),
+        actor: 'external',
+        cursor: first.nextCursor,
+        limit: 1,
+      }),
+    ).resolves.toMatchObject({ items: [] });
+  });
+
+  it('writes the executed mock Agent command into the audit trace', async () => {
+    vi.useFakeTimers();
+    const api = createMockDesktopApi();
+    const started = await api.agent.start('session-local', 'check disk usage');
+
+    await vi.advanceTimersByTimeAsync(800);
+
+    const result = await api.audit.list({
+      taskId: started.taskId,
+      includeObservations: true,
+      limit: 10,
+    });
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        traceId: `task:${started.taskId}`,
+        category: 'command',
+        outcome: 'success',
+        summary: '命令：df -h && systemctl --failed --no-pager',
+      }),
+    ]);
+
+    const detail = await api.audit.detail(`task:${started.taskId}`);
+    expect(detail?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'command.completed',
+          outcome: 'success',
+          commandPreview: 'df -h && systemctl --failed --no-pager',
+          exitCode: 0,
+        }),
+      ]),
+    );
+  });
 });

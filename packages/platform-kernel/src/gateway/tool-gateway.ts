@@ -298,6 +298,7 @@ export class TerminalToolGateway {
       risk: decision.level,
       authorization,
       executionDialect,
+      commandPreview: input.command,
       ...(approval === undefined ? {} : { approval }),
     });
     if (authorization.requiresApproval) {
@@ -515,6 +516,7 @@ export class TerminalToolGateway {
     risk: PolicyDecision['level'];
     authorization: AuthorizationDecision;
     executionDialect?: ExecutionDialect;
+    commandPreview?: string;
     approval?: ApprovalGrant;
   }): void {
     this.#audit?.record({
@@ -525,6 +527,9 @@ export class TerminalToolGateway {
       payload: {
         tool: input.tool,
         ...(input.context.toolCallId === undefined ? {} : { toolCallId: input.context.toolCallId }),
+        ...(input.commandPreview === undefined
+          ? {}
+          : { commandPreview: this.#redactor.redact(input.commandPreview).text }),
         permissionMode: this.#permissionMode,
         risk: input.risk,
         authorization: input.authorization.authorization,
