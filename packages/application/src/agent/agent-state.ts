@@ -10,6 +10,7 @@ import type {
   AgentTask,
   AgentTurn,
   CommandRisk,
+  ConversationCompaction,
   ModelConfiguration,
   ProviderProfile,
   StagedAgentAttachment,
@@ -17,7 +18,7 @@ import type {
 import type { ModelInputItem } from '@synapse-term/model-providers';
 import type { ModelAdapter } from '@synapse-term/model-providers';
 import type { AgentProgressSnapshot, AgentTimelineItem } from '@synapse-term/protocol';
-import type { AgentRuntime } from '@synapse-term/agent-service';
+import type { AgentRuntime, ContextGovernor } from '@synapse-term/agent-service';
 import type { ApprovalManager, TerminalToolGateway } from '@synapse-term/platform-kernel';
 import type {
   CommandExecutor,
@@ -59,6 +60,10 @@ export interface AgentState {
   pendingApproval: PendingApproval | undefined;
   executorSubscription: PtyDisposable;
   history: ModelInputItem[];
+  /** ContextGovernor 实例（每轮 cache-stable 投影；装配时注入五回调）。 */
+  governor: ContextGovernor;
+  /** 既有摘要（Governor 首轮之后的 previousSummary 上下文）。 */
+  existingCompaction: ConversationCompaction | undefined;
   attachments: readonly StagedAgentAttachment[];
   nextModelSequence: number;
   assistantTimelineId: string;
