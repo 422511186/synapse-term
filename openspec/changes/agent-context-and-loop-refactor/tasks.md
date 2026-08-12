@@ -1,0 +1,56 @@
+## 1. 治理底座（Decision 1/2/3）
+
+- [ ] 1.1 在 `packages/domain/src/agent/agent-conversation.ts` 新增 `ToolResultSpillRecord`（`toolCallId` / `re-issuable` | `not-replayable` / preview 头尾各 ≤512 字节 / Seen 标志）与 `ContextGovernanceState`（conversationId + `spillRecords` + `tierClassifications` + `seenToolCallIds` + `schemaVersion: number` 初始 1）、`TierClassification`、`LoopVerdict`/`LoopObservation`/`DecompositionResult`/`Subtask` 类型骨架
+- [ ] 1.2 扩展 `ConversationCompaction` 增 `gate`（`proactive`/`preflight`/`reactive`/`layered`）、`tier`（`tier3`/`tier2`/`tier1`）、`subtaskMarkers: {subtaskId, inProgress: boolean}[]` 与 `schemaVersion: number`（默认 1）字段；同步扩展 `packages/protocol/src/schemas/domain-schemas.ts` 的 `conversationCompactionSchema`（`z.strictObject`）把这些字段加为 optional 且带默认值，避免 strict 模式 strip 新字段或 parse 失败；向前兼容旧数据（缺字段以默认值补齐）
+- [ ] 1.3 新建 `packages/agent-service/src/context/tool-result-spiller.ts`：超大 `tool_result` 按工具可重发性分级外溢（可重发激进 / 有副作用保守），头尾 preview（各 ≤512 字节）+ `[spilled:toolCallId, re-issuable|not-replayable]` 指针，Seen set keyed by `toolCallId`（语义为"防全量回灌"——投影路径不回灌全量，但允许 `context_recall` 显式召回），`local_read_file` self-bounded 豁免
+- [ ] 1.4 新建 `context_recall` 工具：签名 `{ toolCallId, startLine?, endLine?, maxBytes? }`，从 append-only `#items` 按 `toolCallId` 查原始 `tool_result` 并按切片返回，受 `maxBytes` 上限约束（未传或超大时用 ContextGovernor 初始化时配置的默认上限，不超过单条外溢预算），召回片段作为新 `tool_result` 经 `#emitItem`/`#redactItem` 脱敏路径进 `#items`；登记为 `TERMINAL_MODEL_TOOLS` 第 10 个工具（只读、不碰 PTY/文件系统/Provider keys）；**`maxBytes` 默认上限 = 16KB**（ContextGovernor 初始化时配置，MUST NOT 超过单条外溢预算——过大击穿 Seen set 防全量回灌、过小使召回失效）。**执行路径短路**：`#executeCalls` 识别 `name === 'context_recall'` 时 MUST 直接从 Runtime `#items` 按 `toolCallId` 查询切片返回，MUST NOT 经外部 `RuntimeToolGateway`（Gateway 无法访问 `#items`）；崩溃恢复后 `#items` 从已脱敏项重建，`context_recall` 返回的也是已脱敏片段
+- [ ] 1.5 正面扩 Restricted Terminal Tools allowlist + 修 drift：在 `agent-runtime.ts` 的 `TERMINAL_MODEL_TOOLS` 注册 `context_recall`；登记已存在但未在 spec 授权的 `local_write_file`/`local_edit_file`；同步 `openspec/specs/agent-execution/spec.md` 的 "Restricted Terminal Tools" requirement 对齐。**同步更新 `context-builder.ts` 的 `AGENT_SYSTEM_PROMPT`**：把"允许的 Tool 与选择规则"段中"你只能使用以下九个 Tool：…local_edit_file"改为"十个 Tool"并在列表中加入 `context_recall`；增补 `context_recall` 选择引导——`re-issuable` 工具（`local_read_file`/`local_search_files`/`local_list_files`/`terminal_observe`/只读 `terminal_execute`）优先重发更窄查询拿最新结果、`context_recall` 仅作备选；`not-replayable` 工具（有副作用的 `terminal_execute`/`terminal_wait`/`terminal_interrupt`/`local_write_file`/`local_edit_file`）的外溢结果用 `context_recall` 取回所需片段（spec `specs/context-governance/spec.md` 已 MUST 引导）
+- [ ] 1.6 新建 `packages/agent-service/src/context/context-governor.ts`：编排 spill → 分层 → 三闸门，替换 `fitModelItems` 前删路径，用"摘要段替换老段 + recent-tail append-only"产出 cache-stable 投影，增量维护 spill/tier 状态（基于 `toolCallId`/`sequence` 非 item index）
+- [ ] 1.7 改造 `context-builder.ts`：`fitModelItems` 退化为 Governor 入口，废弃前删非 protected 原子路径
+- [ ] 1.8 改造 `conversation-compactor.ts`：角色收窄为"durable 摘要持久化 + summary 回调"，移除单阈值压缩；Compactor 不再重复压缩 Governor 已投影内容
+- [ ] 1.8.1 处理 `agent-coordinator.ts:308` 预压缩调用点：现状 `#prepareExecution` 在 runtime 启动前调用一次 `#conversationCompactor.compactAsync({ thresholdTokens: model.autoCompact ? budget.compactAtTokens : Number.MAX_SAFE_INTEGER, … })` 并在 317-333 落盘 + 审计。Compactor 角色收窄移除单阈值压缩后，该预压缩调用 MUST 明确去向——改为由 Governor 在首轮投影时按三闸门驱动压缩（经 `onCompaction` 回调交回 coordinator 复用 `saveConversationCompaction` 落盘），`agent-coordinator.ts:308` 的预压缩调用点 MUST 移除或降级为"无压缩的纯加载 existingCompaction"（仅为 Governor 提供初始摘要上下文，不再触发压缩）；审计块（319-332）相应迁移到 `onCompaction` 回调触发的落盘路径上，MUST NOT 同时保留预压缩与 Governor 三闸门两条压缩路径
+- [ ] 1.9 改造 `context-budget.ts`：单阈值扩展为 `proactiveTokens=0.90` / `preflightTokens=0.95` / `reactiveOnOverflow`
+- [ ] 1.10 接线 `RuntimeOptions` 注入点：新增 `compactor`/`summarize`/`onCompaction`/`onSubtaskMarker`/`onGovernanceState` 五个注入点（`onSubtaskMarker` 独立于 `onCompaction`——Planning 子任务边界打 marker 与 Governor 摘要持久化是不同关注点，避免 `onCompaction` 一个回调承载两种语义混淆）；`agent-coordinator.ts` 装配时把五者注入 Runtime，Runtime 再传给 Governor/Planner；Governor 产新摘要时经 `onCompaction` 交回 coordinator 复用 `saveConversationCompaction` 落盘，产新 spill/tier 分类时经 `onGovernanceState` 交回 coordinator 持久化 `ContextGovernanceState`（防抖约 2s，非每次变化立即写盘），Planner 进新子任务边界经 `onSubtaskMarker` 打 marker（**注：`onSubtaskMarker` 在阶段 1 接线、但生产者 TaskPlanner 在阶段 4 才落地，阶段 1-3 间该回调为 no-op 空实现——接线就绪但无生产者触发，阶段 4 Planner 落地后激活**）
+- [ ] 1.11 实现 `ContextGovernanceState` 持久化：在 `packages/infrastructure/src/store/repositories.ts` 的 `CoreRepositories` 新增 `saveContextGovernanceState(state)`/`getContextGovernanceState(conversationId)` 方法（按 `conversationId` 整体 upsert，非增量 append）+ 新建 `context_governance_states` 表/keyspace；在 `packages/protocol/src/schemas/domain-schemas.ts` 新增 `contextGovernanceStateSchema`（zod，含 `schemaVersion` 默认 1）；崩溃恢复时 Governor 从持久化状态重建 spill/tier/Seen，不重新分类、不重新外溢；原始结果内容不冗余存（仍在 `#items`）；持久化失败时 Governor 视为 GovernanceState 不可用并 fail closed 或下轮重建，MUST NOT 内存/持久化静默不一致
+- [ ] 1.12 为 ToolResultSpiller 写 TDD 测试：超大 read-file 激进溢 + 指针、有副作用命令保守 preview 标 `not-replayable`、Seen set 防全量回灌但允许 `context_recall` 召回、self-bounded 豁免、preview 头尾各 ≤512 字节
+- [ ] 1.13 为 `context_recall` 工具写 TDD 测试：按 `toolCallId` 查 `#items`、切片受 `maxBytes` 约束（含未传/超大走默认上限）、只读不碰 PTY/文件系统、召回片段作为新 `tool_result` 进 `#items`、`#executeCalls` 内部短路不经 Gateway、召回片段经脱敏路径、崩溃恢复后返回已脱敏片段
+- [ ] 1.14 为 ContextGovernor 写 TDD 测试：前缀跨非压缩轮稳定、`#items` append-only 不被改、投影增量不每轮全量重算、`ContextGovernanceState` 持久化（upsert + 防抖）+ 崩溃恢复不重分类 + 持久化失败 fail closed/下轮重建
+
+## 2. 三道闸门 + 分层压缩 + Ch40 摘要持久化（Ch35/37/40）
+
+- [ ] 2.1 新建 `packages/agent-service/src/context/three-gate-compactor.ts`：Proactive（0.90）/ Preflight（0.95）/ Reactive（never-reset 标志 + 单次重试），三段保留（opening/summary/recent，floor 3 对），cache-aware 稳定截断边界
+- [ ] 2.2 新建 `packages/agent-service/src/context/layered-compactor.ts`：Tier3（≤8 全量）/ Tier2（8-19 语义摘要 cap 300 / 阈 2000）/ Tier1（≥20 元数据桩），first-touch 分类，`tool_use_id` 配对，Tier2 floor 保护 `local_read_file`/`local_search_files`/`local_list_files`，每 pass 语义尝试上限 2
+- [ ] 2.3 改造 `agent-runtime.ts`：Reactive 闸门挂钩 `provider_error` 处理分支（lines 407-411、435-437 附近）；**注意这是对 `#run()` 模型调用段的结构性重构**——把模型调用包成可重试结构（never-reset 标志 + retry-once 循环），而非在 error 分支上简单挂钩；命中 `context_length_exceeded` 时触发压缩 + 单次重试，重试后仍超窗则 fail closed；**Reactive 判定 MUST 兼容多 Provider 变体**——匹配 `event.code` 或 `providerError`（`agent-runtime.ts` 现状捕获为 `${event.code}: ${event.message}`）中出现 `context_length_exceeded`（OpenAI 系）或 `prompt_too_long`（Anthropic 系），MUST NOT 仅匹配单一字面量导致某 Provider 下 Reactive 闸门永不触发
+- [ ] 2.4 改造 `conversation-compactor.ts` + `agent-coordinator.ts`：压缩摘要写完即落盘 + 防抖约 2s（**防抖实现位置**：`conversation-compactor.ts` 的 persist 路径内包一层 debounce timer，或 coordinator 的 `saveConversationCompaction` 外层套 debounce——两者择一，MUST 保证 `InProgress⟺marker` 写入与摘要写入走同一防抖队列避免乱序）；`InProgress⟺marker` 不变量集中在 persist 路径与 Runtime 取消路径；版本化状态向前兼容
+- [ ] 2.5 改造 `agent-coordinator.ts`：恢复的 Turn 恒 unattended（不继承原会话特权）；取消清 marker
+- [ ] 2.6 为 ThreeGateCompactor 写 TDD 测试：0.90/0.95 闸门触发、Reactive 恢复超窗错误、重试仅一次、边界修复 tool_use/tool_result 对、recent floor 3 对
+- [ ] 2.7 为 LayeredCompactor 写 TDD 测试：距离分层正确、Tier2 floor 保护内容工具、每 pass 尝试上限 2 退化为确定性截断、`tool_use_id` 配对
+- [ ] 2.8 为 Ch40 摘要持久化写测试：写完即落盘防抖、取消清 marker 无孤儿、版本化向前兼容读取
+
+## 3. 循环治理（Decision 4/5）
+
+- [ ] 3.1 新建 `packages/agent-service/src/runtime/loop-detector.ts`：9 路径按序求值先命中者胜；**MUST 实现 4 条核心路径**（ConsecutiveDuplicate 阈值 3 / ExactDuplicate 阈值 5 / SameToolError 阈值 3 / NoProgress 阈值 3）+ 错误预算非对称（全错误路径 2× 阈值，第 6 次触发；成功打断连续错误计数）+ `[validation error]` 前缀短路（同工具+同参数+连续 3 次校验错误直接 ForceStop）；**SHOULD 增量补 5 条形状路径**（EmptyThink×2 / ToolModeSwitch / SuccessAfterError 显式 Continue / FamilyNoProgress 连续 4 / SearchEscalation 连续 3），先命中者胜求值顺序不得因未实现 SHOULD 而破坏；三级裁决 Continue/Nudge（滚动窗口 2 次后续调用内必须升级）/ForceStop
+- [ ] 3.2 实现错误预算非对称：全错误路径阈值 = 正常路径阈值 3 × 2 = 6（第 6 次连续错误调用触发）、成功（gateway `result.ok && !isError`）打断连续错误计数、`[validation error]` 前缀短路（同工具+同参数+连续 3 次校验错误直接 ForceStop）
+- [ ] 3.3 改造 `agent-runtime.ts`：替换 `#recordNoProgress`（lines 845-856）与 `#executeCalls` 的 success/error 分支 hook（lines 622、732）；**协调 `#lastUnavailableCallSignature` 硬失败路径（lines 564-595）**——当前该路径在第二次同签名不可用命令时直接 `#finish('failed', ..., 'repeated_command_without_new_evidence')` 绕过 LoopDetector，MUST 改为交给 LoopDetector 按 `SameToolError`/`NoProgress` 分级裁决（Nudge→ForceStop 滚动窗口），MUST NOT 退化为单路径硬失败；LoopDetector 返回 ForceStop 时注入消息 + 走无工具最终调用；**LoopDetector.detect() 调用点**：在 `#executeCalls` 的 success/error 分支收尾处（替换现 `#recordNoProgress` 调用点，即 lines 622/732 附近）与 `#lastUnavailableCallSignature` 路径（lines 564-595）统一接入，单次检测返回裁决后由 `#run()` 主循环按 Continue/Nudge/ForceStop 分流
+- [ ] 3.4 改造 `agent-runtime.ts`：ForceStop-with-summary 复用 COMPLETION_REVIEW 管道（lines 456 附近 `calls.length===0` 分支），但跳过"不完整则继续调工具"子分支；模型在最终调用中仍调工具时忽略 tool_call 只取 text（ForceStop 后不再进 ReAct）；`maxCompletionReviews` 3→2
+- [ ] 3.5 改造 `agent-runtime.ts`：completion review 失败改优雅降级返回原始候选答案（Ch11 graceful degradation），不再硬失败为 `agent_completion_review_failed`
+- [ ] 3.6 为 LoopDetector 写 TDD 测试：4 条 MUST 核心路径按序求值先命中者胜、错误预算非对称（全错误第 6 次触发 + 成功打断计数）、`[validation error]` 短路、Nudge 滚动窗口升级、ForceStop 复用管道、首次破坏性调用不受约束；SHOULD 路径增量补入时单独测试
+- [ ] 3.7 为 ForceStop-with-summary 写 TDD 测试：跳过"继续调工具"子分支、模型在最终调用中仍调工具时忽略 tool_call 只取 text、总结经 `FORCE_STOP_SUMMARY_PROMPT`（继承 `SUMMARY_SYSTEM_PROMPT` 禁令 + 强化"不得声称已验证/不得推测未执行工作"）脱敏、maxCompletionReviews=2 上限、review 失败优雅降级
+
+## 4. 轻量 Planning + 子任务 marker（Decision 6）
+
+- [ ] 4.1 新建 `packages/agent-service/src/runtime/task-planner.ts`：`DecompositionResult`（mode/complexity/subtasks/strategy）+ `Subtask`（Dependencies/Produces/Consumes/Boundaries-InScope/OutOfScope），LLM 分解 + 确定性代码按依赖拓扑排序执行
+- [ ] 4.2 实现覆盖率护栏：≥0.85 且零 critical gaps，不达标走定向 replanning（定向子查询非从头重规划），MaxIterations=3
+- [ ] 4.3 实现简单任务门控跳过（附录B Occam 剃刀）：多步动词 / 显式 `/plan` / ContextBuilder 估算超过 N 步组合启发式
+- [ ] 4.4 Planning 本体无状态：崩溃即从用户目标重规划，不依赖未落盘中间态；子任务边界打 marker 作为天然 checkpoint
+- [ ] 4.5 改造 `agent-runtime.ts`：`planning` phase 由 TaskPlanner 产出的 `DecompositionResult` 支撑，不再仅是 UI 相位标签
+- [ ] 4.6 改造 `packages/agent-service/src/index.ts`：导出新增公共 API（ContextGovernor / ToolResultSpiller / LayeredCompactor / ThreeGateCompactor / LoopDetector / TaskPlanner）
+- [ ] 4.7 为 TaskPlanner 写 TDD 测试：分解 + 拓扑排序、覆盖率 <0.85 走定向 replanning、MaxIterations=3、简单任务跳过、无状态崩溃重规划
+- [ ] 4.8 集成验证：跑现有 agent-service 全量测试套件，确认无回归（`#items` append-only、ADR-0018 原件保留、SecretRedactor 仍过摘要、`SUMMARY_SYSTEM_PROMPT` 禁令不变）
+
+## 5. 实施完成审查
+
+- [ ] 5.1 对照 design.md Migration Plan 四阶段验证各阶段独立可合入、独立可回滚
+- [ ] 5.2 审查业务逻辑、边界条件、异常处理、权限控制：副作用命令 conservative preview、`not-replayable` 不可声称可重放、`context_recall` 只读本会话历史不碰 PTY/文件系统/Provider keys 且 `#executeCalls` 内部短路不经 Gateway、approval/lease/audit 第一道防线不受 LoopDetector 干预、`#lastUnavailableCallSignature` 不再硬失败而是经 LoopDetector 分级裁决、`context_recall` 召回片段经脱敏路径
+- [ ] 5.3 检查遗漏/过度实现：确认 `context_recall` 已登记为第 10 个工具且 Restricted Terminal Tools allowlist 已正面扩（登记 `context_recall`/`local_write_file`/`local_edit_file`）；确认 `ContextGovernanceState` 已持久化（`CoreRepositories.saveContextGovernanceState`/`getContextGovernanceState` + 新表 + zod schema 含 `schemaVersion` 默认 1）且崩溃恢复不重分类；确认 `conversationCompactionSchema` 已扩展 `gate`/`tier`/`subtaskMarkers`/`schemaVersion`（optional + 默认值，不破坏 strict 解析）；确认未引入 MCP client 消费
+- [ ] 5.4 检查回归风险：prompt cache 命中依赖 provider 时正确退化、Planning 延迟受门控 + MaxIterations 约束、ForceStop 无证据总结经 `FORCE_STOP_SUMMARY_PROMPT` 强化"不得声称已验证"、治理状态持久化失败时 fail closed/下轮重建不静默不一致、`context_recall` 召回受 `maxBytes` 上限防全量回灌（含分片滥用场景：相邻切片召回累积等价全量回灌时由 Seen set + 预算约束兜底）
