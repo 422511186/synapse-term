@@ -19,12 +19,12 @@
 ## 2. 三道闸门 + 分层压缩 + Ch40 摘要持久化（Ch35/37/40）
 
 - [x] 2.1 新建 `packages/agent-service/src/context/three-gate-compactor.ts`：Proactive（0.90）/ Preflight（0.95）/ Reactive（never-reset 标志 + 单次重试），三段保留（opening/summary/recent，floor 3 对），cache-aware 稳定截断边界
-- [ ] 2.2 新建 `packages/agent-service/src/context/layered-compactor.ts`：Tier3（≤8 全量）/ Tier2（8-19 语义摘要 cap 300 / 阈 2000）/ Tier1（≥20 元数据桩），first-touch 分类，`tool_use_id` 配对，Tier2 floor 保护 `local_read_file`/`local_search_files`/`local_list_files`，每 pass 语义尝试上限 2
+- [x] 2.2 新建 `packages/agent-service/src/context/layered-compactor.ts`：Tier3（≤8 全量）/ Tier2（8-19 语义摘要 cap 300 / 阈 2000）/ Tier1（≥20 元数据桩），first-touch 分类，`tool_use_id` 配对，Tier2 floor 保护 `local_read_file`/`local_search_files`/`local_list_files`，每 pass 语义尝试上限 2
 - [ ] 2.3 改造 `agent-runtime.ts`：Reactive 闸门挂钩 `provider_error` 处理分支（lines 407-411、435-437 附近）；**注意这是对 `#run()` 模型调用段的结构性重构**——把模型调用包成可重试结构（never-reset 标志 + retry-once 循环），而非在 error 分支上简单挂钩；命中 `context_length_exceeded` 时触发压缩 + 单次重试，重试后仍超窗则 fail closed；**Reactive 判定 MUST 兼容多 Provider 变体**——匹配 `event.code` 或 `providerError`（`agent-runtime.ts` 现状捕获为 `${event.code}: ${event.message}`）中出现 `context_length_exceeded`（OpenAI 系）或 `prompt_too_long`（Anthropic 系），MUST NOT 仅匹配单一字面量导致某 Provider 下 Reactive 闸门永不触发
 - [ ] 2.4 改造 `conversation-compactor.ts` + `agent-coordinator.ts`：压缩摘要写完即落盘 + 防抖约 2s（**防抖实现位置**：`conversation-compactor.ts` 的 persist 路径内包一层 debounce timer，或 coordinator 的 `saveConversationCompaction` 外层套 debounce——两者择一，MUST 保证 `InProgress⟺marker` 写入与摘要写入走同一防抖队列避免乱序）；`InProgress⟺marker` 不变量集中在 persist 路径与 Runtime 取消路径；版本化状态向前兼容
 - [ ] 2.5 改造 `agent-coordinator.ts`：恢复的 Turn 恒 unattended（不继承原会话特权）；取消清 marker
 - [x] 2.6 为 ThreeGateCompactor 写 TDD 测试：0.90/0.95 闸门触发、Reactive 恢复超窗错误、重试仅一次、边界修复 tool_use/tool_result 对、recent floor 3 对
-- [ ] 2.7 为 LayeredCompactor 写 TDD 测试：距离分层正确、Tier2 floor 保护内容工具、每 pass 尝试上限 2 退化为确定性截断、`tool_use_id` 配对
+- [x] 2.7 为 LayeredCompactor 写 TDD 测试：距离分层正确、Tier2 floor 保护内容工具、每 pass 尝试上限 2 退化为确定性截断、`tool_use_id` 配对
 - [ ] 2.8 为 Ch40 摘要持久化写测试：写完即落盘防抖、取消清 marker 无孤儿、版本化向前兼容读取
 
 ## 3. 循环治理（Decision 4/5）
