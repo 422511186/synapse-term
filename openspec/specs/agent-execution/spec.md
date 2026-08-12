@@ -29,7 +29,7 @@ Agent MUST 仅在用户显式唤起后获得当前屏幕、有限回滚记录和
 - **THEN** Core 不向任何模型 Provider 持续发送终端输出
 
 ### Requirement: Restricted Terminal Tools
-内置 Agent MUST 只能调用 `terminal.observe`、`terminal.execute`、`terminal.wait`、`terminal.interrupt` 以及有界附件文件工具 `local_list_files`、`local_search_files`、`local_read_file`；不得获得任意本机文件、浏览器或插件访问。本地文件工具 MUST 只能访问当前 Session/Agent 附件根目录及其子路径，不得因用户附件而扩大为任意路径访问。未知工具 MUST 被拒绝并记录协议错误。
+内置 Agent MUST 只能调用 `terminal.observe`、`terminal.execute`、`terminal.wait`、`terminal.interrupt`、有界附件文件工具 `local_list_files`、`local_search_files`、`local_read_file`、`local_write_file`、`local_edit_file`，以及只读上下文召回工具 `context_recall`；不得获得任意本机文件、浏览器或插件访问。本地文件工具 MUST 只能访问当前 Session/Agent 附件根目录及其子路径，不得因用户附件而扩大为任意路径访问。`context_recall` MUST 是只读上下文管理工具——MUST NOT 访问 PTY、文件系统或 Provider keys，MUST NOT 改变任何状态，只按 `toolCallId` 查本会话 append-only `#items` 历史并按 `startLine`/`endLine`/`maxBytes` 切片返回（详见 `context-governance` capability 的 Context Recall Tool 要求）。`local_write_file`/`local_edit_file` 的副作用安全 MUST 仍由 approval/lease/audit 第一道防线兜底，本 allowlist 登记不放宽其审批语义。未知工具 MUST 被拒绝并记录协议错误。
 
 #### Scenario: Model requests an unknown tool
 - **WHEN** Provider 返回不在允许集合中的 Tool Call
@@ -42,6 +42,14 @@ Agent MUST 仅在用户显式唤起后获得当前屏幕、有限回滚记录和
 #### Scenario: Agent requests an absolute file path
 - **WHEN** 模型调用 `local_read_file` 并传绝对路径
 - **THEN** ToolGateway MUST 返回可恢复的 `invalid_tool_call`，不能读取附件根目录外的文件
+
+#### Scenario: Agent recalls a spilled result via context_recall
+- **WHEN** 模型调用 `context_recall` 并指定已被外溢的 `toolCallId` 与切片参数
+- **THEN** Runtime 从 `#items` 查原始 `tool_result`、按切片返回受限片段，MUST NOT 访问 PTY/文件系统/Provider keys，MUST NOT 改变状态
+
+#### Scenario: Side-effecting file tools keep approval semantics
+- **WHEN** 模型调用 `local_write_file` 或 `local_edit_file`
+- **THEN** 该调用 MUST 仍经 approval/lease/audit 审批，allowlist 登记不放宽副作用安全边界
 
 ### Requirement: Plaintext Shell Transaction Transport
 所有 Agent 生成的命令事务、Shell capability Probe 和固定资源脚本 MUST 以目标 Shell 可直接阅读的明文源写入 PTY；原始命令、事务边界、退出码和 nonce 完成标记 MUST 在服务器执行前可从 PTY 输入重组。系统 MUST NOT 把编码、压缩或其他不透明载荷解码后作为代码执行。
