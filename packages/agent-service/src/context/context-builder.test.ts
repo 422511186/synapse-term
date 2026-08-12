@@ -129,10 +129,12 @@ describe('ContextBuilder', () => {
     expect(JSON.stringify(context.items)).toContain('最近结论');
   });
 
-  it('keeps a current tool call and result together while truncating oversized output', () => {
+  it('keeps a current tool call and result together while truncating oversized output', async () => {
     const builder = new ContextBuilder({ maxInputTokens: 100 });
-    const fitted = builder.fitModelItems(
-      [
+    // 未注入 Governor：走 fitModelItems 兜底前删路径（过渡期保留，验证废弃路径仍可用）。
+    const fitted = await builder.fitModelItems({
+      conversationId: 'conv-test',
+      items: [
         { role: 'system', content: 'system' },
         { role: 'user', content: 'inspect' },
         {
@@ -148,8 +150,19 @@ describe('ContextBuilder', () => {
           isError: false,
         },
       ],
-      100,
-    );
+      budget: {
+        inputTokens: 100,
+        compactAtTokens: 100,
+        compactTargetTokens: 60,
+        reservedOutputTokens: 0,
+        reservedToolTokens: 0,
+        proactiveTokens: 90,
+        preflightTokens: 95,
+        reactiveOnOverflow: true,
+      },
+      currentTurn: 1,
+      createdAt: '2026-08-12T00:00:00.000Z',
+    });
 
     expect(fitted.estimatedTokens).toBeLessThanOrEqual(100);
     expect(fitted.items).toEqual(

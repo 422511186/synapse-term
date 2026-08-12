@@ -4,7 +4,10 @@ import type {
   ModelInputItem,
   ModelMessage,
 } from '@synapse-term/model-providers';
+import type { ConversationCompaction } from '@synapse-term/domain';
 import { SecretRedactor } from '@synapse-term/infrastructure';
+import type { ContextBudget } from './context-budget.js';
+import type { ContextGovernor, GovernanceProjectInput } from './context-governor.js';
 import { estimateModelItemsTokens } from './token-estimator.js';
 
 export const AGENT_SYSTEM_PROMPT_VERSION = 'terminal-agent-system-prompt:v3';
@@ -26,13 +29,17 @@ export const AGENT_SYSTEM_PROMPT = [
 - 任何修改或修复完成后，在条件允许时使用独立证据验证结果；没有验证成功就不要声称问题已解决。
 - 只获取完成目标所需的最小信息。不要主动索取、回显或总结密码、Token、私钥等秘密；以 Tool 返回的脱敏结果为准。`,
   `允许的 Tool 与选择规则
-你只能使用以下九个 Tool：terminal_observe、terminal_execute、terminal_wait、terminal_interrupt、local_list_files、local_search_files、local_read_file、local_write_file、local_edit_file。
+你只能使用以下十个 Tool：terminal_observe、terminal_execute、terminal_wait、terminal_interrupt、local_list_files、local_search_files、local_read_file、local_write_file、local_edit_file、context_recall。
 - terminal_observe：读取当前屏幕或增量输出；观察不会取得输入控制权。需要理解当前提示符、已有输出或活动事务时先观察。
 - terminal_execute：执行明确、最小且可审计的命令。优先使用只读诊断，再做必要修改；避免把无关操作合并成一条高影响命令。
 - terminal_wait：命令仍在运行时等待增量输出或最终状态。状态不确定时先 wait/observe，不要重复启动同一命令。
 - terminal_interrupt：仅在当前 Turn 的活动事务确实需要停止时使用，不把它当作通用按键输入。
 - local_list_files、local_search_files、local_read_file：发现和读取本机内的文件。
 - local_write_file、local_edit_file：在宿主策略、审批和哈希约束内创建、替换或精确编辑本机文件。
+- context_recall：当某个 Tool 的结果被外溢指针 [spilled:toolCallId, re-issuable|not-replayable] 替换、且头尾 preview 不足以支撑判断时，凭 toolCallId 召回被外溢的原始片段（可指定 startLine/endLine/maxBytes）。
+  - re-issuable 工具（local_read_file、local_search_files、local_list_files、terminal_observe、只读 terminal_execute）：优先重发更窄查询拿最新结果，context_recall 仅作备选（重发能取到最新状态，召回只是历史快照）。
+  - not-replayable 工具（有副作用的 terminal_execute、terminal_wait、terminal_interrupt、local_write_file、local_edit_file）：外溢结果不可重放，context_recall 是取回所需片段的唯一途径。
+  - context_recall 只读本会话历史，不碰终端、文件系统或 Provider；召回受 maxBytes 上限约束，禁止用它逐片拼回全量内容（会被预算兜底拒绝）。
 不要假设存在任意按键、密码输入、文件删除、Session 管理、浏览器、插件或其他隐藏 Tool。`,
   `安全与审批
 - Permission Mode 只改变审批流程，不扩大 Tool allowlist、Session 绑定、本机 home 路径、Schema、SecretRedactor、expected hash 或 Lease 边界。
@@ -183,6 +190,8 @@ export class ContextBuilder {
         : [{ type: 'text', text: textContent }, ...input.imageParts.map((part) => ({ ...part }))];
     const user: ModelMessage = { role: 'user', content };
 
+    // build() 仅用于首轮初始上下文装配（system + history + user），不走每轮 Governor 投影。
+    // 初始 history 已由 coordinator 经 ConversationCompactor 压缩过，此处仅做最终放形。
     const fitted = fitItems(
       [system, ...history, user],
       this.#maxInputTokens,
@@ -201,15 +210,52 @@ export class ContextBuilder {
     };
   }
 
-  fitModelItems(
-    items: readonly ModelInputItem[],
-    maxInputTokens = this.#maxInputTokens,
-  ): BuiltContext {
+  /**
+   * 每轮模型上下文投影入口（Decision 1：替换前删路径）。
+   *
+   * 注入 Governor 时走 cache-stable 投影：spill → 分层 → 三闸门，用"摘要段替换老段 +
+   * recent-tail append-only"产出稳定前缀（前缀稳定点只随压缩事件变，不随每轮变）。
+   * #items append-only 不被改：投影操作的是脱敏后的 clone，源 #items 不变（ADR-0018 精神）。
+   *
+   * 未注入 Governor 时（过渡期/测试）走兜底前删路径——该路径已废弃，仅保留向后兼容，
+   * 生产路径已迁移至 Governor，待 Governor 全量接入后此分支移除。
+   *
+   * 脱敏在投影前完成：Governor 只消费已脱敏项（与 #emitItem 脱敏路径一致），
+   * 保证外溢 preview / 召回切片 / 摘要段均不外泄密钥。
+   */
+  async fitModelItems(
+    input: FitModelItemsInput,
+    governor?: ContextGovernor,
+  ): Promise<BuiltContext> {
+    const redactedItems = input.items.map((item) => redactItem(item, this.#redactor));
+    if (governor !== undefined) {
+      // Governor 路径（Decision 1）：cache-stable 投影，不走前删。
+      const result = await governor.project({
+        conversationId: input.conversationId,
+        items: redactedItems,
+        budget: input.budget,
+        currentTurn: input.currentTurn,
+        createdAt: input.createdAt,
+        ...(input.existingCompaction === undefined
+          ? {}
+          : { existingCompaction: input.existingCompaction }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      });
+      return {
+        items: result.items,
+        systemPromptVersion: AGENT_SYSTEM_PROMPT_VERSION,
+        totalCharacters: totalCharacters(result.items),
+        estimatedTokens: result.estimatedTokens,
+        truncated: result.compacted,
+        disclosed: true,
+      };
+    }
+    // 兜底路径（废弃的前删非 protected 原子路径）：仅过渡期/测试用。
     const fitted = fitItems(
-      items.map((item) => redactItem(item, this.#redactor)),
-      maxInputTokens,
+      redactedItems,
+      input.budget.inputTokens,
       Number.POSITIVE_INFINITY,
-      lastUserContentLength(items),
+      lastUserContentLength(redactedItems),
     );
     return {
       items: fitted.items,
@@ -220,6 +266,27 @@ export class ContextBuilder {
       disclosed: true,
     };
   }
+}
+
+/**
+ * fitModelItems 投影输入。Governor 路径需要完整治理上下文（预算/turn/既有摘要），
+ * 由 Runtime 在每轮装配；兜底路径仅消费 budget.inputTokens 与 items。
+ */
+export interface FitModelItemsInput {
+  /** 当前会话 id（Governor 持久化键）。 */
+  conversationId: string;
+  /** 本轮 #items（未脱敏原始项，fitModelItems 内部脱敏后交 Governor）。 */
+  items: readonly ModelInputItem[];
+  /** 当前上下文预算（三闸门阈值派生自此）。 */
+  budget: ContextBudget;
+  /** 当前 turn 序号（分层距离 = currentTurn − tool_result 所在 turn）。 */
+  currentTurn: number;
+  /** ISO 时间戳（落 ConversationCompaction.createdAt）。 */
+  createdAt: string;
+  /** 既有摘要（首轮 undefined；后续从 ConversationCompaction.summary 传入）。 */
+  existingCompaction?: ConversationCompaction;
+  /** 取消信号（透传给 Governor 摘要回调）。 */
+  signal?: AbortSignal;
 }
 
 function redactItem(item: ModelInputItem, redactor: SecretRedactor): ModelInputItem {
