@@ -655,6 +655,8 @@ describe('AgentRuntime', () => {
       'local_read_file',
       'local_write_file',
       'local_edit_file',
+      // context_recall（task 1.5）：第 10 个工具，只读召回被外溢的 tool_result 片段。
+      'context_recall',
     ]);
     expect(adapter.requests[0]?.items.some((item) => JSON.stringify(item).includes('$ '))).toBe(
       false,
@@ -916,6 +918,14 @@ describe('AgentRuntime', () => {
           [Symbol.asyncIterator]() {
             return {
               next: async () => {
+                // 真实 adapter（model-adapter.ts）在进入流前会先检查 signal.aborted。
+                // fitModelItems 改为 async 后，run() 会在 await 处让出微任务，
+                // 同步的 cancel() 可能在 adapter.stream 注册 abort 监听前就 abort 信号；
+                // 已 abort 的信号不会回放 addEventListener('abort') 回调，故此处必须
+                // 先检查已中止状态，与真实 adapter 行为一致。
+                if (signal?.aborted) {
+                  throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+                }
                 await new Promise<void>((resolve) =>
                   signal?.addEventListener('abort', () => resolve(), { once: true }),
                 );

@@ -7,6 +7,7 @@
 export * from './runtime/agent-runtime.js';
 export * from './context/context-budget.js';
 export * from './context/context-builder.js';
+export * from './context/context-governor.js';
 export * from './context/conversation-compactor.js';
 export * from './context/token-estimator.js';
 export * from './tools/tool-call-assembler.js';

@@ -2,6 +2,7 @@ import {
   transitionAgentTask,
   type AgentTask,
   type AgentTaskStatus,
+  type ConversationCompaction,
   type ReasoningEffort,
 } from '@synapse-term/domain';
 
@@ -17,7 +18,14 @@ export type {
   AgentProgressStepStatus,
 } from '@synapse-term/protocol';
 
+import type { ContextBudget } from '../context/context-budget.js';
 import type { ContextBuildInput, ContextBuilder } from '../context/context-builder.js';
+import type { ContextGovernor } from '../context/context-governor.js';
+import {
+  ContextRecallService,
+  type ContextRecallArgs,
+  type ContextRecallResult,
+} from '../context/context-recall.js';
 import { SecretRedactor } from '@synapse-term/infrastructure';
 import type {
   ModelAdapter,
@@ -131,6 +139,24 @@ export const TERMINAL_MODEL_TOOLS = [
     required: ['path', 'expectedSha256', 'edits'],
     additionalProperties: false,
   }),
+  // context_recall（Ch36 召回 API）：只读工具，凭被外溢 tool_result 的 toolCallId
+  // 召回指定片段（startLine/endLine/maxBytes 受控切片），不碰 PTY/文件系统/Provider keys。
+  // 执行路径短路在 #executeCalls 内部完成，不经 RuntimeToolGateway（Gateway 无权访问 #items）。
+  tool(
+    'context_recall',
+    'Recall a bounded slice of a previously spilled tool_result by its toolCallId. Use only when a tool result was replaced with a [spilled:...] pointer and the preview is insufficient. Read-only: returns a bounded slice of historical content, does not touch PTY/filesystem/provider.',
+    {
+      type: 'object',
+      properties: {
+        toolCallId: { type: 'string', minLength: 1 },
+        startLine: { type: 'integer', minimum: 1 },
+        endLine: { type: 'integer', minimum: 1 },
+        maxBytes: { type: 'integer', minimum: 1 },
+      },
+      required: ['toolCallId'],
+      additionalProperties: false,
+    },
+  ),
 ] as const satisfies readonly ModelToolDefinition[];
 
 export const COMPLETION_REVIEW_PROMPT = `完成性复核（内部）：对照最初目标与全部 Tool Call/Result，不采信或引用候选答案。若有子目标缺少成功证据、仍在运行或结果不确定，立即调用现有 Tool 补全且不要输出结论；仅当全部目标均有证据时，不调用 Tool，并输出完整、自包含的最终答复，直接重述决定性证据、结论与必要限制。候选答案不会展示给用户；不得引用“候选答案”“上一条/前述答复或报告”，也不得仅说“无需修正”或“沿用原答案”。`;
@@ -168,6 +194,14 @@ export interface AgentRuntimeOptions {
   reasoningEffort?: ReasoningEffort;
   maxInputTokens?: number;
   redactor?: SecretRedactor;
+  /** 会话 id（Governor 持久化键 + 每轮投影 conversationId）。 */
+  conversationId?: string;
+  /** 上下文预算（三闸门阈值派生自此；未传时用 maxInputTokens 构造单阈值预算）。 */
+  contextBudget?: ContextBudget;
+  /** ContextGovernor 实例（每轮 cache-stable 投影；未传时走 fitModelItems 兜底前删路径）。 */
+  governor?: ContextGovernor;
+  /** 既有摘要（Governor 首轮之后的 previousSummary 上下文）。 */
+  existingCompaction?: ConversationCompaction;
   onTaskChange?: (task: AgentTask) => void;
   onModelEvent?: (event: ModelEvent, delivery?: { replaceAssistantText?: boolean }) => void;
   onProgress?: (progress: AgentProgressSnapshot) => void;
@@ -219,6 +253,20 @@ export class AgentRuntime {
   readonly #maxRepeatedNoProgress: number;
   readonly #maxCompletionReviews: number;
   readonly #maxInputTokens: number;
+  /** 会话 id（Governor 持久化键 + 每轮投影 conversationId）。 */
+  readonly #conversationId: string | undefined;
+  /** 上下文预算（三闸门阈值派生自此；未传时用 maxInputTokens 构造单阈值预算）。 */
+  readonly #contextBudget: ContextBudget | undefined;
+  /** ContextGovernor 实例（每轮 cache-stable 投影；未传时走 fitModelItems 兜底前删路径）。 */
+  readonly #governor: ContextGovernor | undefined;
+  /** 既有摘要（Governor 首轮之后的 previousSummary 上下文）。 */
+  #existingCompaction: ConversationCompaction | undefined;
+  /**
+   * context_recall 召回服务（Ch36 召回 API）。
+   * 持有 per-toolCallId 累计召回预算（K2 分片滥用兜底），在 #executeCalls 短路路径上调用。
+   * 会话内内存态——崩溃恢复后重置（Seen set 仍在投影路径防全量回灌）。
+   */
+  readonly #contextRecall = new ContextRecallService();
   #task: AgentTask;
   #runPromise: Promise<AgentRuntimeResult> | undefined;
   #cancelRequested = false;
@@ -260,6 +308,10 @@ export class AgentRuntime {
     if (!Number.isInteger(this.#maxInputTokens) || this.#maxInputTokens < 32) {
       throw new RangeError('maxInputTokens must be an integer of at least 32');
     }
+    this.#conversationId = options.conversationId;
+    this.#contextBudget = options.contextBudget;
+    this.#governor = options.governor;
+    this.#existingCompaction = options.existingCompaction;
   }
 
   run(): Promise<AgentRuntimeResult> {
@@ -377,9 +429,32 @@ export class AgentRuntime {
       const deferModelEvents = hasUsedTool;
       const modelEvents: ModelEvent[] = [];
       try {
-        const requestContext = this.#options.contextBuilder.fitModelItems(
-          items,
-          this.#maxInputTokens,
+        // 每轮模型上下文投影入口（task 1.7）：注入 Governor 时走 cache-stable 投影
+        // （spill → 分层 → 三闸门），未注入时走 fitModelItems 兜底前删路径。
+        // budget 优先用注入的 contextBudget，未注入时按 maxInputTokens 构造单阈值预算。
+        const requestContext = await this.#options.contextBuilder.fitModelItems(
+          {
+            conversationId: this.#conversationId ?? '',
+            items,
+            budget: this.#contextBudget ?? {
+              inputTokens: this.#maxInputTokens,
+              compactAtTokens: this.#maxInputTokens,
+              compactTargetTokens: Math.floor(this.#maxInputTokens * 0.6),
+              reservedOutputTokens: 0,
+              reservedToolTokens: 0,
+              // 兜底预算补齐三闸门阈值（未注入 contextBudget 时沿用 maxInputTokens）。
+              proactiveTokens: Math.floor(this.#maxInputTokens * 0.9),
+              preflightTokens: Math.floor(this.#maxInputTokens * 0.95),
+              reactiveOnOverflow: true,
+            },
+            currentTurn: turn,
+            createdAt: new Date().toISOString(),
+            ...(this.#existingCompaction === undefined
+              ? {}
+              : { existingCompaction: this.#existingCompaction }),
+            signal: this.#controller.signal,
+          },
+          this.#governor,
         );
         for await (const event of this.#options.adapter.stream(
           {
@@ -592,6 +667,19 @@ export class AgentRuntime {
       }
       if (this.#lastUnavailableCallSignature !== undefined) {
         this.#lastUnavailableCallSignature = undefined;
+      }
+      // context_recall 短路（Decision 2）：该工具只读本会话 #items，MUST NOT 经
+      // RuntimeToolGateway（Gateway 无权访问 Runtime 私有 #items）。在进入 Gateway
+      // 调用前拦截，直接从 ContextRecallService 按 toolCallId 查原始 tool_result 切片。
+      // 召回片段作为新 tool_result（新 toolCallId）经 #emitItem/#redactItem 脱敏路径
+      // 进 #items；崩溃恢复后 #items 从已脱敏项重建，召回返回的也是已脱敏片段。
+      if (call.name === 'context_recall') {
+        const recallResult = this.#contextRecall.recall(
+          items,
+          call.arguments as unknown as ContextRecallArgs,
+        );
+        this.#handleContextRecallResult(call, recallResult, items, toolResults, turn);
+        continue;
       }
       this.#updateProgressStep(call.id, 'running', 'executing');
       this.#toolActive = true;
@@ -853,6 +941,62 @@ export class AgentRuntime {
       this.#repeatedNoProgress = 1;
     }
     return this.#repeatedNoProgress >= this.#maxRepeatedNoProgress;
+  }
+
+  /**
+   * 处理 context_recall 短路结果（Ch36 + Decision 2）。
+   *
+   * 召回片段作为新 tool_result（toolCallId = 本次 context_recall 的 call.id）进 #items
+   * 与模型面，经 #emitItem/#redactItem 脱敏路径——与普通工具结果走同一条脱敏链路，
+   * 保证召回片段中的密钥同样被 SecretRedactor 过滤（ADR-0018 原件保留精神：摘要/召回
+   * 经脱敏，不直接外泄原件）。
+   *
+   * 成功与失败均 continue 本批次循环：context_recall 是只读召回，不改变副作用边界，
+   * 不触发 #recordNoProgress（召回片段本身是模型显式请求的增量证据，不算"无进展"）。
+   * K2 分片滥用兜底由 ContextRecallService 内部累计预算拦截。
+   */
+  #handleContextRecallResult(
+    call: AssembledToolCall,
+    recallResult: ContextRecallResult,
+    items: ModelInputItem[],
+    toolResults: unknown[],
+    _turn: number,
+  ): void {
+    if (recallResult.ok) {
+      const payload = {
+        ok: true as const,
+        content: recallResult.content,
+        truncated: recallResult.truncated,
+        originalBytes: recallResult.originalBytes,
+      };
+      toolResults.push(payload);
+      const item = {
+        type: 'tool_result' as const,
+        toolCallId: call.id,
+        content: JSON.stringify(payload),
+        isError: false,
+      };
+      items.push(item);
+      this.#emitItem(item);
+      this.#updateProgressStep(call.id, 'completed', 'executing');
+      return;
+    }
+    // 召回失败（tool_result_not_found / budget_exceeded / invalid_arguments）
+    const payload = {
+      ok: false as const,
+      error: recallResult.error,
+      message: recallResult.message,
+    };
+    toolResults.push(payload);
+    const item = {
+      type: 'tool_result' as const,
+      toolCallId: call.id,
+      content: JSON.stringify(payload),
+      isError: true,
+    };
+    items.push(item);
+    this.#emitItem(item);
+    this.#updateProgressStep(call.id, 'failed', 'executing');
   }
 
   /**
