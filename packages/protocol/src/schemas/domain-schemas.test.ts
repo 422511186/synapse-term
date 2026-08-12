@@ -183,6 +183,7 @@ describe('domain schemas', () => {
       sourceItemCount: 1,
       estimatedTokensBefore: 2_000,
       createdAt: '2026-07-28T00:00:00.000Z',
+      schemaVersion: 1,
     };
     expect(conversationCompactionSchema.parse(compaction)).toEqual(compaction);
   });

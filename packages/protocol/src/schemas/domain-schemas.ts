@@ -178,6 +178,47 @@ export const toolCallRecordSchema = z.strictObject({
   revision: epochSchema,
 });
 
+// ---- 上下文治理（Context Governance）相关 schema ----
+// 依据《AI Agent Book》Ch35/36/37/40 落地。
+// 以下 schema 与 packages/domain/src/agent/agent-conversation.ts 的类型骨架一一对应，
+// strict 模式下 MUST 把新字段加为 optional 带默认值，避免旧数据缺字段时 parse 失败或被 strip。
+
+/** 压缩来源闸门（Ch35 三道闸门 + Ch37 分层） */
+export const conversationCompactionGateSchema = z.enum([
+  'proactive',
+  'preflight',
+  'reactive',
+  'layered',
+]);
+
+/** 分层压缩层级（Ch37） */
+export const conversationCompactionTierSchema = z.enum(['tier3', 'tier2', 'tier1']);
+
+/** 子任务边界 marker（Ch40 最小子集，checkpoint 载体） */
+export const conversationCompactionSubtaskMarkerSchema = z.strictObject({
+  subtaskId: idSchema,
+  inProgress: z.boolean(),
+});
+
+/** 工具结果可重发性分级（Ch36，决定外溢策略与召回角色） */
+export const toolReissuabilityGradeSchema = z.enum(['re-issuable', 'not-replayable']);
+
+/** 外溢的 tool_result 记录（Ch36 Preview+Pointer；原始内容不冗余存，仍在 #items） */
+export const toolResultSpillRecordSchema = z.strictObject({
+  toolCallId: idSchema,
+  reissuability: toolReissuabilityGradeSchema,
+  previewHead: z.string().max(512),
+  previewTail: z.string().max(512),
+  originalBytes: z.number().int().nonnegative(),
+});
+
+/** 分层压缩分类记录（Ch37；首次分类后持久化，崩溃恢复不重新分类） */
+export const tierClassificationSchema = z.strictObject({
+  toolCallId: idSchema,
+  tier: conversationCompactionTierSchema,
+  classifiedAtTurn: epochSchema,
+});
+
 export const conversationCompactionSchema = z.strictObject({
   id: idSchema,
   conversationId: idSchema,
@@ -187,6 +228,21 @@ export const conversationCompactionSchema = z.strictObject({
   estimatedTokensBefore: z.number().int().positive(),
   createdAt: z.string().datetime({ offset: true }),
   summaryMethod: z.enum(['provider', 'deterministic']).optional(),
+  // 新增字段（向前兼容：旧数据缺字段以默认值补齐，MUST NOT 因缺字段而 parse 失败）
+  gate: conversationCompactionGateSchema.optional(),
+  tier: conversationCompactionTierSchema.optional(),
+  subtaskMarkers: z.array(conversationCompactionSubtaskMarkerSchema).optional(),
+  schemaVersion: z.number().int().positive().default(1),
+});
+
+/** 持久化的上下文治理状态（Ch40 精神延伸；按 conversationId 整体 upsert） */
+export const contextGovernanceStateSchema = z.strictObject({
+  conversationId: idSchema,
+  spillRecords: z.array(toolResultSpillRecordSchema),
+  tierClassifications: z.array(tierClassificationSchema),
+  // Seen set：防全量回灌（投影路径不回灌全量，但允许 context_recall 显式召回）
+  seenToolCallIds: z.array(idSchema),
+  schemaVersion: z.number().int().positive().default(1),
 });
 
 export const agentTaskSchema = z.strictObject({
@@ -376,6 +432,9 @@ export type AgentAttachmentMetadataMessage = z.infer<typeof agentAttachmentMetad
 export type ModelItemMessage = z.infer<typeof modelItemSchema>;
 export type ToolCallRecordMessage = z.infer<typeof toolCallRecordSchema>;
 export type ConversationCompactionMessage = z.infer<typeof conversationCompactionSchema>;
+export type ContextGovernanceStateMessage = z.infer<typeof contextGovernanceStateSchema>;
+export type ToolResultSpillRecordMessage = z.infer<typeof toolResultSpillRecordSchema>;
+export type TierClassificationMessage = z.infer<typeof tierClassificationSchema>;
 export type AgentTaskMessage = z.infer<typeof agentTaskSchema>;
 export type ExternalCallerMessage = z.infer<typeof externalCallerSchema>;
 export type CommandTransactionMessage = z.infer<typeof commandTransactionSchema>;
