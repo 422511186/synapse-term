@@ -4,6 +4,7 @@ import type {
   AgentTask,
   ApprovalGrant,
   CommandTransaction,
+  ContextGovernanceState,
   ConversationCompaction,
   ModelConfiguration,
   ModelItem,
@@ -17,6 +18,7 @@ import {
   agentTaskSchema,
   approvalGrantSchema,
   commandTransactionSchema,
+  contextGovernanceStateSchema,
   conversationCompactionSchema,
   modelConfigurationSchema,
   modelItemSchema,
@@ -247,6 +249,44 @@ export class CoreRepositories {
       )
       .all(conversationId) as Array<{ state_json: string }>;
     return rows.map((row) => conversationCompactionSchema.parse(JSON.parse(row.state_json)));
+  }
+
+  /**
+   * 持久化上下文治理状态（task 1.11 / Ch40 精神延伸）。
+   * 按 conversationId 整体 upsert（每会话至多一行快照），非增量 append——
+   * 治理状态需保持原子快照一致性（spill/tier/Seen 三者必须同生共死，
+   * 增量 append 会出现"spill 已记但 tier 未记"的中间态）。
+   *
+   * 持久化失败时调用方（Governor）视为 GovernanceState 不可用并 fail closed
+   * 或下轮重建，MUST NOT 内存/持久化静默不一致——故此处在事务内直接抛出，
+   * 不吞错（吞错会造成内存已改/持久化未改的静默不一致）。
+   */
+  saveContextGovernanceState(state: ContextGovernanceState): void {
+    const value = contextGovernanceStateSchema.parse(state);
+    this.#store.transaction((database) => {
+      database
+        .prepare(
+          `INSERT INTO context_governance_states (conversation_id, state_json)
+           VALUES (?, ?)
+           ON CONFLICT(conversation_id) DO UPDATE SET
+             state_json = excluded.state_json`,
+        )
+        .run(value.conversationId, JSON.stringify(value));
+    });
+  }
+
+  /**
+   * 读取会话治理状态快照（崩溃恢复用）。
+   * 返回 undefined 时 Governor 视为无既有状态，下轮重建（重新分类/外溢）。
+   */
+  getContextGovernanceState(conversationId: string): ContextGovernanceState | undefined {
+    const row = this.#store
+      .database()
+      .prepare('SELECT state_json FROM context_governance_states WHERE conversation_id = ?')
+      .get(conversationId) as { state_json?: string } | undefined;
+    return row?.state_json === undefined
+      ? undefined
+      : contextGovernanceStateSchema.parse(JSON.parse(row.state_json));
   }
 
   saveToolCall(call: ToolCallRecord): void {

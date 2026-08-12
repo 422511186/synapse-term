@@ -253,6 +253,9 @@ describe('CoreRepositories', () => {
         sourceItemCount: 1,
         estimatedTokensBefore: 1_200,
         createdAt: '2026-07-28T00:00:00.000Z',
+        // 持久化经 zod schema 归一化：未传 schemaVersion 时落盘补默认 1。
+        // 显式带上 1 使 round-trip 保持 identity，避免 toEqual 因默认值注入失败。
+        schemaVersion: 1,
       });
       const toolCall = createToolCallRecord({
         id: 'call-1',
@@ -440,7 +443,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(11);
+        expect(upgraded.schemaVersion).toBe(12);
         const upgradedRepositories = new CoreRepositories(upgraded);
         expect(upgradedRepositories.getSession(legacySession.id)).toMatchObject({
           executionDialect: 'observe_only',
@@ -577,7 +580,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(11);
+        expect(upgraded.schemaVersion).toBe(12);
         const modelRow = upgraded
           .database()
           .prepare('SELECT state_json FROM model_configurations WHERE id = ?')
@@ -719,7 +722,7 @@ describe('CoreRepositories', () => {
       const upgraded = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await upgraded.open();
       try {
-        expect(upgraded.schemaVersion).toBe(11);
+        expect(upgraded.schemaVersion).toBe(12);
         const repositories = new CoreRepositories(upgraded);
         expect(repositories.getAgentConversation('conversation-legacy')).toMatchObject({
           driver: 'builtin',

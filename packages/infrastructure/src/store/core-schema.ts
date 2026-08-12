@@ -519,6 +519,21 @@ export const CORE_MIGRATIONS: readonly SqliteMigration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    migrate: (database) => {
+      // 上下文治理状态表（task 1.11 / Ch40 精神延伸）：
+      // 按 conversationId 整体 upsert（每会话至多一行治理状态快照），
+      // 原始 tool_result 内容不冗余存（仍在 append-only #items），
+      // 这里只持久化 spill 元数据 + tier 分类 + Seen set + schemaVersion。
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS context_governance_states (
+          conversation_id TEXT PRIMARY KEY,
+          state_json TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 function record(value: unknown): Record<string, unknown> {

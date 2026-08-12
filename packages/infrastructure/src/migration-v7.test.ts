@@ -86,7 +86,7 @@ describe('Migration v7: plaintext environment fields', () => {
 
       const store = new SqliteStore(databasePath, CORE_MIGRATIONS);
       await store.open();
-      expect(store.schemaVersion).toBe(11);
+      expect(store.schemaVersion).toBe(12);
       expect(new CoreRepositories(store).listSessions()).toEqual([
         expect.objectContaining({
           id: 'legacy-session',
