@@ -1,33 +1,28 @@
 appId: com.synapseterm.desktop
 productName: Synapse Term
 asar: true
-npmRebuild: false
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+npmRebuild: true
 electronVersion: 43.2.0
 electronDist: apps/desktop/node_modules/electron/dist
-icon: apps/desktop/src/renderer/assets/synapse-term-logo.svg
+icon: icon.png
 directories:
   output: release
+  app: apps/desktop
+  buildResources: build
 files:
   - package.json
-  - from: apps/desktop/dist
-    to: dist
-    filter:
-      - '**/*'
-extraResources:
-  - from: .packaging/core-runtime
-    to: core
-    filter:
-      - '**/*'
-      - '!node_modules/**/*'
-  - from: .packaging/core-runtime/node_modules
-    to: core/node_modules
-    filter:
-      - '**/*'
+  - dist/**/*
+  - '!node_modules/@synapse-term/**'
+  - '!node_modules/**/*.test.{js,ts,tsx}'
+  - '!node_modules/**/*.map'
 extraMetadata:
   main: dist/main/electron-main.mjs
 win:
+  icon: icon.png
   target: nsis
-  artifactName: Terminal-Agent-${version}-${arch}-Setup.${ext}
+  artifactName: Synapse-Term-${version}-${arch}-Setup.${ext}
 nsis:
   oneClick: false
   perMachine: false
@@ -36,8 +31,9 @@ nsis:
   include: build/installer.nsh
 
 mac:
+  icon: icon.icns
   target: dmg
-  artifactName: Terminal-Agent-${version}-${arch}.${ext}
+  artifactName: Synapse-Term-${version}-${arch}.${ext}
 dmg:
   contents:
     - x: 130

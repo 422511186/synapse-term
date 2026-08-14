@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-桌面入口位于 `apps/desktop`，Core 入口位于 `apps/core`；PTY 和 Shell 逻辑位于 `@synapse-term/terminal-service`，UI 组件位于 `@synapse-term/ui-platform`。
+桌面入口位于 `apps/desktop`；PTY 和 Shell 逻辑位于 `@synapse-term/terminal-service`，领域模型位于 `@synapse-term/domain`，UI 组件位于 desktop renderer。
 
 ## 影响
 

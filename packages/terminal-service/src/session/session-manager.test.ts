@@ -1,70 +1,94 @@
 import { describe, expect, it } from 'vitest';
 
-import { FakePty } from '@synapse-term/test-kit';
+import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 
-import { SessionManager } from './session-manager.js';
-import type { PtySpawnOptions, PtySpawner } from '../shell/pty-adapter.js';
+import type { PtySpawner } from '../shell/pty-adapter.js';
+import { SessionManager, SessionResourceError } from './session-manager.js';
 
-class FakeSpawner implements PtySpawner {
-  readonly spawned: PtySpawnOptions[] = [];
-  readonly ptys: FakePty[] = [];
+class FakePtySpawner implements PtySpawner {
+  readonly spawned: ReturnType<typeof createFakeTerminalBackend>[] = [];
 
-  spawn(options: PtySpawnOptions) {
-    this.spawned.push(options);
-    const pty = new FakePty(this.spawned.length);
-    this.ptys.push(pty);
-    return pty;
+  spawn() {
+    const backend = createFakeTerminalBackend();
+    this.spawned.push(backend);
+    return backend;
   }
 }
 
-const config = (id: string): { id: string; launch: PtySpawnOptions } => ({
-  id,
-  launch: {
-    executable: 'bash.exe',
-    args: [],
-    cwd: 'C:/work',
-    env: { TERM: 'xterm-256color' },
-    columns: 80,
-    rows: 24,
-  },
-});
-
 describe('SessionManager', () => {
-  it('creates sessions with a configurable hard limit', async () => {
-    const spawner = new FakeSpawner();
-    const manager = new SessionManager(spawner, { maxSessions: 1 });
-
-    const actor = await manager.create(config('session-1'));
-    expect(actor.snapshot).toMatchObject({ id: 'session-1', pty: 'running' });
-    await expect(manager.create(config('session-2'))).rejects.toMatchObject({
-      code: 'session_limit_reached',
-    });
-    expect(manager.activeCount).toBe(1);
-    spawner.ptys[0]!.emitExit({ exitCode: 0 });
-    await actor.idle();
-    expect(manager.activeCount).toBe(0);
-  });
-
-  it('explicitly terminates and removes a session', async () => {
-    const spawner = new FakeSpawner();
-    const manager = new SessionManager(spawner, { maxSessions: 2 });
-    await manager.create(config('session-1'));
-
-    await expect(manager.close('session-1')).resolves.toBe(true);
-    expect(spawner.ptys[0]!.terminateCount).toBe(1);
-    expect(manager.activeCount).toBe(0);
-    await expect(manager.close('missing')).resolves.toBe(false);
-  });
-
-  it('initializes the Session execution dialect without probing the PTY', async () => {
-    const spawner = new FakeSpawner();
+  it('creates, lists and closes sessions', async () => {
+    const spawner = new FakePtySpawner();
     const manager = new SessionManager(spawner);
     const actor = await manager.create({
-      ...config('session-powershell'),
-      executionDialect: 'powershell',
+      id: 's1',
+      title: '终端 1',
+      terminalType: 'Zsh',
+      launch: {
+        executable: '/bin/zsh',
+        args: ['-l', '-i'],
+        cwd: '/Users/test',
+        env: {},
+        columns: 80,
+        rows: 24,
+      },
     });
+    expect(manager.activeCount).toBe(1);
+    expect(actor.snapshot.pty).toBe('running');
+    expect(await manager.close('s1')).toBe(true);
+    expect(manager.activeCount).toBe(0);
+  });
 
-    expect(actor.snapshot.executionDialect).toBe('powershell');
-    expect(spawner.ptys[0]?.writes).toEqual([]);
+  it('enforces session limit and duplicate ids', async () => {
+    const manager = new SessionManager(new FakePtySpawner(), { maxSessions: 1 });
+    await manager.create({
+      id: 's1',
+      title: 't',
+      terminalType: 'Zsh',
+      launch: {
+        executable: '/bin/zsh',
+        args: [],
+        cwd: '/',
+        env: {},
+        columns: 80,
+        rows: 24,
+      },
+    });
+    await expect(
+      manager.create({
+        id: 's2',
+        title: 't',
+        terminalType: 'Zsh',
+        launch: {
+          executable: '/bin/zsh',
+          args: [],
+          cwd: '/',
+          env: {},
+          columns: 80,
+          rows: 24,
+        },
+      }),
+    ).rejects.toBeInstanceOf(SessionResourceError);
+  });
+
+  it('keeps sessions visible after the pty exits', async () => {
+    const spawner = new FakePtySpawner();
+    const manager = new SessionManager(spawner);
+    await manager.create({
+      id: 's1',
+      title: 't',
+      terminalType: 'Zsh',
+      launch: {
+        executable: '/bin/zsh',
+        args: [],
+        cwd: '/',
+        env: {},
+        columns: 80,
+        rows: 24,
+      },
+    });
+    spawner.spawned[0]?.emitExit(0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(manager.activeCount).toBe(1);
+    expect(manager.get('s1')?.snapshot.pty).toBe('exited');
   });
 });

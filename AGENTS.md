@@ -2,13 +2,13 @@
 
 ## 产品定位与架构边界
 
-Synapse Term 是本地优先的桌面终端与 Agent 工作台：用户先在现有 Terminal Session 中准备本地 Shell、SSH、跳板机、容器或 WSL 环境，再由 Agent 观察、执行和验证任务。它不建立服务器资产、SSH 拓扑或远程凭据模型。
+Synapse Term 是本地优先的桌面终端：用户先在现有 Terminal Session 中准备本地 Shell、SSH、跳板机、容器或 WSL 环境，应用负责管理 PTY、Session 与回放。它不建立服务器资产、SSH 拓扑或远程凭据模型。
 
-Renderer 只负责界面并通过受限 preload API 通信；Electron Main 管理窗口、Core 生命周期、IPC、MCP 与 ACP；独立 Node.js Core 持有 PTY、Session、Agent、策略、审批、审计和数据。任何入口都不得绕过 Core 的能力、审批与审计边界，Renderer 不得直接访问 Node API、PTY、SQLite 或 Provider 密钥。
+Renderer 只负责界面并通过受限 preload API 通信；Electron Main 通过 `terminal-host.ts` 持有 PTY、Session 与内存回放。任何入口都不得绕过 Main 的校验边界，Renderer 不得直接访问 Node API、PTY 或 Session 内部状态。
 
 ## 项目结构与模块组织
 
-本仓库是 pnpm workspace。`apps/desktop` 包含 Electron 主进程、preload、React Renderer 与 `e2e/`；`apps/core` 是独立 Node.js Core。`packages/` 按职责拆分领域、应用、终端、Agent、协议、基础设施、模型 Provider、UI 平台和测试工具，跨包依赖应通过各包的 `src/index.ts` 公共出口。单元测试与源码同目录，命名为 `*.test.ts` 或 `*.test.tsx`。字体等静态资源位于 `apps/desktop/src/renderer/assets/`；架构、安全和运行说明在 `docs/`；规格变更及归档位于 `openspec/`。
+本仓库是 pnpm workspace。`apps/desktop` 包含 Electron 主进程、preload、React Renderer 与 `e2e/`。`packages/` 按职责拆分领域、终端服务与测试工具：`domain` 持有 Session/终端领域模型，`terminal-service` 持有 PTY、Session、回放与 Shell 发现，`test-kit` 提供测试替身；跨包依赖应通过各包的 `src/index.ts` 公共出口。单元测试与源码同目录，命名为 `*.test.ts` 或 `*.test.tsx`。字体等静态资源位于 `apps/desktop/src/renderer/assets/`；架构、安全和运行说明在 `docs/`；规格变更及归档位于 `openspec/`。
 
 ## 构建、测试与开发命令
 
@@ -30,8 +30,8 @@ Vitest 覆盖单元、集成、协议与安全行为；Playwright 覆盖 Mock Re
 
 ## Git 提交与 PR 规范
 
-* **Commit**：使用简洁中文动宾短句，统一采用 `fix:`、`feat:`、`docs:`、`chore:` 等前缀；每个提交只解决一个问题，避免混杂无关改动。
-* **PR**：说明**背景、变更内容、影响/风险、验证方式**，并关联对应 Issue 或 OpenSpec Change；涉及 UI 改动时附前后截图。
-* **合并前**：确认 CI、代码格式、类型检查和测试全部通过。
-* **提交内容**：禁止提交 `dist/`、`release/`、测试报告、用户数据、凭据、真实主机/IP 等环境敏感信息。
-* **提交历史**：保持清晰、可追溯，避免无意义提交和与当前问题无关的改动。
+- **Commit**：使用简洁中文动宾短句，统一采用 `fix:`、`feat:`、`docs:`、`chore:` 等前缀；每个提交只解决一个问题，避免混杂无关改动。
+- **PR**：说明**背景、变更内容、影响/风险、验证方式**，并关联对应 Issue 或 OpenSpec Change；涉及 UI 改动时附前后截图。
+- **合并前**：确认 CI、代码格式、类型检查和测试全部通过。
+- **提交内容**：禁止提交 `dist/`、`release/`、测试报告、用户数据、凭据、真实主机/IP 等环境敏感信息。
+- **提交历史**：保持清晰、可追溯，避免无意义提交和与当前问题无关的改动。

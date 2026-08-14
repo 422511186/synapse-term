@@ -21,6 +21,5 @@ export function buildSessionLaunch(
     args: [...shell.args],
     cwd,
     env: {},
-    executionDialect: shell.executionDialect,
   };
 }

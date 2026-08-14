@@ -1,0 +1,226 @@
+import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+
+import {
+  NodePtySpawner,
+  SessionManager,
+  ShellLocator,
+  type SessionActor,
+  type SessionActorEvent,
+  type PtySpawner,
+} from '@synapse-term/terminal-service';
+
+import type {
+  CoreStatus,
+  SessionEnvironment,
+  SessionLaunchInput,
+  SessionSummary,
+  TerminalOutputEvent,
+} from '../shared/contracts.js';
+
+export interface TerminalHostOptions {
+  spawner?: PtySpawner;
+  home?: string;
+  shellLocator?: ShellLocator;
+  maxSessions?: number;
+  version?: string;
+}
+
+export class TerminalHost {
+  readonly #manager: SessionManager;
+  readonly #shellLocator: ShellLocator;
+  readonly #home: string;
+  readonly #version: string;
+  readonly #sessionListeners = new Set<(session: SessionSummary) => void>();
+  readonly #outputListeners = new Set<(event: TerminalOutputEvent) => void>();
+
+  constructor(options: TerminalHostOptions = {}) {
+    this.#manager = new SessionManager(
+      options.spawner ?? new NodePtySpawner(),
+      options.maxSessions === undefined ? {} : { maxSessions: options.maxSessions },
+    );
+    this.#shellLocator = options.shellLocator ?? new ShellLocator();
+    this.#home = options.home ?? homedir();
+    this.#version = options.version ?? '0.4.0';
+  }
+
+  listSessions(): SessionSummary[] {
+    return this.#manager.list().map(toSummary);
+  }
+
+  environment(): SessionEnvironment {
+    return { home: this.#home, shells: this.#shellLocator.list() };
+  }
+
+  async createSession(input: SessionLaunchInput): Promise<SessionSummary> {
+    const id = randomUUID();
+    const env = {
+      ...process.env,
+      ...input.env,
+      TERM: input.env.TERM ?? process.env.TERM ?? 'xterm-256color',
+    };
+    const actor = await this.#manager.create({
+      id,
+      title: input.title,
+      terminalType: input.terminalType,
+      launch: {
+        executable: input.executable,
+        args: input.args,
+        cwd: input.cwd.trim().length > 0 ? input.cwd : this.#home,
+        env,
+        columns: input.columns ?? 80,
+        rows: input.rows ?? 24,
+      },
+      onEvent: (actor, event) => this.#handleActorEvent(actor, event),
+    });
+    const summary = toSummary(actor);
+    this.#emitSessionChanged(summary);
+    return summary;
+  }
+
+  async renameSession(sessionId: string, alias: string): Promise<SessionSummary> {
+    const actor = this.#requireSession(sessionId);
+    await actor.rename(alias);
+    const summary = toSummary(actor);
+    this.#emitSessionChanged(summary);
+    return summary;
+  }
+
+  async closeSession(sessionId: string): Promise<boolean> {
+    return this.#manager.close(sessionId);
+  }
+
+  async write(sessionId: string, data: string): Promise<void> {
+    const actor = this.#requireSession(sessionId);
+    const result = await actor.writeUser(data);
+    if (!result.ok) throw new Error('Session is not running');
+  }
+
+  async resize(sessionId: string, columns: number, rows: number): Promise<void> {
+    const actor = this.#requireSession(sessionId);
+    await actor.resize(columns, rows);
+  }
+
+  status(): CoreStatus {
+    return {
+      connected: true,
+      version: this.#version,
+      sessions: this.#manager.activeCount,
+    };
+  }
+
+  onSessionChanged(listener: (session: SessionSummary) => void): () => void {
+    this.#sessionListeners.add(listener);
+    return () => this.#sessionListeners.delete(listener);
+  }
+
+  onTerminalOutput(listener: (event: TerminalOutputEvent) => void): () => void {
+    this.#outputListeners.add(listener);
+    return () => this.#outputListeners.delete(listener);
+  }
+
+  async shutdown(): Promise<void> {
+    await Promise.all(this.#manager.list().map((actor) => this.#manager.close(actor.snapshot.id)));
+  }
+
+  async handle(channel: string, args: readonly unknown[]): Promise<unknown> {
+    switch (channel) {
+      case 'sessions:list':
+        return this.listSessions();
+      case 'sessions:environment':
+        return this.environment();
+      case 'sessions:create':
+        return this.createSession(parseLaunchInput(args[0]));
+      case 'sessions:rename':
+        return this.renameSession(stringArg(args[0]), stringArg(args[1]));
+      case 'sessions:close':
+        return this.closeSession(stringArg(args[0]));
+      case 'terminal:write':
+        return this.write(stringArg(args[0]), stringArg(args[1]));
+      case 'terminal:resize':
+        return this.resize(stringArg(args[0]), numberArg(args[1]), numberArg(args[2]));
+      case 'core:status':
+        return this.status();
+      case 'core:exit':
+        await this.shutdown();
+        return null;
+      default:
+        throw new Error(`Renderer channel is not available: ${channel}`);
+    }
+  }
+
+  #requireSession(sessionId: string): SessionActor {
+    const actor = this.#manager.get(sessionId);
+    if (actor === undefined) throw new Error('Session not found');
+    return actor;
+  }
+
+  #handleActorEvent(actor: SessionActor, event: SessionActorEvent): void {
+    if (event.type === 'pty_output') {
+      for (const listener of this.#outputListeners) {
+        listener({ sessionId: actor.snapshot.id, sequence: event.sequence, data: event.data });
+      }
+      return;
+    }
+    if (event.type === 'pty_exit') {
+      this.#emitSessionChanged(toSummary(actor));
+    }
+  }
+
+  #emitSessionChanged(session: SessionSummary): void {
+    for (const listener of this.#sessionListeners) listener(session);
+  }
+}
+
+function toSummary(actor: SessionActor): SessionSummary {
+  const state = actor.snapshot;
+  return {
+    id: state.id,
+    title: state.title,
+    terminalType: state.terminalType,
+    pty: state.pty,
+  };
+}
+
+function parseLaunchInput(value: unknown): SessionLaunchInput {
+  if (typeof value !== 'object' || value === null) throw new TypeError('expected launch input');
+  const input = value as Record<string, unknown>;
+  return {
+    title: stringArg(input.title),
+    terminalType: stringArg(input.terminalType),
+    executable: stringArg(input.executable),
+    args: stringArrayArg(input.args),
+    cwd: stringArg(input.cwd),
+    env: recordArg(input.env),
+    ...(input.columns === undefined ? {} : { columns: numberArg(input.columns) }),
+    ...(input.rows === undefined ? {} : { rows: numberArg(input.rows) }),
+  };
+}
+
+function stringArg(value: unknown): string {
+  if (typeof value !== 'string') throw new TypeError('expected a string argument');
+  return value;
+}
+
+function numberArg(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError('expected a number argument');
+  }
+  return value;
+}
+
+function stringArrayArg(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new TypeError('expected a string array argument');
+  }
+  return [...value] as string[];
+}
+
+function recordArg(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ),
+  );
+}

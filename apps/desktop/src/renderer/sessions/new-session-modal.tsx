@@ -2,8 +2,8 @@
 import { useEffect, useState, type JSX } from 'react';
 import { X } from 'lucide-react';
 
-import { errorMessageZh } from '@synapse-term/ui-platform';
 import type { SessionEnvironment, SessionSummary } from '../../preload/preload-api.js';
+import { errorMessageZh } from '../i18n/zh-cn.js';
 import { getDefaultSessionAlias, resolveSessionAlias } from '../session-alias.js';
 
 export function NewSessionModal({
@@ -68,8 +68,7 @@ export function NewSessionModal({
         </div>
         <div className="p-5 space-y-5">
           <p className="text-[13px] text-muted-foreground leading-relaxed">
-            新 Session 会从当前用户主目录启动。在终端中自行完成跳转与认证，Agent 仅操作就绪的
-            Session。
+            新 Session 会从当前用户主目录启动。在终端中自行完成跳转与认证。
           </p>
           <div className="space-y-2">
             <label

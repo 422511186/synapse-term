@@ -1,19 +1,19 @@
 import * as nodePty from 'node-pty';
 import { spawnSync } from 'node:child_process';
 
-export interface PtyDisposable {
-  dispose(): void;
-}
+import type {
+  TerminalBackend,
+  TerminalExitEvent,
+  TerminalSubscription,
+} from '@synapse-term/domain';
 
 export interface NativePtyProcess {
   readonly pid: number;
   write(data: string): void;
   resize(columns: number, rows: number): void;
   kill(): void;
-  onData(listener: (data: string) => void): PtyDisposable;
-  onExit(
-    listener: (event: { exitCode: number; signal?: number | undefined }) => void,
-  ): PtyDisposable;
+  onData(listener: (data: string) => void): TerminalSubscription;
+  onExit(listener: (event: TerminalExitEvent) => void): TerminalSubscription;
 }
 
 export interface NativePtySpawnOptions {
@@ -39,27 +39,15 @@ export interface PtySpawnOptions {
   terminalName?: string;
 }
 
-export interface PtyAdapter {
-  readonly pid: number;
-  write(data: string): void;
-  resize(columns: number, rows: number): void;
-  interrupt(): void;
-  terminate(): void;
-  onData(listener: (data: string) => void): PtyDisposable;
-  onExit(
-    listener: (event: { exitCode: number; signal?: number | undefined }) => void,
-  ): PtyDisposable;
-}
-
 export interface PtySpawner {
-  spawn(options: PtySpawnOptions): PtyAdapter;
+  spawn(options: PtySpawnOptions): TerminalBackend;
 }
 
 export interface NodePtySpawnerOptions {
   forceKillProcessTree?: (pid: number) => void;
 }
 
-class NodePtyProcessAdapter implements PtyAdapter {
+class NodePtyProcessAdapter implements TerminalBackend {
   readonly #native: NativePtyProcess;
   readonly #forceKillProcessTree: (pid: number) => void;
 
@@ -90,13 +78,11 @@ class NodePtyProcessAdapter implements PtyAdapter {
     this.#forceKillProcessTree(this.#native.pid);
   }
 
-  onData(listener: (data: string) => void): PtyDisposable {
+  onData(listener: (data: string) => void): TerminalSubscription {
     return this.#native.onData(listener);
   }
 
-  onExit(
-    listener: (event: { exitCode: number; signal?: number | undefined }) => void,
-  ): PtyDisposable {
+  onExit(listener: (event: TerminalExitEvent) => void): TerminalSubscription {
     return this.#native.onExit(listener);
   }
 }
@@ -123,7 +109,7 @@ export class NodePtySpawner implements PtySpawner {
         : forceKillPosixProcessTree);
   }
 
-  spawn(options: PtySpawnOptions): PtyAdapter {
+  spawn(options: PtySpawnOptions): TerminalBackend {
     validateSize(options.columns, options.rows);
     const native = this.#module.spawn(options.executable, options.args, {
       cwd: options.cwd,
@@ -151,7 +137,6 @@ function forceKillPosixProcessTree(pid: number): void {
   try {
     process.kill(-pid, 'SIGTERM');
   } catch {
-    // Process group may already be gone.
     return;
   }
   setTimeout(() => {

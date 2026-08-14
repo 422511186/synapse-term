@@ -3,44 +3,28 @@ import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../preload/preload-api.js';
 import { getSessionAvailability } from './session-status.js';
 
-function session(
-  pty: SessionSummary['pty'],
-  shell: SessionSummary['shell'],
-  agentStatus?: string,
-): SessionSummary {
+function session(pty: SessionSummary['pty']): SessionSummary {
   return {
-    id: `${pty}-${shell}`,
+    id: `session-${pty}`,
     title: '终端',
     terminalType: 'Git Bash',
     pty,
-    shell,
-    executionDialect: 'posix',
-    ...(agentStatus === undefined ? {} : { agentStatus }),
   };
 }
 
 describe('session terminal availability', () => {
   it('maps terminal lifecycle states to stable status tones', () => {
-    expect(getSessionAvailability(session('failed', 'unknown'))).toEqual(
+    expect(getSessionAvailability(session('failed'))).toEqual(
       expect.objectContaining({ tone: 'error' }),
     );
-    expect(getSessionAvailability(session('exited', 'unknown'))).toEqual(
+    expect(getSessionAvailability(session('exited'))).toEqual(
       expect.objectContaining({ tone: 'muted' }),
     );
-    expect(getSessionAvailability(session('running', 'ready'))).toEqual(
+    expect(getSessionAvailability(session('running'))).toEqual(
       expect.objectContaining({ tone: 'ready' }),
     );
-    expect(getSessionAvailability(session('starting', 'unknown'))).toEqual(
+    expect(getSessionAvailability(session('starting'))).toEqual(
       expect.objectContaining({ tone: 'busy' }),
-    );
-    expect(getSessionAvailability(session('running', 'probing'))).toEqual(
-      expect.objectContaining({ tone: 'busy' }),
-    );
-  });
-
-  it('does not change terminal status when the Agent turn is active', () => {
-    expect(getSessionAvailability(session('running', 'ready', 'running'))).toEqual(
-      getSessionAvailability(session('running', 'ready', 'idle')),
     );
   });
 });

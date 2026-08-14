@@ -12,13 +12,28 @@ export async function ensureNodePtySpawnHelperExecutable({
 } = {}) {
   if (platform !== 'darwin') return;
 
-  const helper = resolve(
-    workspace,
-    'apps/core/node_modules/node-pty/prebuilds',
-    `${platform}-${architecture}`,
-    'spawn-helper',
-  );
-  await chmod(helper, 0o755);
+  const candidates = [
+    resolve(
+      workspace,
+      'node_modules/node-pty/prebuilds',
+      `${platform}-${architecture}`,
+      'spawn-helper',
+    ),
+    resolve(
+      workspace,
+      'apps/desktop/node_modules/node-pty/prebuilds',
+      `${platform}-${architecture}`,
+      'spawn-helper',
+    ),
+  ];
+  for (const helper of candidates) {
+    try {
+      await chmod(helper, 0o755);
+      return;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {

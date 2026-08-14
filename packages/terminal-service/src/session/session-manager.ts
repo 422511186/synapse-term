@@ -1,10 +1,12 @@
-import { SessionActor, type SessionActorEvent } from './session-actor.js';
+import type { TerminalBackend } from '@synapse-term/domain';
+
 import type { PtySpawnOptions, PtySpawner } from '../shell/pty-adapter.js';
-import type { ExecutionDialect } from '@synapse-term/domain';
+import { SessionActor, type SessionActorEvent } from './session-actor.js';
 
 export interface SessionCreateRequest {
   id: string;
-  executionDialect?: ExecutionDialect;
+  title: string;
+  terminalType: string;
   launch: PtySpawnOptions;
   onEvent?(actor: SessionActor, event: SessionActorEvent): void;
 }
@@ -33,7 +35,7 @@ export class SessionManager {
   constructor(spawner: PtySpawner, options: SessionManagerOptions = {}) {
     this.#spawner = spawner;
     this.#maxSessions = options.maxSessions ?? 20;
-    this.#terminationWaitMs = options.terminationWaitMs ?? 250;
+    this.#terminationWaitMs = options.terminationWaitMs ?? 1_000;
     if (!Number.isInteger(this.#maxSessions) || this.#maxSessions < 1) {
       throw new RangeError('maxSessions must be a positive integer');
     }
@@ -54,22 +56,12 @@ export class SessionManager {
       throw new SessionResourceError('session_exists', `Session ${config.id} already exists`);
     }
 
-    const pty = this.#spawner.spawn(config.launch);
-    const actor = new SessionActor(config.id, pty, {
+    const backend: TerminalBackend = this.#spawner.spawn(config.launch);
+    const actor = new SessionActor(config.id, backend, {
+      title: config.title,
+      terminalType: config.terminalType,
       columns: config.launch.columns,
       rows: config.launch.rows,
-      ...(config.executionDialect === undefined
-        ? {}
-        : { executionDialect: config.executionDialect }),
-    });
-    const subscription = actor.onEvent((event) => {
-      if (event.type === 'pty_exit' && this.#sessions.get(config.id) === actor) {
-        this.#sessions.delete(config.id);
-        queueMicrotask(() => {
-          subscription?.dispose();
-          actor.dispose();
-        });
-      }
     });
     const eventSubscription =
       config.onEvent === undefined
@@ -80,9 +72,9 @@ export class SessionManager {
       this.#sessions.set(config.id, actor);
       return actor;
     } catch (error) {
-      eventSubscription?.dispose();
-      subscription.dispose();
-      pty.terminate();
+      eventSubscription?.();
+      backend.terminate();
+      actor.dispose();
       throw error;
     }
   }

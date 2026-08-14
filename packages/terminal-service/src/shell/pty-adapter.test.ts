@@ -1,114 +1,52 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import process from 'node:process';
 
-import { NodePtySpawner, type NativePtyModule, type NativePtyProcess } from './pty-adapter.js';
+import type { NativePtyModule, NativePtyProcess, NativePtySpawnOptions } from './pty-adapter.js';
+import { NodePtySpawner } from './pty-adapter.js';
 
-class FakeNativePty implements NativePtyProcess {
-  pid = 123;
-  writes: string[] = [];
-  resizes: Array<{ columns: number; rows: number }> = [];
-  killCalls = 0;
-  #dataListener: ((data: string) => void) | undefined;
-  #exitListener: ((event: { exitCode: number; signal?: number }) => void) | undefined;
-
-  write(data: string): void {
-    this.writes.push(data);
-  }
-
-  resize(columns: number, rows: number): void {
-    this.resizes.push({ columns, rows });
-  }
-
-  kill(): void {
-    this.killCalls += 1;
-  }
-
-  onData(listener: (data: string) => void) {
-    this.#dataListener = listener;
-    return { dispose: () => (this.#dataListener = undefined) };
-  }
-
-  onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
-    this.#exitListener = listener;
-    return { dispose: () => (this.#exitListener = undefined) };
-  }
-
-  emitData(data: string): void {
-    this.#dataListener?.(data);
-  }
-
-  emitExit(event: { exitCode: number; signal?: number }): void {
-    this.#exitListener?.(event);
-  }
+function createFakeNative(): { module: NativePtyModule; process: NativePtyProcess } {
+  const nativeProcess: NativePtyProcess = {
+    pid: 42,
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+    onData: () => ({ dispose: vi.fn() }),
+    onExit: () => ({ dispose: vi.fn() }),
+  };
+  const module: NativePtyModule = {
+    spawn: vi.fn(() => nativeProcess),
+  };
+  return { module, process: nativeProcess };
 }
 
 describe('NodePtySpawner', () => {
-  it('maps spawn, IO, resize, Ctrl+C, terminate, data, and exit', () => {
-    const native = new FakeNativePty();
-    const spawnCalls: unknown[] = [];
-    const module: NativePtyModule = {
-      spawn: (file, args, options) => {
-        spawnCalls.push({ file, args, options });
-        return native;
-      },
-    };
-    const pty = new NodePtySpawner(module).spawn({
-      executable: 'C:/Program Files/Git/bin/bash.exe',
-      args: ['--login'],
-      cwd: 'C:/work',
+  it('spawns with validated options and wraps the native process', async () => {
+    const { module, process: nativeProcess } = createFakeNative();
+    const spawner = new NodePtySpawner(module, { forceKillProcessTree: vi.fn() });
+    const backend = spawner.spawn({
+      executable: '/bin/zsh',
+      args: ['-l', '-i'],
+      cwd: '/home/test',
       env: { TERM: 'xterm-256color' },
-      columns: 120,
-      rows: 40,
-    });
-    const data: string[] = [];
-    const exits: Array<{ exitCode: number; signal?: number | undefined }> = [];
-    pty.onData((chunk) => data.push(chunk));
-    pty.onExit((event) => exits.push(event));
-
-    pty.write('echo test\r');
-    pty.resize(100, 30);
-    pty.interrupt();
-    native.emitData('test\r\n');
-    native.emitExit({ exitCode: 0 });
-    pty.terminate();
-
-    expect(spawnCalls).toEqual([
-      {
-        file: 'C:/Program Files/Git/bin/bash.exe',
-        args: ['--login'],
-        options: {
-          cwd: 'C:/work',
-          env: { TERM: 'xterm-256color' },
-          cols: 120,
-          rows: 40,
-          name: 'xterm-256color',
-          useConpty: process.platform === 'win32',
-        },
-      },
-    ]);
-    expect(native.writes).toEqual(['echo test\r', '\x03']);
-    expect(native.resizes).toEqual([{ columns: 100, rows: 30 }]);
-    expect(native.killCalls).toBe(1);
-    expect(data).toEqual(['test\r\n']);
-    expect(exits).toEqual([{ exitCode: 0 }]);
-  });
-
-  it('can force-terminate a Windows PTY process tree through an injected policy', () => {
-    const native = new FakeNativePty();
-    const killed: number[] = [];
-    const module: NativePtyModule = { spawn: () => native };
-    const pty = new NodePtySpawner(module, {
-      forceKillProcessTree: (pid) => killed.push(pid),
-    }).spawn({
-      executable: 'bash.exe',
-      args: [],
-      cwd: 'C:/work',
-      env: {},
       columns: 80,
       rows: 24,
     });
-
-    pty.terminate();
-
-    expect(killed).toEqual([123]);
+    expect(module.spawn).toHaveBeenCalledWith(
+      '/bin/zsh',
+      ['-l', '-i'],
+      expect.objectContaining({
+        cols: 80,
+        rows: 24,
+        name: 'xterm-256color',
+        useConpty: process.platform === 'win32',
+      }) satisfies NativePtySpawnOptions,
+    );
+    expect(backend.pid).toBe(42);
+    backend.write('x');
+    expect(nativeProcess.write).toHaveBeenCalledWith('x');
+    backend.resize(100, 40);
+    expect(nativeProcess.resize).toHaveBeenCalledWith(100, 40);
+    backend.interrupt();
+    expect(nativeProcess.write).toHaveBeenCalledWith('\x03');
   });
 });

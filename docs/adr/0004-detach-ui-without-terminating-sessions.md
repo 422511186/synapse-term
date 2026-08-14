@@ -4,12 +4,12 @@
 
 ## 决策
 
-Session 有独立的 `attached | detached` 状态。Core 支持 `keep_background` 关闭语义，允许桌面 UI 脱离而不立即结束 PTY；`terminate_all` 才会结束当前 Session。
+Session 有独立的 `attached | detached` 状态。关闭窗口只分离 UI，不终止活动 Session；显式退出应用时终止全部 Session。
 
 ## 当前实现
 
-`SessionActor` 提供 attach/detach，`CoreLifecycle` 和 `CoreSupervisor` 提供两种关闭模式。桌面应用正常退出路径当前使用 `terminate_all`，用户可通过 Core 操作菜单选择保留后台 Core。
+`SessionActor` 提供 attach/detach；`TerminalHost.shutdown()` 在应用退出时终止全部 PTY。Session 仅存在于应用运行期内存。
 
 ## 影响
 
-UI 重连需要 replay 和状态同步；后台保活不是跨 Core 崩溃或系统重启的持久化承诺。
+UI 重连只需继续订阅实时输出；无后台进程、无回放、无跨重启持久化承诺。

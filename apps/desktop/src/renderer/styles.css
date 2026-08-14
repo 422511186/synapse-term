@@ -39,6 +39,18 @@ button:not(:disabled) {
   -webkit-app-region: no-drag;
 }
 
+[data-desktop-platform='darwin'] [data-testid='settings-workspace'] header {
+  padding-left: 116px;
+  -webkit-app-region: drag;
+}
+
+[data-desktop-platform='darwin'] [data-testid='settings-workspace'] header button,
+[data-desktop-platform='darwin'] [data-testid='settings-workspace'] header input,
+[data-desktop-platform='darwin'] [data-testid='settings-workspace'] header select,
+[data-desktop-platform='darwin'] [data-testid='settings-workspace'] header textarea {
+  -webkit-app-region: no-drag;
+}
+
 .session-tab-strip {
   display: flex;
   flex: 1;

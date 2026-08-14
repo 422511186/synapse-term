@@ -73,17 +73,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm package:win
 
-      - name: 验证 Core 包
-        run: pnpm smoke:core-package
-
-      - name: 验证维护流程包
-        run: pnpm smoke:maintenance-package
-
       - name: 上传 Windows Release 资产
         uses: actions/upload-artifact@v4
         with:
           name: synapse-term-windows-x64
-          path: release/Terminal-Agent-*-Setup.exe
+          path: release/Synapse-Term-*-Setup.exe
           if-no-files-found: error
           retention-days: 3
 
@@ -118,17 +112,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm package:mac
 
-      - name: 验证 Core 包
-        run: pnpm smoke:core-package
-
-      - name: 验证维护流程包
-        run: pnpm smoke:maintenance-package
-
       - name: 上传 macOS Release 资产
         uses: actions/upload-artifact@v4
         with:
           name: synapse-term-macos-arm64
-          path: release/Terminal-Agent-*.dmg
+          path: release/Synapse-Term-*.dmg
           if-no-files-found: error
           retention-days: 3
 

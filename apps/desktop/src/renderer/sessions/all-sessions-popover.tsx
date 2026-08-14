@@ -1,6 +1,6 @@
 /** 全部会话弹层（自 app.tsx 拆分）：搜索与切换会话 */
 import type { JSX } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, SquareX, X } from 'lucide-react';
 
 import type { SessionSummary } from '../../preload/preload-api.js';
 import { isInteractiveSession } from '../session-selection.js';
@@ -9,6 +9,7 @@ import { getSessionAvailability } from '../session-status.js';
 export function AllSessionsPopover({
   activeSessionId,
   onClose,
+  onCloseAll,
   onQueryChange,
   onSelect,
   query,
@@ -16,6 +17,7 @@ export function AllSessionsPopover({
 }: {
   activeSessionId: string | undefined;
   onClose: (sessionId: string) => void | Promise<void>;
+  onCloseAll: () => void;
   onQueryChange: (query: string) => void;
   onSelect: (session: SessionSummary) => void;
   query: string;
@@ -23,7 +25,7 @@ export function AllSessionsPopover({
 }): JSX.Element {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleSessions = sessions.filter((session) =>
-    [session.title, session.terminalType, session.pty, session.shell].some((value) =>
+    [session.title, session.terminalType, session.pty].some((value) =>
       (value ?? '').toLocaleLowerCase().includes(normalizedQuery),
     ),
   );
@@ -78,6 +80,19 @@ export function AllSessionsPopover({
           );
         })}
         {visibleSessions.length === 0 && <div className="session-all-empty">没有匹配的会话</div>}
+      </div>
+      <div className="border-t border-border/60 p-2">
+        <button
+          aria-label="关闭全部终端"
+          className="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={sessions.length === 0}
+          onClick={onCloseAll}
+          title="关闭全部终端"
+          type="button"
+        >
+          <SquareX size={14} />
+          关闭全部终端
+        </button>
       </div>
     </div>
   );

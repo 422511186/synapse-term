@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import * as testKit from './index.js';
+import { createFakeTerminalBackend } from './index.js';
 
-describe('test-kit public API', () => {
-  it('exports deterministic test doubles and assertions', () => {
-    expect(testKit).toMatchObject({
-      FakeClock: expect.any(Function),
-      FakePty: expect.any(Function),
-      FakeProvider: expect.any(Function),
-      EventRecorder: expect.any(Function),
-      withTemporaryDirectory: expect.any(Function),
+describe('test-kit', () => {
+  it('creates a controllable fake terminal backend', () => {
+    const backend = createFakeTerminalBackend();
+    let received = '';
+    backend.onData((data) => {
+      received += data;
     });
+    backend.emitData('hello');
+    expect(received).toBe('hello');
+    backend.write('x');
+    expect(backend.writes).toEqual(['x']);
   });
 });

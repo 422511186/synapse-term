@@ -9,8 +9,6 @@ function session(id: string, title: string): SessionSummary {
     title,
     terminalType: 'Git Bash',
     pty: 'running',
-    shell: 'ready',
-    executionDialect: 'posix',
   };
 }
 

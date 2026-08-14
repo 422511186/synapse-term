@@ -18,38 +18,20 @@
           rx="88"
           fill="#111827"/>
 
-    <!-- Prompt -->
-    <polyline points="120,200 180,256 120,312"
+    <!-- Terminal prompt -->
+    <polyline points="124,184 220,256 124,328"
               fill="none"
               stroke="url(#g)"
-              stroke-width="20"
+              stroke-width="26"
               stroke-linecap="round"
               stroke-linejoin="round"/>
 
-    <!-- Session -->
-    <rect x="220"
-          y="228"
-          width="48"
-          height="48"
-          rx="10"
+    <!-- Cursor block -->
+    <rect x="262"
+          y="220"
+          width="72"
+          height="72"
+          rx="16"
           fill="url(#g)"/>
-
-    <!-- Connections -->
-    <line x1="268" y1="252" x2="340" y2="170"
-          stroke="url(#g)"
-          stroke-width="10"/>
-
-    <line x1="268" y1="252" x2="360" y2="252"
-          stroke="url(#g)"
-          stroke-width="10"/>
-
-    <line x1="268" y1="252" x2="340" y2="334"
-          stroke="url(#g)"
-          stroke-width="10"/>
-
-    <!-- Agent Nodes -->
-    <circle cx="360" cy="160" r="18" fill="url(#g)"/>
-    <circle cx="380" cy="252" r="18" fill="url(#g)"/>
-    <circle cx="360" cy="344" r="18" fill="url(#g)"/>
 
 </svg>

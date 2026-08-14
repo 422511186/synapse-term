@@ -15,10 +15,10 @@ export default defineConfig({
     rollupOptions: {
       external: (id) =>
         id === 'electron' ||
+        id === 'node-pty' ||
         id.startsWith('node:') ||
-        // 原生二进制无法打进 JS bundle；主进程未使用 SecretStore 时会被 tree-shake
-        id === '@napi-rs/keyring' ||
-        id.startsWith('@napi-rs/keyring-'),
+        // 原生二进制无法打进 JS bundle
+        id === 'node-pty',
     },
   },
 });

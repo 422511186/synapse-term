@@ -12,7 +12,6 @@ describe('session launch profiles', () => {
     available: true,
     source: 'system',
     args: ['-i'],
-    executionDialect: 'posix',
   };
 
   function session(title: string): Pick<SessionSummary, 'title'> {
@@ -37,7 +36,6 @@ describe('session launch profiles', () => {
       available: true,
       source: 'system',
       args: ['-NoLogo'],
-      executionDialect: 'powershell',
     };
     expect(buildSessionLaunch('PowerShell', 'D:/work', powershell)).toEqual({
       title: 'PowerShell',
@@ -46,18 +44,16 @@ describe('session launch profiles', () => {
       args: ['-NoLogo'],
       cwd: 'D:/work',
       env: {},
-      executionDialect: 'powershell',
     });
   });
 
-  it('rejects unavailable shells before invoking Core', () => {
+  it('rejects unavailable shells before creating a session', () => {
     const unavailable: LocalShellDescriptor = {
       kind: 'bash',
       label: 'Git Bash',
       available: false,
       source: 'unavailable',
       args: ['-i'],
-      executionDialect: 'posix',
       reason: '未找到 Git Bash',
     };
 

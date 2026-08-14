@@ -12,7 +12,6 @@ export interface LocalShellDescriptor {
   available: boolean;
   source: ShellResolutionSource;
   args: string[];
-  executionDialect: 'posix' | 'powershell';
   executable?: string;
   reason?: string;
 }
@@ -74,7 +73,7 @@ export class ShellLocator {
         source: 'environment',
       });
     }
-    return descriptor('bash', 'Git Bash', ['--login', '-i'], 'posix', this.#find(candidates));
+    return descriptor('bash', 'Git Bash', ['--login', '-i'], this.#find(candidates));
   }
 
   #powerShell(): LocalShellDescriptor {
@@ -90,13 +89,7 @@ export class ShellLocator {
         source: 'system',
       });
     }
-    return descriptor(
-      'powershell',
-      'PowerShell',
-      ['-NoLogo'],
-      'powershell',
-      this.#find(candidates),
-    );
+    return descriptor('powershell', 'PowerShell', ['-NoLogo'], this.#find(candidates));
   }
 
   #wsl(): LocalShellDescriptor {
@@ -108,30 +101,24 @@ export class ShellLocator {
     if (systemRoot !== undefined) {
       candidates.push({ path: win32.join(systemRoot, 'System32', 'wsl.exe'), source: 'system' });
     }
-    return descriptor('wsl', 'WSL', [], 'posix', this.#find(candidates));
+    return descriptor('wsl', 'WSL', [], this.#find(candidates));
   }
 
   #darwinShells(): LocalShellDescriptor[] {
-    const candidates: Candidate[] = [
-      { path: '/bin/zsh', source: 'system' },
-      { path: '/bin/bash', source: 'system' },
-    ];
-    const zsh = candidates.find((c) => c.path.endsWith('zsh'));
-    const bash = candidates.find((c) => c.path.endsWith('bash'));
+    const zshPath = '/bin/zsh';
+    const bashPath = '/bin/bash';
     return [
       descriptor(
         'zsh',
         'Zsh',
         ['-l', '-i'],
-        'posix',
-        zsh && this.#exists(zsh.path) ? zsh : undefined,
+        this.#exists(zshPath) ? { path: zshPath, source: 'system' } : undefined,
       ),
       descriptor(
         'bash',
         'Bash',
         ['-l', '-i'],
-        'posix',
-        bash && this.#exists(bash.path) ? bash : undefined,
+        this.#exists(bashPath) ? { path: bashPath, source: 'system' } : undefined,
       ),
     ];
   }
@@ -170,7 +157,6 @@ function descriptor(
   kind: LocalShellKind,
   label: string,
   args: string[],
-  executionDialect: 'posix' | 'powershell',
   candidate: Candidate | undefined,
 ): LocalShellDescriptor {
   if (candidate === undefined) {
@@ -178,17 +164,15 @@ function descriptor(
       kind,
       label,
       args,
-      executionDialect,
       available: false,
       source: 'unavailable',
-      reason: '未在当前系统中找到可执行文件',
+      reason: 'shell executable not found',
     };
   }
   return {
     kind,
     label,
     args,
-    executionDialect,
     available: true,
     source: candidate.source,
     executable: candidate.path,
@@ -197,38 +181,35 @@ function descriptor(
 
 function environmentValue(
   environment: Readonly<Record<string, string | undefined>>,
-  name: string,
+  key: string,
 ): string | undefined {
-  const match = Object.entries(environment).find(
-    ([key]) => key.toLowerCase() === name.toLowerCase(),
-  );
-  const value = match?.[1]?.trim();
-  return value === undefined || value.length === 0 ? undefined : value;
+  const value = environment[key];
+  return value === undefined ? undefined : value;
 }
 
 function stripQuotes(value: string): string {
-  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
-}
-
-export function readGitRegistryInstallPaths(): string[] {
-  const keys = [
-    'HKCU\\SOFTWARE\\GitForWindows',
-    'HKLM\\SOFTWARE\\GitForWindows',
-    'HKLM\\SOFTWARE\\WOW6432Node\\GitForWindows',
-  ];
-  const paths: string[] = [];
-  for (const key of keys) {
-    try {
-      const output = execFileSync('reg.exe', ['query', key, '/v', 'InstallPath'], {
-        encoding: 'utf8',
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      const match = /^\s*InstallPath\s+REG_\w+\s+(.+)$/im.exec(output);
-      if (match?.[1] !== undefined) paths.push(match[1].trim());
-    } catch {
-      // Missing registry keys are expected on systems without Git for Windows.
+  if (value.length >= 2) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      return value.slice(1, -1);
     }
   }
-  return paths;
+  return value;
+}
+
+function readGitRegistryInstallPaths(): readonly string[] {
+  if (process.platform !== 'win32') return [];
+  try {
+    const output = execFileSync(
+      'reg.exe',
+      ['query', 'HKLM\\SOFTWARE\\GitForWindows', '/v', 'InstallPath', '/reg:32'],
+      { encoding: 'utf8', windowsHide: true, timeout: 3_000 },
+    );
+    const match = /InstallPath\s+REG_SZ\s+(.+)/.exec(output);
+    return match?.[1]?.trim() === undefined ? [] : [match[1].trim()];
+  } catch {
+    return [];
+  }
 }
