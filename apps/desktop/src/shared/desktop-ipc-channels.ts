@@ -6,8 +6,7 @@ export const DESKTOP_IPC_REQUEST_CHANNELS = [
   'sessions:close',
   'terminal:write',
   'terminal:resize',
-  'core:status',
-  'core:exit',
+  'app:status',
 ] as const;
 
 export const DESKTOP_IPC_EVENT_CHANNELS = ['terminal:output', 'session:changed'] as const;

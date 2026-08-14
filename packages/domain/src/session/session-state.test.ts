@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createSessionState,
-  resizeSession,
-  setSessionAttachment,
-  transitionSessionPty,
-} from './session-state.js';
+import { createSessionState, resizeSession, transitionSessionPty } from './session-state.js';
 
 describe('SessionState', () => {
   it('starts as starting and detached', () => {
@@ -19,7 +14,6 @@ describe('SessionState', () => {
     expect(state).toMatchObject({
       id: 's1',
       pty: 'starting',
-      attachment: 'detached',
       columns: 100,
       rows: 30,
     });
@@ -41,9 +35,8 @@ describe('SessionState', () => {
     expect(transitionSessionPty(running.value, 'starting')).toMatchObject({ ok: false });
   });
 
-  it('tracks attachment and resize', () => {
+  it('tracks resize', () => {
     const state = createSessionState({ id: 's1', title: 't', terminalType: 'Zsh' });
-    expect(setSessionAttachment(state, 'attached').attachment).toBe('attached');
     expect(resizeSession(state, 120, 40)).toMatchObject({ columns: 120, rows: 40 });
     expect(() => resizeSession(state, 0, 40)).toThrow(RangeError);
   });

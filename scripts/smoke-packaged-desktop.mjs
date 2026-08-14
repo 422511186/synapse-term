@@ -26,8 +26,8 @@ try {
   await page.waitForSelector('.prototype-shell', { timeout: 20_000 });
 
   const environment = await page.evaluate(async () => {
-    if (window.terminalAgent === undefined) throw new Error('preload API is unavailable');
-    return window.terminalAgent.sessions.environment();
+    if (window.synapseTerm === undefined) throw new Error('preload API is unavailable');
+    return window.synapseTerm.sessions.environment();
   });
   const shell = environment.shells.find(
     (candidate) => candidate.available && candidate.executable !== undefined,
@@ -37,8 +37,8 @@ try {
 
   const session = await page.evaluate(
     async ({ args, cwd, executable, title }) => {
-      if (window.terminalAgent === undefined) throw new Error('preload API is unavailable');
-      return window.terminalAgent.sessions.create({
+      if (window.synapseTerm === undefined) throw new Error('preload API is unavailable');
+      return window.synapseTerm.sessions.create({
         title,
         terminalType: 'Smoke',
         executable,
@@ -59,8 +59,8 @@ try {
   }
 
   const status = await page.evaluate(async () => {
-    if (window.terminalAgent === undefined) throw new Error('preload API is unavailable');
-    return window.terminalAgent.core.status();
+    if (window.synapseTerm === undefined) throw new Error('preload API is unavailable');
+    return window.synapseTerm.app.status();
   });
   console.log(
     JSON.stringify({

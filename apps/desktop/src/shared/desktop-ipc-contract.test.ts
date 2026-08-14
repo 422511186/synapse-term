@@ -15,8 +15,7 @@ describe('desktop IPC contract', () => {
       'sessions:close',
       'terminal:write',
       'terminal:resize',
-      'core:status',
-      'core:exit',
+      'app:status',
     ]);
     expect(DESKTOP_IPC_EVENT_CHANNELS).toEqual(['terminal:output', 'session:changed']);
   });

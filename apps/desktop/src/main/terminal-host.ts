@@ -11,7 +11,7 @@ import {
 } from '@synapse-term/terminal-service';
 
 import type {
-  CoreStatus,
+  AppStatus,
   SessionEnvironment,
   SessionLaunchInput,
   SessionSummary,
@@ -101,7 +101,7 @@ export class TerminalHost {
     await actor.resize(columns, rows);
   }
 
-  status(): CoreStatus {
+  status(): AppStatus {
     return {
       connected: true,
       version: this.#version,
@@ -132,18 +132,15 @@ export class TerminalHost {
       case 'sessions:create':
         return this.createSession(parseLaunchInput(args[0]));
       case 'sessions:rename':
-        return this.renameSession(stringArg(args[0]), stringArg(args[1]));
+        return this.renameSession(idArg(args[0]), boundedString(args[1], 128, 'alias'));
       case 'sessions:close':
-        return this.closeSession(stringArg(args[0]));
+        return this.closeSession(idArg(args[0]));
       case 'terminal:write':
-        return this.write(stringArg(args[0]), stringArg(args[1]));
+        return this.write(idArg(args[0]), boundedString(args[1], 1_000_000, 'data'));
       case 'terminal:resize':
-        return this.resize(stringArg(args[0]), numberArg(args[1]), numberArg(args[2]));
-      case 'core:status':
+        return this.resize(idArg(args[0]), dimensionArg(args[1]), dimensionArg(args[2]));
+      case 'app:status':
         return this.status();
-      case 'core:exit':
-        await this.shutdown();
-        return null;
       default:
         throw new Error(`Renderer channel is not available: ${channel}`);
     }
@@ -186,19 +183,25 @@ function parseLaunchInput(value: unknown): SessionLaunchInput {
   if (typeof value !== 'object' || value === null) throw new TypeError('expected launch input');
   const input = value as Record<string, unknown>;
   return {
-    title: stringArg(input.title),
-    terminalType: stringArg(input.terminalType),
-    executable: stringArg(input.executable),
+    title: boundedString(input.title, 128, 'title'),
+    terminalType: boundedString(input.terminalType, 128, 'terminalType'),
+    executable: boundedString(input.executable, 4_096, 'executable'),
     args: stringArrayArg(input.args),
-    cwd: stringArg(input.cwd),
+    cwd: boundedString(input.cwd, 4_096, 'cwd'),
     env: recordArg(input.env),
-    ...(input.columns === undefined ? {} : { columns: numberArg(input.columns) }),
-    ...(input.rows === undefined ? {} : { rows: numberArg(input.rows) }),
+    ...(input.columns === undefined ? {} : { columns: dimensionArg(input.columns) }),
+    ...(input.rows === undefined ? {} : { rows: dimensionArg(input.rows) }),
   };
 }
 
-function stringArg(value: unknown): string {
-  if (typeof value !== 'string') throw new TypeError('expected a string argument');
+function idArg(value: unknown): string {
+  return boundedString(value, 256, 'sessionId');
+}
+
+function boundedString(value: unknown, maxLength: number, label: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
+    throw new TypeError(`${label} is invalid`);
+  }
   return value;
 }
 
@@ -210,7 +213,11 @@ function numberArg(value: unknown): number {
 }
 
 function stringArrayArg(value: unknown): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+  if (
+    !Array.isArray(value) ||
+    value.length > 256 ||
+    value.some((item) => typeof item !== 'string' || item.length === 0 || item.length > 1_024)
+  ) {
     throw new TypeError('expected a string array argument');
   }
   return [...value] as string[];
@@ -218,9 +225,20 @@ function stringArrayArg(value: unknown): string[] {
 
 function recordArg(value: unknown): Record<string, string> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string',
-    ),
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === 'string' && entry[0].length > 0 && entry[0].length <= 256,
   );
+  if (entries.length > 64 || entries.some(([, entryValue]) => entryValue.length > 4_096)) {
+    throw new TypeError('environment is invalid');
+  }
+  return Object.fromEntries(entries);
+}
+
+function dimensionArg(value: unknown): number {
+  const parsed = numberArg(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1_000) {
+    throw new RangeError('terminal dimension must be between 1 and 1000');
+  }
+  return parsed;
 }

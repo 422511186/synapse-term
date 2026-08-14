@@ -43,9 +43,26 @@ function createWindow(): void {
 
 function registerIpc(host: TerminalHost): void {
   for (const channel of DESKTOP_IPC_REQUEST_CHANNELS) {
-    ipcMain.handle(channel, (_event, ...argumentsValue: unknown[]) =>
-      host.handle(channel, argumentsValue),
+    ipcMain.handle(channel, (event, ...argumentsValue: unknown[]) => {
+      if (!isTrustedRendererEvent(event)) {
+        throw new Error('Renderer IPC request is not trusted');
+      }
+      return host.handle(channel, argumentsValue);
+    });
+  }
+}
+
+function isTrustedRendererEvent(event: Electron.IpcMainInvokeEvent): boolean {
+  const url = event.senderFrame?.url;
+  if (typeof url !== 'string' || url.length === 0) return false;
+  if (url.startsWith('file://')) return true;
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && parsed.port === '4173'
     );
+  } catch {
+    return false;
   }
 }
 

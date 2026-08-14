@@ -13,4 +13,4 @@ const ipc: RendererIpc = {
   },
 };
 
-contextBridge.exposeInMainWorld('terminalAgent', createDesktopApi(ipc, process.platform));
+contextBridge.exposeInMainWorld('synapseTerm', createDesktopApi(ipc, process.platform));

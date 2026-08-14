@@ -17,7 +17,7 @@ describe('mock desktop API', () => {
     });
     expect(session.pty).toBe('running');
     expect(outputs).toHaveLength(1);
-    expect(await api.core.status()).toMatchObject({ connected: true, sessions: 1 });
+    expect(await api.app.status()).toMatchObject({ connected: true, sessions: 1 });
   });
 
   it('renames and closes sessions', async () => {

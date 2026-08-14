@@ -18,9 +18,11 @@ export interface TerminalViewApi {
 
 export function TerminalView({
   api,
+  initialEvents = [],
   session,
 }: {
   api: TerminalViewApi;
+  initialEvents?: readonly TerminalOutputEvent[];
   session: SessionSummary;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -47,6 +49,11 @@ export function TerminalView({
     };
     let disposed = false;
     let lastSequence = 0;
+    for (const event of [...initialEvents].sort((left, right) => left.sequence - right.sequence)) {
+      if (event.sequence <= lastSequence) continue;
+      writeTerminalData(event.data);
+      lastSequence = event.sequence;
+    }
     let fitFrame: number | undefined;
     const scheduleFit = (): void => {
       if (fitFrame !== undefined) window.cancelAnimationFrame(fitFrame);
@@ -76,7 +83,7 @@ export function TerminalView({
       const query = (event as CustomEvent<string>).detail;
       if (query.length > 0) search.findNext(query, { incremental: true });
     };
-    window.addEventListener('terminal-agent-search', searchHandler);
+    window.addEventListener('terminal-search', searchHandler);
 
     return () => {
       disposed = true;
@@ -86,10 +93,10 @@ export function TerminalView({
       input.dispose();
       resize.dispose();
       window.removeEventListener('resize', scheduleFit);
-      window.removeEventListener('terminal-agent-search', searchHandler);
+      window.removeEventListener('terminal-search', searchHandler);
       terminal.dispose();
     };
-  }, [api, session.id, session.title]);
+  }, [api, initialEvents, session.id]);
 
   return (
     <div

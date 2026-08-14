@@ -39,10 +39,10 @@ Electron Preload MUST 仅暴露声明的 `DesktopApi`，且每个公开请求方
 - **THEN** Renderer MUST 显示可识别的错误状态，而不得以 mock 或静态成功状态替代失败
 
 ### Requirement: Runtime-Backed Workspace Data
-生产 Electron Renderer MUST 优先使用 preload 暴露的 `window.terminalAgent`。浏览器测试替身仅可在 preload 不存在时使用，且其接口行为 MUST 与 `DesktopApi` 契约一致。
+生产 Electron Renderer MUST 优先使用 preload 暴露的 `window.synapseTerm`。浏览器测试替身仅可在 preload 不存在时使用，且其接口行为 MUST 与 `DesktopApi` 契约一致。
 
 #### Scenario: Electron preload is present
-- **WHEN** Electron 向 Renderer 注入真实 `window.terminalAgent`
+- **WHEN** Electron 向 Renderer 注入真实 `window.synapseTerm`
 - **THEN** 工作区 MUST 使用该对象读取、创建、切换和关闭 Session，并不得用 fixture 覆盖其返回值
 
 #### Scenario: Browser regression environment

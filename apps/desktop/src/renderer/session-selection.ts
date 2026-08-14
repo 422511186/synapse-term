@@ -11,5 +11,5 @@ export function chooseInitialSessionId(
   const preferred = sessions.find(
     (session) => session.id === preferredId && isInteractiveSession(session),
   );
-  return preferred?.id ?? sessions.find(isInteractiveSession)?.id ?? '';
+  return preferred?.id ?? sessions.find(isInteractiveSession)?.id ?? sessions[0]?.id ?? '';
 }

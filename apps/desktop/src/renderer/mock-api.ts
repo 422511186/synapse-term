@@ -1,7 +1,7 @@
 import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
 
 import type {
-  CoreStatus,
+  AppStatus,
   DesktopApi,
   SessionEnvironment,
   SessionLaunchInput,
@@ -113,13 +113,12 @@ export function createMockDesktopApi(): DesktopApi {
         return () => outputListeners.delete(listener);
       },
     },
-    core: {
-      status: async (): Promise<CoreStatus> => ({
+    app: {
+      status: async (): Promise<AppStatus> => ({
         connected: true,
         version: 'mock',
         sessions: sessions.size,
       }),
-      exit: async () => undefined,
     },
   };
 }

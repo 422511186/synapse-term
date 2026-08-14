@@ -4,7 +4,7 @@
 
 ## 决策
 
-桌面端使用 Electron、React、TypeScript 和 xterm；Core 使用 Node.js/TypeScript、`node-pty`、`@xterm/headless` 和 `@xterm/addon-serialize`。业务按 workspace package 拆分。
+桌面端使用 Electron、React、TypeScript、xterm 与 `node-pty`；PTY 与终端逻辑按 workspace package 拆分，Electron Main 单进程持有。
 
 ## 当前实现
 
@@ -12,4 +12,4 @@
 
 ## 影响
 
-共享 TypeScript 领域和协议类型降低了跨进程漂移，但 Electron、原生 PTY 和固定 Node Runtime 增加了打包及平台验证成本。
+共享 TypeScript 领域类型降低了模块间漂移，但 Electron、原生 PTY 增加了打包及平台验证成本。

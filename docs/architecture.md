@@ -22,7 +22,7 @@ Electron Main
 | 组件        | 当前职责                                                | 不应直接持有                     |
 | ----------- | ------------------------------------------------------- | -------------------------------- |
 | Renderer    | 工作区、会话标签、终端交互、设置占位页                   | Node API、PTY、Session 内部状态  |
-| Preload     | 暴露经过白名单限制的 `window.terminalAgent` API          | 任意 IPC 转发、文件系统和网络    |
+| Preload     | 暴露经过白名单限制的 `window.synapseTerm` API          | 任意 IPC 转发、文件系统和网络    |
 | Electron Main | BrowserWindow、Terminal Host、IPC、Shell 发现、退出清理 | 业务实现、持久化                 |
 
 ## Workspace Package
@@ -41,16 +41,13 @@ Renderer 与 Main 通过 Electron `ipcMain`/`ipcRenderer` 通信，通道与 `De
 
 - `sessions:list / environment / create / rename / close`
 - `terminal:write / resize`
-- `core:status / exit`
+- `app:status`
 
 事件通道只有 `terminal:output` 与 `session:changed`。
 
 ## Terminal Session
 
-Session 状态只包含两个正交维度：
-
-- PTY：`starting | running | exited | failed | interrupted`
-- UI attachment：`attached | detached`
+Session 状态只包含 PTY 生命周期：`starting | running | exited | failed | interrupted`。
 
 `SessionActor` 串行处理 PTY 输出、用户输入、resize 与退出事件。PTY 输出被拆成 UTF-8 安全、有界的分片，分配严格递增 sequence 后实时广播给 Renderer，不保留历史。
 

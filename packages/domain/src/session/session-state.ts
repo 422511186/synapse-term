@@ -1,13 +1,10 @@
 export type PtyState = 'starting' | 'running' | 'exited' | 'failed' | 'interrupted';
 
-export type AttachmentState = 'attached' | 'detached';
-
 export interface SessionState {
   id: string;
   title: string;
   terminalType: string;
   pty: PtyState;
-  attachment: AttachmentState;
   columns: number;
   rows: number;
 }
@@ -28,7 +25,6 @@ export function createSessionState(input: CreateSessionStateInput): SessionState
     title: input.title,
     terminalType: input.terminalType,
     pty: 'starting',
-    attachment: 'detached',
     columns: input.columns ?? 80,
     rows: input.rows ?? 24,
   };
@@ -51,13 +47,6 @@ export function transitionSessionPty(
     return { ok: false, error: `invalid pty transition: ${state.pty} -> ${next}` };
   }
   return { ok: true, value: { ...state, pty: next } };
-}
-
-export function setSessionAttachment(
-  state: SessionState,
-  attachment: AttachmentState,
-): SessionState {
-  return { ...state, attachment };
 }
 
 export function resizeSession(state: SessionState, columns: number, rows: number): SessionState {

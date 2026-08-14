@@ -77,3 +77,13 @@
 - [x] 11.2 移除 `OutputBuffer`/内存回放，仅保留有序输出分片与实时广播
 - [x] 11.3 更新 `TerminalView` 为纯实时输出，删除 replay 工具与相关测试
 - [x] 11.4 同步 OpenSpec specs 与 docs 中的回放需求
+
+## 12. 评审修复
+
+- [x] 12.1 修复多会话切换丢内容（常驻视图 + Renderer 输出缓冲）
+- [x] 12.2 清理 Core/Agent 命名（app:* / synapseTerm / terminal-search）并移除 Renderer 退出通道
+- [x] 12.3 同步 interaction-feedback 主规格、ADR、AGENTS.md 与文档
+- [x] 12.4 清理死代码与未用依赖（zod/keyring/invoke-user-session/agent CSS/未用 feedback）
+- [x] 12.5 移除未使用的 attachment/interrupt 语义
+- [x] 12.6 增加 IPC senderFrame 白名单与输入上限
+- [x] 12.7 输出分片改为转义序列感知并支持跨回调 carry

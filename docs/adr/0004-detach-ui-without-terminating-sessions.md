@@ -4,11 +4,11 @@
 
 ## 决策
 
-Session 有独立的 `attached | detached` 状态。关闭窗口只分离 UI，不终止活动 Session；显式退出应用时终止全部 Session。
+关闭窗口只分离 UI 订阅，不终止活动 Session；显式退出应用时终止全部 Session。
 
 ## 当前实现
 
-`SessionActor` 提供 attach/detach；`TerminalHost.shutdown()` 在应用退出时终止全部 PTY。Session 仅存在于应用运行期内存。
+`TerminalHost.shutdown()` 在应用退出时终止全部 PTY。Session 仅存在于应用运行期内存。
 
 ## 影响
 

@@ -29,7 +29,7 @@ export interface TerminalOutputEvent {
   data: string;
 }
 
-export interface CoreStatus {
+export interface AppStatus {
   connected: boolean;
   version: string;
   sessions: number;
@@ -50,8 +50,7 @@ export interface DesktopApi {
     resize(sessionId: string, columns: number, rows: number): Promise<void>;
     onOutput(listener: (event: TerminalOutputEvent) => void): () => void;
   };
-  core: {
-    status(): Promise<CoreStatus>;
-    exit(mode: 'terminate_sessions'): Promise<void>;
+  app: {
+    status(): Promise<AppStatus>;
   };
 }

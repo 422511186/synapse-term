@@ -40,7 +40,7 @@
 替代方案：磁盘 raw-log + SQLite（被否决——无持久化需求）；内存回放缓冲（被否决——重开应用即空列表，回放没有使用场景）。
 
 ### 5. Renderer↔Main 契约
-`apps/desktop/src/shared/` 保存 IPC 通道名与 `DesktopApi` 类型；preload 只暴露 `window.terminalAgent`；Main 对每个通道做参数校验（保留 zod，作为 desktop 内部依赖）。不再有 `protocol` 包与跨进程 schema。
+`apps/desktop/src/shared/` 保存 IPC 通道名与 `DesktopApi` 类型；preload 只暴露 `window.synapseTerm`；Main 对每个通道做参数校验。不再有 `protocol` 包与跨进程 schema。
 
 ### 6. UI 与 Mock
 Renderer 重写为终端-only 布局：Header（品牌、标签、全部会话、新建、设置）、TerminalView、会话弹窗、设置占位页。`mock-api.ts` 实现同一 `DesktopApi`（内存假会话/假输出），供 `pnpm dev` 与 Playwright 使用。`ui-platform` 的 TerminalView、终端状态工具与 i18n 文案迁入 renderer。

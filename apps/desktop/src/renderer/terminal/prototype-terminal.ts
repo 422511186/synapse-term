@@ -9,6 +9,7 @@ export const prototypeTerminalMetrics = {
 
 export const prototypeTerminalOptions: ITerminalOptions = {
   cursorBlink: true,
+  screenReaderMode: true,
   fontFamily: prototypeTerminalMetrics.fontFamily,
   fontSize: prototypeTerminalMetrics.fontSize,
   letterSpacing: 0,

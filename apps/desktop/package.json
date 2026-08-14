@@ -27,8 +27,7 @@
     "lucide-react": "0.487.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "zod": "^4.4.3"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@synapse-term/test-kit": "workspace:*",

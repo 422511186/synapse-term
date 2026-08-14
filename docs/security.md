@@ -2,7 +2,7 @@
 
 ## Renderer 隔离
 
-Electron Renderer 在 `sandbox` 与 `contextIsolation` 下运行，`nodeIntegration` 关闭。Renderer 无法直接访问 Node API、PTY、文件系统或 Session 内部状态；所有操作必须经过 `window.terminalAgent` preload API 与 Main 的通道校验。
+Electron Renderer 在 `sandbox` 与 `contextIsolation` 下运行，`nodeIntegration` 关闭。Renderer 无法直接访问 Node API、PTY、文件系统或 Session 内部状态；所有操作必须经过 `window.synapseTerm` preload API 与 Main 的通道校验。
 
 ## 进程边界
 

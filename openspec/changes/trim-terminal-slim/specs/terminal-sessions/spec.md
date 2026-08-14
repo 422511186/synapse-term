@@ -29,11 +29,11 @@ Session 状态 MUST 仅保存在应用运行期的内存中；应用退出后所
 - **THEN** Session 继续作为同一个本地 PTY 被管理且 Main 不解析连接拓扑
 
 ### Requirement: Minimal Session State
-系统 SHALL 分别维护 PTY 状态与 UI attachment 状态，PTY 保持 `running` 时 UI 可以处于 `detached`，避免把无关状态压缩为单一枚举。
+系统 SHALL 维护 PTY 状态与终端元数据，避免把无关状态压缩为单一枚举。
 
 #### Scenario: Running session without UI
 - **WHEN** PTY 正在运行而窗口尚未打开或 Renderer 已重载
-- **THEN** PTY 状态保持 `running` 且 attachment 状态为 `detached`
+- **THEN** PTY 状态保持 `running`，Session 继续由 Main 持有
 
 ### Requirement: Shell Environment Initialization
 本地 PTY Session MUST 将桌面进程继承的环境与启动配置中的显式环境覆盖合并后传给 Shell，并由平台对应的 Shell 启动规则完成用户环境初始化。

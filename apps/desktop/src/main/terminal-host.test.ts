@@ -85,6 +85,22 @@ describe('TerminalHost', () => {
 
   it('throws for unknown channels', async () => {
     const host = createHost(new FakePtySpawner());
-    await expect(host.handle('agent:start', [])).rejects.toThrow(/not available/);
+    await expect(host.handle('unknown:channel', [])).rejects.toThrow(/not available/);
+  });
+
+  it('rejects invalid or oversized launch input', async () => {
+    const host = createHost(new FakePtySpawner());
+    await expect(
+      host.handle('sessions:create', [
+        {
+          title: 't',
+          terminalType: 'Zsh',
+          executable: '/bin/zsh',
+          args: Array.from({ length: 300 }, () => 'a'),
+          cwd: '/',
+          env: {},
+        },
+      ]),
+    ).rejects.toThrow();
   });
 });

@@ -1,7 +1,6 @@
 import {
   createSessionState,
   resizeSession,
-  setSessionAttachment,
   transitionSessionPty,
   type SessionState,
   type TerminalBackend,
@@ -9,7 +8,7 @@ import {
   type TerminalSubscription,
 } from '@synapse-term/domain';
 
-import { splitUtf8, TERMINAL_OUTPUT_FRAME_BYTES } from './output-frame.js';
+import { splitTerminalOutput, TERMINAL_OUTPUT_FRAME_BYTES } from './output-frame.js';
 
 export interface SessionActorOptions {
   title: string;
@@ -26,6 +25,7 @@ export class SessionActor {
   readonly #backend: TerminalBackend;
   #state: SessionState;
   #outputSequence = 0;
+  #escapeCarry = '';
   #queue: Promise<void> = Promise.resolve();
   #disposed = false;
   #ptyExited = false;
@@ -46,7 +46,13 @@ export class SessionActor {
       backend.onData((data) => {
         void this.#enqueue(() => {
           if (this.#disposed) return;
-          for (const chunk of splitUtf8(data, TERMINAL_OUTPUT_FRAME_BYTES)) {
+          const { chunks, carry } = splitTerminalOutput(
+            data,
+            TERMINAL_OUTPUT_FRAME_BYTES,
+            this.#escapeCarry,
+          );
+          this.#escapeCarry = carry;
+          for (const chunk of chunks) {
             this.#outputSequence += 1;
             this.#emit({ type: 'pty_output', sequence: this.#outputSequence, data: chunk });
           }
@@ -103,25 +109,6 @@ export class SessionActor {
     return this.#enqueue(() => {
       this.#state = resizeSession(this.#state, columns, rows);
       if (this.#state.pty === 'running') this.#backend.resize(columns, rows);
-    });
-  }
-
-  interrupt(): Promise<void> {
-    return this.#enqueue(() => {
-      if (this.#state.pty !== 'running') return;
-      this.#backend.interrupt();
-    });
-  }
-
-  attach(): Promise<void> {
-    return this.#enqueue(() => {
-      this.#state = setSessionAttachment(this.#state, 'attached');
-    });
-  }
-
-  detach(): Promise<void> {
-    return this.#enqueue(() => {
-      this.#state = setSessionAttachment(this.#state, 'detached');
     });
   }
 

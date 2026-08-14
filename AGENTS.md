@@ -2,13 +2,13 @@
 
 ## 产品定位与架构边界
 
-Synapse Term 是本地优先的桌面终端：用户先在现有 Terminal Session 中准备本地 Shell、SSH、跳板机、容器或 WSL 环境，应用负责管理 PTY、Session 与回放。它不建立服务器资产、SSH 拓扑或远程凭据模型。
+Synapse Term 是本地优先的桌面终端：用户先在现有 Terminal Session 中准备本地 Shell、SSH、跳板机、容器或 WSL 环境，应用负责管理 PTY、Session 与实时输出。它不建立服务器资产、SSH 拓扑或远程凭据模型。
 
-Renderer 只负责界面并通过受限 preload API 通信；Electron Main 通过 `terminal-host.ts` 持有 PTY、Session 与内存回放。任何入口都不得绕过 Main 的校验边界，Renderer 不得直接访问 Node API、PTY 或 Session 内部状态。
+Renderer 只负责界面并通过受限 preload API 通信；Electron Main 通过 `terminal-host.ts` 持有 PTY 与 Session。任何入口都不得绕过 Main 的校验边界，Renderer 不得直接访问 Node API、PTY 或 Session 内部状态。
 
 ## 项目结构与模块组织
 
-本仓库是 pnpm workspace。`apps/desktop` 包含 Electron 主进程、preload、React Renderer 与 `e2e/`。`packages/` 按职责拆分领域、终端服务与测试工具：`domain` 持有 Session/终端领域模型，`terminal-service` 持有 PTY、Session、回放与 Shell 发现，`test-kit` 提供测试替身；跨包依赖应通过各包的 `src/index.ts` 公共出口。单元测试与源码同目录，命名为 `*.test.ts` 或 `*.test.tsx`。字体等静态资源位于 `apps/desktop/src/renderer/assets/`；架构、安全和运行说明在 `docs/`；规格变更及归档位于 `openspec/`。
+本仓库是 pnpm workspace。`apps/desktop` 包含 Electron 主进程、preload、React Renderer 与 `e2e/`。`packages/` 按职责拆分领域、终端服务与测试工具：`domain` 持有 Session/终端领域模型，`terminal-service` 持有 PTY、Session、实时输出与 Shell 发现，`test-kit` 提供测试替身；跨包依赖应通过各包的 `src/index.ts` 公共出口。单元测试与源码同目录，命名为 `*.test.ts` 或 `*.test.tsx`。字体等静态资源位于 `apps/desktop/src/renderer/assets/`；架构、安全和运行说明在 `docs/`；规格变更及归档位于 `openspec/`。
 
 ## 构建、测试与开发命令
 

@@ -19,8 +19,11 @@ test('renders the terminal-only Synapse Term workspace', async ({ page }) => {
   ).toHaveCount(0);
   await expect(page.getByRole('button', { name: '提示词历史', exact: true })).toHaveCount(0);
 
-  await expect(page.locator('.terminal-host .xterm')).toBeVisible();
-  await expect(page.locator('.terminal-host')).toHaveCSS('font-family', /JetBrains Mono/i);
+  await expect(page.locator('#active-terminal-panel .xterm:visible')).toBeVisible();
+  await expect(page.locator('#active-terminal-panel .terminal-host:visible')).toHaveCSS(
+    'font-family',
+    /JetBrains Mono/i,
+  );
 });
 
 test('opens the single-page settings placeholder', async ({ page }) => {
@@ -61,4 +64,25 @@ test('creates a session from the quick-add empty state', async ({ page }) => {
 
   await expect(page.getByRole('tab', { name: '终端 1 Zsh', exact: true })).toBeVisible();
   await expect(page.getByLabel('终端 1 终端')).toBeVisible();
+});
+
+test('keeps terminal content when switching tabs', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '快速新建终端会话', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: '新建终端会话' });
+  await dialog.getByRole('button', { name: '创建并连接', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '终端 1 Zsh', exact: true })).toBeVisible();
+  await expect(
+    page.locator('#active-terminal-panel .xterm-accessibility-tree:visible'),
+  ).toContainText('终端 1 已就绪');
+
+  await page.getByRole('button', { name: '新建终端会话', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: '新建终端会话' });
+  await dialog.getByRole('button', { name: '创建并连接', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '终端 2 Zsh', exact: true })).toBeVisible();
+
+  await page.getByRole('tab', { name: '终端 1 Zsh', exact: true }).click();
+  await expect(
+    page.locator('#active-terminal-panel .xterm-accessibility-tree:visible'),
+  ).toContainText('终端 1 已就绪');
 });

@@ -1,5 +1,5 @@
 import type {
-  CoreStatus,
+  AppStatus,
   DesktopApi,
   SessionLaunchInput,
   SessionSummary,
@@ -7,7 +7,7 @@ import type {
 } from '../shared/contracts.js';
 
 export type {
-  CoreStatus,
+  AppStatus,
   DesktopApi,
   SessionEnvironment,
   SessionLaunchInput,
@@ -40,9 +40,8 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
       onOutput: (listener) =>
         ipc.on('terminal:output', (payload) => listener(payload as TerminalOutputEvent)),
     },
-    core: {
-      status: () => invoke<CoreStatus>('core:status'),
-      exit: (mode) => invoke('core:exit', mode),
+    app: {
+      status: () => invoke<AppStatus>('app:status'),
     },
   };
 }

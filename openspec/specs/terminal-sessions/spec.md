@@ -20,11 +20,11 @@ Electron Main 进程 MUST 持有所有 PTY、Session 状态和输出序列，Ele
 - **THEN** Main 中的 PTY 和 Session 保持运行，新 Renderer 继续订阅实时输出
 
 ### Requirement: Minimal Session State
-系统 SHALL 分别维护 PTY 状态与 UI attachment 状态，PTY 保持 `running` 时 UI 可以处于 `detached`，避免把无关状态压缩为单一枚举。
+系统 SHALL 维护 PTY 状态与终端元数据，避免把无关状态压缩为单一枚举。
 
 #### Scenario: Running session without UI
 - **WHEN** PTY 正在运行而窗口尚未打开或 Renderer 已重载
-- **THEN** PTY 状态保持 `running` 且 attachment 状态为 `detached`
+- **THEN** PTY 状态保持 `running`，Session 继续由 Main 持有
 
 ### Requirement: In-Memory Session Lifecycle
 Session 状态 MUST 仅保存在应用运行期的内存中；应用退出后所有 Session 终止，MUST NOT 提供跨重启恢复、持久化历史或回放。

@@ -6,6 +6,7 @@ import type {
   SessionEnvironment,
   SessionLaunchInput,
   SessionSummary,
+  TerminalOutputEvent,
 } from '../preload/preload-api.js';
 import { ConfirmDialog } from './feedback/index.js';
 import { errorMessageZh } from './i18n/zh-cn.js';
@@ -19,9 +20,10 @@ import { TerminalView } from './terminal/terminal-view.js';
 import synapseTermLogoUrl from './assets/synapse-term-logo.svg';
 
 let browserMockApi: DesktopApi | undefined;
+const EMPTY_OUTPUT_EVENTS: readonly TerminalOutputEvent[] = [];
 
 function getApi(): DesktopApi {
-  if (window.terminalAgent !== undefined) return window.terminalAgent;
+  if (window.synapseTerm !== undefined) return window.synapseTerm;
   browserMockApi ??= createMockDesktopApi();
   return browserMockApi;
 }
@@ -64,6 +66,7 @@ export function App(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string>();
   const terminalSearchInputRef = useRef<HTMLInputElement>(null);
+  const outputHistoryRef = useRef(new Map<string, TerminalOutputEvent[]>());
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     try {
@@ -117,7 +120,18 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', handleTerminalSearchShortcut, true);
   }, [view]);
 
-  const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+
+  useEffect(
+    () =>
+      api.terminal.onOutput((event) => {
+        const list = outputHistoryRef.current.get(event.sessionId) ?? [];
+        if (list.length >= 4096) list.shift();
+        list.push(event);
+        outputHistoryRef.current.set(event.sessionId, list);
+      }),
+    [api],
+  );
 
   const createSession = useCallback(
     async (
@@ -158,6 +172,7 @@ export function App(): JSX.Element {
       try {
         const closed = await api.sessions.close(sessionId);
         if (!closed) return;
+        outputHistoryRef.current.delete(sessionId);
         setSessions((current) => current.filter((session) => session.id !== sessionId));
         if (activeSessionId === sessionId) setActiveSessionId('');
       } catch (error) {
@@ -172,6 +187,7 @@ export function App(): JSX.Element {
     const ids = sessions.map((session) => session.id);
     try {
       await Promise.all(ids.map((id) => api.sessions.close(id)));
+      outputHistoryRef.current.clear();
       setSessions([]);
       setActiveSessionId('');
     } catch (error) {
@@ -191,6 +207,7 @@ export function App(): JSX.Element {
     try {
       await Promise.all(targetIds.map((id) => api.sessions.close(id)));
       const targetSet = new Set(targetIds);
+      for (const id of targetIds) outputHistoryRef.current.delete(id);
       setSessions((current) => current.filter((session) => !targetSet.has(session.id)));
       if (targetSet.has(activeSessionId)) setActiveSessionId('');
     } catch (error) {
@@ -200,7 +217,7 @@ export function App(): JSX.Element {
 
   const dispatchSearch = (value: string): void => {
     setTerminalSearch(value);
-    window.dispatchEvent(new CustomEvent('terminal-agent-search', { detail: value }));
+    window.dispatchEvent(new CustomEvent('terminal-search', { detail: value }));
   };
 
   const openRenameFromContextMenu = (): void => {
@@ -407,7 +424,7 @@ export function App(): JSX.Element {
               id="active-terminal-panel"
               role="tabpanel"
             >
-              {activeSession === undefined ? (
+              {sessions.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 text-center">
                   <img
                     alt="Synapse Term logo"
@@ -434,6 +451,23 @@ export function App(): JSX.Element {
                 </div>
               ) : (
                 <>
+                  {sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="absolute inset-0"
+                      style={{
+                        visibility: session.id === activeSession?.id ? 'visible' : 'hidden',
+                      }}
+                    >
+                      <TerminalView
+                        api={api}
+                        initialEvents={
+                          outputHistoryRef.current.get(session.id) ?? EMPTY_OUTPUT_EVENTS
+                        }
+                        session={session}
+                      />
+                    </div>
+                  ))}
                   <div className="absolute right-4 top-4 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
                     <div className="flex items-center overflow-hidden rounded-lg border border-border/80 bg-[#18181b] px-2.5 py-1.5 text-muted-foreground shadow-2xl backdrop-blur-md transition-colors focus-within:border-primary/50">
                       <Search size={14} className="mr-2 text-muted-foreground/70" />
@@ -448,7 +482,6 @@ export function App(): JSX.Element {
                       />
                     </div>
                   </div>
-                  <TerminalView api={api} session={activeSession} />
                 </>
               )}
             </div>

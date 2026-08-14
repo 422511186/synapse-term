@@ -8,7 +8,6 @@ allowBuilds:
   node-pty: true
 
 onlyBuiltDependencies:
-  - '@napi-rs/keyring'
   - electron
   - esbuild
   - node-pty
