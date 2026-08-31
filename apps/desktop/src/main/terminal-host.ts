@@ -24,6 +24,7 @@ export interface TerminalHostOptions {
   shellLocator?: ShellLocator;
   maxSessions?: number;
   version?: string;
+  hideCompletionProbeEcho?: boolean;
 }
 
 export class TerminalHost {
@@ -31,6 +32,7 @@ export class TerminalHost {
   readonly #shellLocator: ShellLocator;
   readonly #home: string;
   readonly #version: string;
+  #hideCompletionProbeEcho: boolean;
   readonly #sessionListeners = new Set<(session: SessionSummary) => void>();
   readonly #outputListeners = new Set<(event: TerminalOutputEvent) => void>();
 
@@ -42,6 +44,7 @@ export class TerminalHost {
     this.#shellLocator = options.shellLocator ?? new ShellLocator();
     this.#home = options.home ?? homedir();
     this.#version = options.version ?? '0.4.0';
+    this.#hideCompletionProbeEcho = options.hideCompletionProbeEcho ?? true;
   }
 
   listSessions(): SessionSummary[] {
@@ -63,6 +66,7 @@ export class TerminalHost {
       id,
       title: input.title,
       terminalType: input.terminalType,
+      hideCompletionProbeEcho: this.#hideCompletionProbeEcho,
       launch: {
         executable: input.executable,
         args: input.args,
@@ -96,6 +100,11 @@ export class TerminalHost {
     if (!result.ok) throw new Error('Session is not running');
   }
 
+  async setProbeEchoVisibility(hide: boolean): Promise<void> {
+    this.#hideCompletionProbeEcho = hide;
+    await Promise.all(this.#manager.list().map((actor) => actor.setProbeEchoVisibility(hide)));
+  }
+
   async resize(sessionId: string, columns: number, rows: number): Promise<void> {
     const actor = this.#requireSession(sessionId);
     await actor.resize(columns, rows);
@@ -112,6 +121,24 @@ export class TerminalHost {
   onSessionChanged(listener: (session: SessionSummary) => void): () => void {
     this.#sessionListeners.add(listener);
     return () => this.#sessionListeners.delete(listener);
+  }
+
+  getMcpSessionSource(): {
+    get(sessionId: string): SessionActor | undefined;
+    titleOf(sessionId: string): string;
+    notifyRemoved(listener: (sessionId: string) => void): () => void;
+  } {
+    return {
+      get: (sessionId) => {
+        const actor = this.#manager.get(sessionId);
+        return actor?.snapshot.pty === 'running' ? actor : undefined;
+      },
+      titleOf: (sessionId) => this.#manager.get(sessionId)?.snapshot.title ?? sessionId,
+      notifyRemoved: (listener) =>
+        this.onSessionChanged((session) => {
+          if (session.pty !== 'running') listener(session.id);
+        }),
+    };
   }
 
   onTerminalOutput(listener: (event: TerminalOutputEvent) => void): () => void {
@@ -153,7 +180,7 @@ export class TerminalHost {
   }
 
   #handleActorEvent(actor: SessionActor, event: SessionActorEvent): void {
-    if (event.type === 'pty_output') {
+    if (event.type === 'terminal_output') {
       for (const listener of this.#outputListeners) {
         listener({ sessionId: actor.snapshot.id, sequence: event.sequence, data: event.data });
       }

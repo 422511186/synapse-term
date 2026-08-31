@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 import type { LocalShellDescriptor, PtySpawner } from '@synapse-term/terminal-service';
@@ -80,6 +80,33 @@ describe('TerminalHost', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(received.map((event) => event.data)).toEqual(['hello']);
     expect(host.status()).toMatchObject({ connected: true, version: 'test', sessions: 1 });
+    await host.shutdown();
+  });
+
+  it('applies probe echo visibility to the local UI output without changing the Session actor', async () => {
+    const spawner = new FakePtySpawner();
+    const host = createHost(spawner);
+    const received: TerminalOutputEvent[] = [];
+    host.onTerminalOutput((event) => received.push(event));
+    const created = await host.createSession({
+      title: 't',
+      terminalType: 'PowerShell',
+      executable: 'pwsh',
+      args: [],
+      cwd: '/',
+      env: {},
+    });
+    const actor = host.getMcpSessionSource().get(created.id);
+    expect(actor).toBeDefined();
+    await actor?.setProbeEchoVisibility(false);
+    actor?.suppressInputEcho({ start: '[probe:', end: ':end]' });
+
+    spawner.spawned[0]?.emitData('before [probe:diagnostic:end]after');
+    await vi.waitFor(() =>
+      expect(received.map((event) => event.data).join('')).toBe(
+        'before [probe:diagnostic:end]after',
+      ),
+    );
     await host.shutdown();
   });
 

@@ -35,4 +35,13 @@ describe('mock desktop API', () => {
     expect(await api.sessions.close(session.id)).toBe(true);
     expect(await api.sessions.list()).toEqual([]);
   });
+
+  it('round-trips the general probe visibility setting through the restricted API', async () => {
+    const api = createMockDesktopApi();
+
+    await expect(api.general.getSettings()).resolves.toEqual({ hideCompletionProbeEcho: true });
+    await expect(api.general.updateSettings({ hideCompletionProbeEcho: false })).resolves.toEqual({
+      hideCompletionProbeEcho: false,
+    });
+  });
 });

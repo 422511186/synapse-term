@@ -26,13 +26,22 @@ test('renders the terminal-only Synapse Term workspace', async ({ page }) => {
   );
 });
 
-test('opens the single-page settings placeholder', async ({ page }) => {
+test('opens the dedicated MCP settings workspace', async ({ page }) => {
   await page.goto('/?sessions=1');
   await page.getByRole('button', { name: '设置', exact: true }).click();
 
   const workspace = page.getByTestId('settings-workspace');
   await expect(workspace).toBeVisible();
-  await expect(workspace.getByTestId('settings-topic-content')).toContainText('暂无设置项');
+  await expect(workspace.getByRole('region', { name: '终端显示' })).toBeVisible();
+  const probeEchoToggle = workspace.getByLabel('隐藏自动 Probe 回显');
+  await expect(probeEchoToggle).toBeChecked();
+  await probeEchoToggle.uncheck();
+  await expect(probeEchoToggle).not.toBeChecked();
+  await expect(workspace.getByText('Probe 仍会写入当前 PTY')).toBeVisible();
+  await expect(workspace.getByRole('region', { name: 'MCP 服务' })).toBeVisible();
+  await expect(workspace.getByRole('region', { name: '内嵌 MCP Server' })).toBeVisible();
+  await expect(workspace.getByLabel('MCP 服务端口')).toHaveValue('4739');
+  await expect(workspace.getByText('启用本机 MCP 端点')).toBeVisible();
   await expect(workspace.getByRole('button', { name: '返回工作区' })).toBeVisible();
   await expect(workspace.getByRole('button', { name: '服务商配置' })).toHaveCount(0);
 

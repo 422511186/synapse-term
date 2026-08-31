@@ -7,6 +7,10 @@ import {
   type DesktopIpcEventChannel,
 } from '../shared/desktop-ipc-channels.js';
 import { DesktopWindowRegistry, createBrowserWindowOptions } from './electron-window.js';
+import { ApprovalQueue } from './mcp/approval-queue.js';
+import { EmbeddedMcpServer } from './mcp/embedded-mcp-server.js';
+import { McpController } from './mcp/mcp-controller.js';
+import { GeneralSettingsController } from './settings/general-settings-controller.js';
 import { TerminalHost } from './terminal-host.js';
 
 const windows = new DesktopWindowRegistry<BrowserWindow>();
@@ -17,7 +21,7 @@ if (userDataOverride !== undefined && userDataOverride.length > 0) {
 }
 
 function createWindow(): void {
-  const directory = join(app.getAppPath(), 'dist/main');
+  const directory = import.meta.dirname ?? join(app.getAppPath(), 'dist/main');
   const preloadPath = join(directory, '../preload/preload.cjs');
   const window = windows.retain(new BrowserWindow(createBrowserWindowOptions(preloadPath)));
   window.webContents.on('render-process-gone', (_event, details) => {
@@ -41,8 +45,10 @@ function createWindow(): void {
   else void window.loadFile(join(directory, '../renderer/index.html'));
 }
 
-function registerIpc(host: TerminalHost): void {
-  for (const channel of DESKTOP_IPC_REQUEST_CHANNELS) {
+function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsController): void {
+  for (const channel of DESKTOP_IPC_REQUEST_CHANNELS.filter(
+    (channel) => !channel.startsWith('mcp:') && !channel.startsWith('settings:'),
+  )) {
     ipcMain.handle(channel, (event, ...argumentsValue: unknown[]) => {
       if (!isTrustedRendererEvent(event)) {
         throw new Error('Renderer IPC request is not trusted');
@@ -50,6 +56,18 @@ function registerIpc(host: TerminalHost): void {
       return host.handle(channel, argumentsValue);
     });
   }
+  ipcMain.handle('settings:get-general', async (event) => {
+    if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+    return generalSettings.getSettings();
+  });
+  ipcMain.handle('settings:update-general', async (event, patch: unknown) => {
+    if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+    return generalSettings.updateSettings(
+      typeof patch === 'object' && patch !== null
+        ? (patch as { hideCompletionProbeEcho?: boolean })
+        : {},
+    );
+  });
 }
 
 function isTrustedRendererEvent(event: Electron.IpcMainInvokeEvent): boolean {
@@ -68,7 +86,35 @@ function isTrustedRendererEvent(event: Electron.IpcMainInvokeEvent): boolean {
 
 function broadcast(channel: DesktopIpcEventChannel, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+    if (window.isDestroyed()) continue;
+    if (channel === 'mcp:approval') {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      window.flashFrame(true);
+    }
+
+    window.webContents.send(channel, payload);
+  }
+}
+
+function registerMcpIpc(controller: McpController): void {
+  const handlers: Record<string, (args: readonly unknown[]) => Promise<unknown> | unknown> = {
+    'mcp:get-settings': () => controller.getSettings(),
+    'mcp:update-settings': (args) => controller.updateSettings(args[0] as never),
+    'mcp:regenerate-token': () => controller.regenerateToken(),
+    'mcp:revoke-token': () => controller.revokeToken(),
+    'mcp:get-status': () => controller.getStatus(),
+    'mcp:list-shared': () => controller.listShared(),
+    'mcp:share-session': (args) => controller.share(String(args[0])),
+    'mcp:unshare-session': (args) => controller.unshare(String(args[0])),
+    'mcp:decide-approval': (args) => controller.decideApproval(String(args[0]), args[1] as never),
+  };
+  for (const [channel, handler] of Object.entries(handlers)) {
+    ipcMain.handle(channel, async (event, ...argumentsValue: unknown[]) => {
+      if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+      return await handler(argumentsValue);
+    });
   }
 }
 
@@ -79,13 +125,49 @@ async function startDesktopMain(): Promise<void> {
   Menu.setApplicationMenu(null);
 
   const host = new TerminalHost({ version: app.getVersion() });
+  const generalSettings = new GeneralSettingsController({
+    settingsStoreDirectory: join(app.getPath('userData'), 'settings'),
+    apply: (settings) => host.setProbeEchoVisibility(settings.hideCompletionProbeEcho),
+  });
+  await generalSettings.reload().catch((error: unknown) => {
+    console.error('[desktop-settings] general settings load failed', error);
+  });
+  const approvalTimeoutOverride = process.env.SYNAPSE_TERM_MCP_APPROVAL_TIMEOUT_MS;
+  const approvalTimeoutMs = approvalTimeoutOverride ? Number(approvalTimeoutOverride) : 60_000;
+  const approvalQueue = new ApprovalQueue({
+    timeoutMs:
+      Number.isFinite(approvalTimeoutMs) && approvalTimeoutMs > 0 ? approvalTimeoutMs : 60_000,
+  });
+  const mcpController = new McpController({
+    settingsStoreDirectory: join(app.getPath('userData'), 'mcp'),
+    sessions: host.getMcpSessionSource(),
+    approvalQueue,
+  });
+  const mcpEndpoint = new EmbeddedMcpServer({
+    getSettings: () => mcpController.getSettingsSnapshot(),
+    callTool: (name, input) => mcpController.callTool(name, input),
+  });
+  mcpController.setEndpoint(mcpEndpoint);
+  void mcpController.reload().catch((error: unknown) => {
+    console.error('[desktop-mcp] settings load failed', error);
+  });
+  const removeApprovalListener = approvalQueue.onRequest((request) =>
+    broadcast('mcp:approval', request),
+  );
+  const removeApprovalClosedListener = approvalQueue.onResolution((id) =>
+    broadcast('mcp:approval-closed', { id }),
+  );
+  const removeExecutionListener = mcpController.onExecution((event) =>
+    broadcast('mcp:execution', event),
+  );
   const removeSessionListener = host.onSessionChanged((session) =>
     broadcast('session:changed', session),
   );
   const removeOutputListener = host.onTerminalOutput((event) =>
     broadcast('terminal:output', event),
   );
-  registerIpc(host);
+  registerIpc(host, generalSettings);
+  registerMcpIpc(mcpController);
   createWindow();
 
   app.on('activate', () => {
@@ -100,9 +182,13 @@ async function startDesktopMain(): Promise<void> {
     void host
       .shutdown()
       .catch((error: unknown) => console.error('[desktop-main] shutdown failed', error))
-      .finally(() => {
+      .finally(async () => {
         removeSessionListener();
         removeOutputListener();
+        removeApprovalListener();
+        removeApprovalClosedListener();
+        removeExecutionListener();
+        await mcpController.stop();
         app.quit();
       });
   });

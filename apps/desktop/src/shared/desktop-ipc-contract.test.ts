@@ -6,7 +6,7 @@ import {
 } from './desktop-ipc-channels.js';
 
 describe('desktop IPC contract', () => {
-  it('only exposes terminal session channels', () => {
+  it('only exposes terminal and restricted MCP channels', () => {
     expect(DESKTOP_IPC_REQUEST_CHANNELS).toEqual([
       'sessions:list',
       'sessions:environment',
@@ -16,7 +16,24 @@ describe('desktop IPC contract', () => {
       'terminal:write',
       'terminal:resize',
       'app:status',
+      'settings:get-general',
+      'settings:update-general',
+      'mcp:get-settings',
+      'mcp:update-settings',
+      'mcp:regenerate-token',
+      'mcp:revoke-token',
+      'mcp:get-status',
+      'mcp:list-shared',
+      'mcp:share-session',
+      'mcp:unshare-session',
+      'mcp:decide-approval',
     ]);
-    expect(DESKTOP_IPC_EVENT_CHANNELS).toEqual(['terminal:output', 'session:changed']);
+    expect(DESKTOP_IPC_EVENT_CHANNELS).toEqual([
+      'terminal:output',
+      'session:changed',
+      'mcp:approval',
+      'mcp:approval-closed',
+      'mcp:execution',
+    ]);
   });
 });

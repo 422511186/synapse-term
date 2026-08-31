@@ -1,5 +1,19 @@
 export type PtyState = 'starting' | 'running' | 'exited' | 'failed' | 'interrupted';
 
+export type ExecutionDialect = 'posix' | 'powershell' | 'unknown';
+export type EnvironmentPlatform = 'windows' | 'unix' | 'unknown';
+export type EnvironmentVerificationStatus = 'unverified' | 'verified';
+export type EnvironmentSource = 'none' | 'probe';
+
+export interface CurrentPtyEnvironment {
+  dialect: ExecutionDialect;
+  platform: EnvironmentPlatform;
+  verificationStatus: EnvironmentVerificationStatus;
+  source: EnvironmentSource;
+  capabilityEpoch: number;
+  verifiedAt: string | undefined;
+}
+
 export interface SessionState {
   id: string;
   title: string;
@@ -7,6 +21,17 @@ export interface SessionState {
   pty: PtyState;
   columns: number;
   rows: number;
+  /** 启动时的 Shell 提示；不能替代当前 PTY environment。 */
+  environment: CurrentPtyEnvironment;
+  /** 共享时间戳：仅当用户显式共享后存在（specs/mcp-access） */
+  sharedAt?: string;
+}
+
+export interface VerifySessionEnvironmentInput {
+  dialect: Exclude<ExecutionDialect, 'unknown'>;
+  platform: Exclude<EnvironmentPlatform, 'unknown'>;
+  source: 'probe';
+  verifiedAt: string;
 }
 
 export interface CreateSessionStateInput {
@@ -27,6 +52,42 @@ export function createSessionState(input: CreateSessionStateInput): SessionState
     pty: 'starting',
     columns: input.columns ?? 80,
     rows: input.rows ?? 24,
+    environment: {
+      dialect: 'unknown',
+      platform: 'unknown',
+      verificationStatus: 'unverified',
+      source: 'none',
+      capabilityEpoch: 0,
+      verifiedAt: undefined,
+    },
+  };
+}
+
+export function verifySessionEnvironment(
+  state: SessionState,
+  input: VerifySessionEnvironmentInput,
+): SessionState {
+  return {
+    ...state,
+    environment: {
+      ...input,
+      verificationStatus: 'verified',
+      capabilityEpoch: state.environment.capabilityEpoch + 1,
+    },
+  };
+}
+
+export function invalidateSessionEnvironment(state: SessionState): SessionState {
+  return {
+    ...state,
+    environment: {
+      dialect: 'unknown',
+      platform: 'unknown',
+      verificationStatus: 'unverified',
+      source: 'none',
+      capabilityEpoch: state.environment.capabilityEpoch + 1,
+      verifiedAt: undefined,
+    },
   };
 }
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSessionState, resizeSession, transitionSessionPty } from './session-state.js';
+import {
+  createSessionState,
+  invalidateSessionEnvironment,
+  resizeSession,
+  transitionSessionPty,
+  verifySessionEnvironment,
+} from './session-state.js';
 
 describe('SessionState', () => {
   it('starts as starting and detached', () => {
@@ -39,5 +45,48 @@ describe('SessionState', () => {
     const state = createSessionState({ id: 's1', title: 't', terminalType: 'Zsh' });
     expect(resizeSession(state, 120, 40)).toMatchObject({ columns: 120, rows: 40 });
     expect(() => resizeSession(state, 0, 40)).toThrow(RangeError);
+  });
+
+  it('starts with an unverified current PTY environment instead of trusting the launch hint', () => {
+    const state = createSessionState({ id: 's1', title: 't', terminalType: 'PowerShell' });
+
+    expect(state.terminalType).toBe('PowerShell');
+    expect(state.environment).toEqual({
+      dialect: 'unknown',
+      platform: 'unknown',
+      verificationStatus: 'unverified',
+      source: 'none',
+      capabilityEpoch: 0,
+      verifiedAt: undefined,
+    });
+  });
+
+  it('increments the environment epoch when the current PTY environment is verified and invalidated', () => {
+    const state = createSessionState({ id: 's1', title: 't', terminalType: 'PowerShell' });
+    const verified = verifySessionEnvironment(state, {
+      dialect: 'posix',
+      platform: 'unix',
+      source: 'probe',
+      verifiedAt: '2026-08-31T00:00:00.000Z',
+    });
+
+    expect(verified.environment).toMatchObject({
+      dialect: 'posix',
+      platform: 'unix',
+      verificationStatus: 'verified',
+      source: 'probe',
+      capabilityEpoch: 1,
+      verifiedAt: '2026-08-31T00:00:00.000Z',
+    });
+
+    const invalidated = invalidateSessionEnvironment(verified);
+    expect(invalidated.environment).toMatchObject({
+      dialect: 'unknown',
+      platform: 'unknown',
+      verificationStatus: 'unverified',
+      source: 'none',
+      capabilityEpoch: 2,
+    });
+    expect(invalidated.environment.verifiedAt).toBeUndefined();
   });
 });

@@ -7,6 +7,7 @@ export interface SessionCreateRequest {
   id: string;
   title: string;
   terminalType: string;
+  hideCompletionProbeEcho?: boolean;
   launch: PtySpawnOptions;
   onEvent?(actor: SessionActor, event: SessionActorEvent): void;
 }
@@ -60,6 +61,9 @@ export class SessionManager {
     const actor = new SessionActor(config.id, backend, {
       title: config.title,
       terminalType: config.terminalType,
+      ...(config.hideCompletionProbeEcho === undefined
+        ? {}
+        : { hideCompletionProbeEcho: config.hideCompletionProbeEcho }),
       columns: config.launch.columns,
       rows: config.launch.rows,
     });

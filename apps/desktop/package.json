@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@synapse-term/domain": "workspace:*",
     "@synapse-term/terminal-service": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
@@ -27,7 +28,8 @@
     "lucide-react": "0.487.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@synapse-term/test-kit": "workspace:*",

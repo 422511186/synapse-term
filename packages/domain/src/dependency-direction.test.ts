@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -16,7 +17,7 @@ async function collectTsFiles(directory: string): Promise<string[]> {
 
 describe('domain dependency direction', () => {
   it('never imports other workspace packages', async () => {
-    const root = new URL('..', import.meta.url).pathname;
+    const root = fileURLToPath(new URL('..', import.meta.url));
     const files = await collectTsFiles(join(root, 'src'));
     for (const file of files) {
       const source = await readFile(file, 'utf8');

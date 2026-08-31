@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { List, Pencil, Plus, Search, Settings, X } from 'lucide-react';
+import { List, Pencil, Plus, Radio, Search, Settings, Share2, X } from 'lucide-react';
 
 import type {
   DesktopApi,
+  McpApprovalDecision,
+  McpApprovalRequest,
+  McpExecutionEvent,
+  McpRuntimeStatus,
   SessionEnvironment,
   SessionLaunchInput,
   SessionSummary,
@@ -11,6 +15,8 @@ import type {
 import { ConfirmDialog } from './feedback/index.js';
 import { errorMessageZh } from './i18n/zh-cn.js';
 import { createMockDesktopApi } from './mock-api.js';
+import { ApprovalCard } from './mcp/approval-card.js';
+import { ShareDialog } from './mcp/share-dialog.js';
 import { buildSessionLaunch } from './session-launch.js';
 import { chooseInitialSessionId } from './session-selection.js';
 import { getSessionAvailability } from './session-status.js';
@@ -41,6 +47,13 @@ interface ContextMenuState {
   y: number;
 }
 
+interface ShareDialogState {
+  sessionId: string;
+  terminalType: string;
+  title: string;
+  mcpStatus: McpRuntimeStatus;
+}
+
 type CloseRangeDirection = 'left' | 'right';
 
 export function App(): JSX.Element {
@@ -63,6 +76,9 @@ export function App(): JSX.Element {
   const [confirmCloseRange, setConfirmCloseRange] = useState<
     { sessionId: string; direction: CloseRangeDirection } | undefined
   >();
+  const [approvalRequest, setApprovalRequest] = useState<McpApprovalRequest | undefined>();
+  const [executions, setExecutions] = useState(new Map<string, McpExecutionEvent>());
+  const [shareDialog, setShareDialog] = useState<ShareDialogState | undefined>();
   const [busy, setBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string>();
   const terminalSearchInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +108,35 @@ export function App(): JSX.Element {
           if (index < 0) return [...current, session];
           const next = [...current];
           next[index] = session;
+          return next;
+        });
+      }),
+    [api],
+  );
+
+  useEffect(
+    () =>
+      api.mcp.onApprovalClosed(({ id }) => {
+        setApprovalRequest((current) => (current?.id === id ? undefined : current));
+      }),
+    [api],
+  );
+
+  useEffect(
+    () =>
+      api.mcp.onApproval((request) => {
+        setApprovalRequest(request);
+      }),
+    [api],
+  );
+
+  useEffect(
+    () =>
+      api.mcp.onExecution((event) => {
+        setExecutions((current) => {
+          const next = new Map(current);
+          if (event.phase === 'finished') next.delete(event.sessionId);
+          else next.set(event.sessionId, event);
           return next;
         });
       }),
@@ -227,6 +272,35 @@ export function App(): JSX.Element {
     setContextMenu(undefined);
   };
 
+  const shareFromContextMenu = async (): Promise<void> => {
+    if (contextMenu === undefined) return;
+    const sessionId = contextMenu.sessionId;
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+    setContextMenu(undefined);
+    if (session === undefined) return;
+    try {
+      await api.mcp.shareSession(sessionId);
+      const mcpStatus = await api.mcp.getStatus();
+      setShareDialog({
+        sessionId,
+        terminalType: session.terminalType,
+        title: session.title,
+        mcpStatus,
+      });
+    } catch (error) {
+      setRuntimeError(errorMessageZh(error));
+    }
+  };
+
+  const decideApproval = async (decision: McpApprovalDecision): Promise<void> => {
+    if (approvalRequest === undefined) return;
+    try {
+      await api.mcp.decideApproval(approvalRequest.id, decision);
+    } finally {
+      setApprovalRequest(undefined);
+    }
+  };
+
   const closeCurrentFromContextMenu = (): void => {
     if (contextMenu === undefined) return;
     const session = sessions.find((candidate) => candidate.id === contextMenu.sessionId);
@@ -302,6 +376,9 @@ export function App(): JSX.Element {
                           <span className="session-tab-title">{session.title}</span>
                           <span className="session-tab-type">{session.terminalType}</span>
                         </span>
+                        {executions.has(session.id) && (
+                          <Radio aria-label="外部执行中" className="text-amber-300" size={12} />
+                        )}
                       </button>
                       <button
                         aria-label={`关闭 ${session.title}`}
@@ -351,6 +428,9 @@ export function App(): JSX.Element {
                 >
                   <button onClick={openRenameFromContextMenu} role="menuitem" type="button">
                     <Pencil size={14} /> 重命名
+                  </button>
+                  <button onClick={() => void shareFromContextMenu()} role="menuitem" type="button">
+                    <Share2 size={14} /> 共享到 MCP
                   </button>
                   <div className="my-1 border-t border-border/60" />
                   <button onClick={closeCurrentFromContextMenu} role="menuitem" type="button">
@@ -451,6 +531,18 @@ export function App(): JSX.Element {
                 </div>
               ) : (
                 <>
+                  {activeSession !== undefined && executions.has(activeSession.id) && (
+                    <div
+                      className="external-execution-banner pointer-events-none absolute left-0 right-0 top-0 z-20 border-b border-amber-400/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+                      data-testid="external-execution-banner"
+                    >
+                      <Radio aria-hidden="true" size={13} />
+                      <span>
+                        外部执行中：{executions.get(activeSession.id)?.command} ·{' '}
+                        {executions.get(activeSession.id)?.source}
+                      </span>
+                    </div>
+                  )}
                   {sessions.map((session) => (
                     <div
                       key={session.id}
@@ -498,7 +590,7 @@ export function App(): JSX.Element {
           )}
         </>
       ) : (
-        <SettingsWorkspace onBack={() => setView('workspace')} />
+        <SettingsWorkspace api={api} onBack={() => setView('workspace')} />
       )}
 
       {isNewSessionOpen && (
@@ -602,6 +694,22 @@ export function App(): JSX.Element {
           onConfirm={() => void closeRangeSessions()}
           open
           title={confirmCloseRange.direction === 'left' ? '关闭左侧终端会话' : '关闭右侧终端会话'}
+        />
+      )}
+
+      {shareDialog !== undefined && (
+        <ShareDialog
+          onClose={() => setShareDialog(undefined)}
+          sessionId={shareDialog.sessionId}
+          terminalType={shareDialog.terminalType}
+          title={shareDialog.title}
+          mcpStatus={shareDialog.mcpStatus}
+        />
+      )}
+      {approvalRequest !== undefined && (
+        <ApprovalCard
+          request={approvalRequest}
+          onDecide={(decision) => void decideApproval(decision)}
         />
       )}
 

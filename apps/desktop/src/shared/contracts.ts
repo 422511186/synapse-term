@@ -35,6 +35,53 @@ export interface AppStatus {
   sessions: number;
 }
 
+export interface GeneralSettings {
+  hideCompletionProbeEcho: boolean;
+}
+
+export type McpApprovalMode = 'read_only' | 'managed' | 'full';
+
+export interface McpSettings {
+  enabled: boolean;
+  approvalMode: McpApprovalMode;
+  port: number;
+  token?: string | undefined;
+}
+
+export interface McpRuntimeStatus {
+  running: boolean;
+  port?: number | undefined;
+  connectionString?: string | undefined;
+}
+
+export interface SharedMcpSession {
+  id: string;
+  title: string;
+  sharedAt: string;
+}
+
+export interface McpApprovalRequest {
+  id: string;
+  sessionId: string;
+  command: string;
+  risk: 'read_only' | 'unknown' | 'mutating' | 'privileged' | 'destructive';
+  reasons: readonly string[];
+}
+
+export type McpApprovalDecision = 'allow_once' | 'allow_session' | 'denied';
+
+export interface McpApprovalClosure {
+  id: string;
+}
+
+export interface McpExecutionEvent {
+  sessionId: string;
+  transactionId: string;
+  command: string;
+  source: string;
+  phase: 'started' | 'finished';
+}
+
 export interface DesktopApi {
   readonly platform?: string;
   sessions: {
@@ -52,5 +99,25 @@ export interface DesktopApi {
   };
   app: {
     status(): Promise<AppStatus>;
+  };
+  general: {
+    getSettings(): Promise<GeneralSettings>;
+    updateSettings(patch: Partial<GeneralSettings>): Promise<GeneralSettings>;
+  };
+  mcp: {
+    getSettings(): Promise<McpSettings>;
+    updateSettings(
+      patch: Partial<Omit<McpSettings, 'token'>> & { token?: string | null },
+    ): Promise<McpSettings>;
+    regenerateToken(): Promise<McpSettings>;
+    revokeToken(): Promise<McpSettings>;
+    getStatus(): Promise<McpRuntimeStatus>;
+    listSharedSessions(): Promise<SharedMcpSession[]>;
+    shareSession(sessionId: string): Promise<SharedMcpSession[]>;
+    unshareSession(sessionId: string): Promise<SharedMcpSession[]>;
+    decideApproval(id: string, decision: McpApprovalDecision): Promise<void>;
+    onApproval(listener: (request: McpApprovalRequest) => void): () => void;
+    onApprovalClosed(listener: (closure: McpApprovalClosure) => void): () => void;
+    onExecution(listener: (event: McpExecutionEvent) => void): () => void;
   };
 }
