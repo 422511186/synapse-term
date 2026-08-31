@@ -18,6 +18,7 @@ describe('desktop IPC contract', () => {
       'app:status',
       'settings:get-general',
       'settings:update-general',
+      'theme:get-state',
       'mcp:get-settings',
       'mcp:update-settings',
       'mcp:regenerate-token',
@@ -31,6 +32,7 @@ describe('desktop IPC contract', () => {
     expect(DESKTOP_IPC_EVENT_CHANNELS).toEqual([
       'terminal:output',
       'session:changed',
+      'theme:changed',
       'mcp:approval',
       'mcp:approval-closed',
       'mcp:execution',

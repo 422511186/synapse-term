@@ -3,6 +3,7 @@ import { useEffect, useState, type JSX } from 'react';
 
 import synapseTermLogoUrl from '../assets/synapse-term-logo.svg';
 import { GeneralSettingsView, McpSettingsView } from '../mcp/mcp-settings-section.js';
+import { ThemeSettingsView } from '../theme/theme-settings-view.js';
 import type {
   GeneralSettings,
   McpApprovalMode,
@@ -116,6 +117,16 @@ export function SettingsWorkspace({
               onToggleHideProbeEcho={(hide) =>
                 api &&
                 void applyGeneral(api.general.updateSettings({ hideCompletionProbeEcho: hide }))
+              }
+              settings={generalSettings}
+            />
+            <ThemeSettingsView
+              busy={busy}
+              onSetCustomTheme={(customTheme) =>
+                api && void applyGeneral(api.general.updateSettings({ customTheme }))
+              }
+              onSetMode={(themeMode) =>
+                api && void applyGeneral(api.general.updateSettings({ themeMode }))
               }
               settings={generalSettings}
             />

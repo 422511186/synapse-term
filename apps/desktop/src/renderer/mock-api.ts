@@ -13,6 +13,7 @@ import type {
   SessionLaunchInput,
   SessionSummary,
   TerminalOutputEvent,
+  ThemeState,
   SharedMcpSession,
 } from '../preload/preload-api.js';
 
@@ -53,7 +54,27 @@ export function createMockDesktopApi(): DesktopApi {
     approvalMode: scenarioParams?.get('mcpEnabled') === 'true' ? 'managed' : 'read_only',
     port: 4_739,
   };
-  let generalSettings: GeneralSettings = { hideCompletionProbeEcho: true };
+  let generalSettings: GeneralSettings = {
+    hideCompletionProbeEcho: true,
+    themeMode: 'system',
+    customTheme: {
+      enabled: false,
+      background: '#09090b',
+      foreground: '#fafafa',
+      accent: '#fafafa',
+    },
+  };
+  const themeListeners = new Set<(state: ThemeState) => void>();
+  const themeState = (): ThemeState => ({
+    mode: generalSettings.themeMode,
+    // The mock operating system is dark; only an explicit light mode switches scheme.
+    scheme: generalSettings.themeMode === 'light' ? 'light' : 'dark',
+    customTheme: generalSettings.customTheme,
+  });
+  const emitTheme = (): void => {
+    const state = themeState();
+    for (const listener of themeListeners) listener(state);
+  };
   const sharedSessions = new Map<string, SharedMcpSession>();
   const inSessionGrants = new Set<string>();
   let approvalSequence = 0;
@@ -194,8 +215,18 @@ export function createMockDesktopApi(): DesktopApi {
             typeof patch.hideCompletionProbeEcho === 'boolean'
               ? patch.hideCompletionProbeEcho
               : generalSettings.hideCompletionProbeEcho,
+          themeMode: patch.themeMode ?? generalSettings.themeMode,
+          customTheme: patch.customTheme ?? generalSettings.customTheme,
         };
+        emitTheme();
         return structuredClone(generalSettings);
+      },
+    },
+    theme: {
+      getState: async () => themeState(),
+      onChanged: (listener) => {
+        themeListeners.add(listener);
+        return () => themeListeners.delete(listener);
       },
     },
     mcp: {

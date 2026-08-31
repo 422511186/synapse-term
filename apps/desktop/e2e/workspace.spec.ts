@@ -95,3 +95,31 @@ test('keeps terminal content when switching tabs', async ({ page }) => {
     page.locator('#active-terminal-panel .xterm-accessibility-tree:visible'),
   ).toContainText('终端 1 已就绪');
 });
+
+test('switches theme mode and custom core colors from settings', async ({ page }) => {
+  await page.goto('/?sessions=1');
+  const rootBackground = (): Promise<string> =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--background'),
+    );
+
+  await expect.poll(rootBackground).toBe('#09090b');
+
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const workspace = page.getByTestId('settings-workspace');
+  const themeSection = workspace.getByTestId('theme-settings-section');
+  await expect(themeSection).toBeVisible();
+  await expect(themeSection.getByText('跟随系统', { exact: true })).toBeVisible();
+
+  // Switch to the light scheme and verify the CSS variables repaint.
+  await themeSection.getByText('浅色', { exact: true }).click();
+  await expect.poll(rootBackground).toBe('#ffffff');
+
+  // Enable the custom palette and set a custom background color.
+  await themeSection.getByLabel('启用自定义配色').check();
+  await themeSection.getByLabel('背景色 选择器').fill('#123456');
+  await expect.poll(rootBackground).toBe('#123456');
+
+  await workspace.getByRole('button', { name: '返回工作区' }).click();
+  await expect(page.locator('.prototype-shell')).toBeVisible();
+});

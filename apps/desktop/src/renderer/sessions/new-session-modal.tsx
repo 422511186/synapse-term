@@ -52,10 +52,10 @@ export function NewSessionModal({
       <div
         aria-label="新建终端会话"
         aria-modal="true"
-        className="bg-[#18181b] border border-border w-full max-w-md rounded-xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-200"
+        className="bg-popover border border-border w-full max-w-md rounded-xl shadow-2xl flex flex-col animate-in zoom-in-95 duration-200"
         role="dialog"
       >
-        <div className="flex items-center justify-between p-4 border-b border-border/50 bg-[#09090b] rounded-t-xl">
+        <div className="flex items-center justify-between p-4 border-b border-border/50 bg-background rounded-t-xl">
           <h2 className="text-[15px] font-semibold">新建终端会话</h2>
           <button
             aria-label="关闭新建终端会话"
@@ -83,7 +83,7 @@ export function NewSessionModal({
               onChange={(event) => setTitle(event.target.value)}
               type="text"
               placeholder={defaultAlias}
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
             />
           </div>
           <div className="space-y-2">
@@ -99,7 +99,7 @@ export function NewSessionModal({
               onChange={(event) =>
                 setShellKind(event.target.value as SessionEnvironment['shells'][number]['kind'])
               }
-              className="w-full bg-[#09090b] border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary appearance-none transition-colors"
+              className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary appearance-none transition-colors"
             >
               {environment.shells.map((shell) => (
                 <option disabled={!shell.available} key={shell.kind} value={shell.kind}>
@@ -111,7 +111,7 @@ export function NewSessionModal({
           </div>
           {error !== undefined && <div className="text-xs text-red-400">{error}</div>}
         </div>
-        <div className="p-4 border-t border-border flex justify-end gap-2 bg-[#09090b] rounded-b-xl">
+        <div className="p-4 border-t border-border flex justify-end gap-2 bg-background rounded-b-xl">
           <button
             onClick={onClose}
             className="px-4 py-2 text-xs font-medium hover:bg-secondary rounded-lg transition-colors"
@@ -122,7 +122,7 @@ export function NewSessionModal({
           <button
             disabled={creating || availableShells.length === 0 || !environment.home}
             onClick={() => void create()}
-            className="px-4 py-2 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 transition-colors shadow-sm disabled:opacity-40"
+            className="px-4 py-2 bg-primary text-primary-foreground text-xs font-semibold rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-40"
             type="button"
           >
             {creating ? '正在创建…' : '创建并连接'}

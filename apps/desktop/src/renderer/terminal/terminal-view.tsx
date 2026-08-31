@@ -4,7 +4,8 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
-import type { SessionSummary, TerminalOutputEvent } from '../../shared/contracts.js';
+import type { SessionSummary, TerminalOutputEvent, ThemeState } from '../../shared/contracts.js';
+import { buildXtermTheme } from '../theme/theme-palette.js';
 import { prototypeTerminalMetrics, prototypeTerminalOptions } from './prototype-terminal.js';
 import { containsTerminalClearSequence } from './terminal-output-state.js';
 
@@ -20,12 +21,17 @@ export function TerminalView({
   api,
   initialEvents = [],
   session,
+  themeState,
 }: {
   api: TerminalViewApi;
   initialEvents?: readonly TerminalOutputEvent[];
   session: SessionSummary;
+  themeState: ThemeState;
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const themeStateRef = useRef(themeState);
+  themeStateRef.current = themeState;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -33,7 +39,9 @@ export function TerminalView({
     const terminal = new Terminal({
       allowProposedApi: true,
       ...prototypeTerminalOptions,
+      theme: buildXtermTheme(themeStateRef.current),
     });
+    terminalRef.current = terminal;
     const fit = new FitAddon();
     const search = new SearchAddon();
     terminal.loadAddon(fit);
@@ -95,8 +103,17 @@ export function TerminalView({
       window.removeEventListener('resize', scheduleFit);
       window.removeEventListener('terminal-search', searchHandler);
       terminal.dispose();
+      terminalRef.current = null;
     };
   }, [api, initialEvents, session.id]);
+
+  // Theme changes only repaint the existing terminal; the instance is never
+  // recreated so scrollback and output are preserved.
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (terminal === null) return;
+    terminal.options.theme = buildXtermTheme(themeState);
+  }, [themeState]);
 
   return (
     <div

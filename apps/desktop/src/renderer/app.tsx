@@ -11,6 +11,7 @@ import type {
   SessionLaunchInput,
   SessionSummary,
   TerminalOutputEvent,
+  ThemeState,
 } from '../preload/preload-api.js';
 import { ConfirmDialog } from './feedback/index.js';
 import { errorMessageZh } from './i18n/zh-cn.js';
@@ -22,11 +23,23 @@ import { chooseInitialSessionId } from './session-selection.js';
 import { getSessionAvailability } from './session-status.js';
 import { AllSessionsPopover, NewSessionModal } from './sessions/index.js';
 import { SettingsWorkspace } from './settings/settings-workspace.js';
+import { applyThemeToDocument } from './theme/theme-palette.js';
 import { TerminalView } from './terminal/terminal-view.js';
 import synapseTermLogoUrl from './assets/synapse-term-logo.svg';
 
 let browserMockApi: DesktopApi | undefined;
 const EMPTY_OUTPUT_EVENTS: readonly TerminalOutputEvent[] = [];
+
+const DEFAULT_THEME_STATE: ThemeState = Object.freeze({
+  mode: 'system',
+  scheme: 'dark',
+  customTheme: Object.freeze({
+    enabled: false,
+    background: '#09090b',
+    foreground: '#fafafa',
+    accent: '#fafafa',
+  }),
+});
 
 function getApi(): DesktopApi {
   if (window.synapseTerm !== undefined) return window.synapseTerm;
@@ -81,6 +94,7 @@ export function App(): JSX.Element {
   const [shareDialog, setShareDialog] = useState<ShareDialogState | undefined>();
   const [busy, setBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string>();
+  const [themeState, setThemeState] = useState<ThemeState | undefined>(undefined);
   const terminalSearchInputRef = useRef<HTMLInputElement>(null);
   const outputHistoryRef = useRef(new Map<string, TerminalOutputEvent[]>());
 
@@ -177,6 +191,19 @@ export function App(): JSX.Element {
       }),
     [api],
   );
+
+  useEffect(() => {
+    void api.theme
+      .getState()
+      .then(setThemeState)
+      .catch(() => undefined);
+    return api.theme.onChanged(setThemeState);
+  }, [api]);
+
+  useEffect(() => {
+    if (themeState === undefined) return;
+    applyThemeToDocument(themeState);
+  }, [themeState]);
 
   const createSession = useCallback(
     async (
@@ -317,12 +344,12 @@ export function App(): JSX.Element {
 
   return (
     <div
-      className="prototype-shell flex h-screen flex-col overflow-hidden bg-[#09090b] font-sans text-foreground"
+      className="prototype-shell flex h-screen flex-col overflow-hidden bg-background font-sans text-foreground"
       data-desktop-platform={isMac ? 'darwin' : undefined}
     >
       {view === 'workspace' ? (
         <>
-          <header className="prototype-header flex h-14 shrink-0 items-center justify-between border-b border-border bg-[#09090b] px-4">
+          <header className="prototype-header flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
             <div className="prototype-brand flex shrink-0 items-center gap-3 border-r border-border pr-6">
               <img
                 alt="Synapse Term logo"
@@ -331,7 +358,13 @@ export function App(): JSX.Element {
                 src={synapseTermLogoUrl}
                 width={36}
               />
-              <span className="prototype-brand-name bg-gradient-to-r from-white to-white/60 bg-clip-text text-[15px] font-bold tracking-tight text-transparent">
+              <span
+                className="prototype-brand-name bg-clip-text text-[15px] font-bold tracking-tight text-transparent"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(to right, var(--foreground), color-mix(in oklab, var(--foreground) 60%, transparent))',
+                }}
+              >
                 Synapse Term
               </span>
             </div>
@@ -500,9 +533,10 @@ export function App(): JSX.Element {
           <main className="prototype-workspace relative flex min-w-0 flex-1 overflow-hidden">
             <div
               aria-label="活动终端"
-              className="prototype-terminal relative z-10 flex min-w-0 flex-1 flex-col border-r border-border bg-[#000000] shadow-[inset_-10px_0_20px_rgba(0,0,0,0.2)] group"
+              className="prototype-terminal relative z-10 flex min-w-0 flex-1 flex-col border-r border-border shadow-[inset_-10px_0_20px_rgba(0,0,0,0.2)] group"
               id="active-terminal-panel"
               role="tabpanel"
+              style={{ backgroundColor: 'var(--terminal-bg)' }}
             >
               {sessions.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 text-center">
@@ -521,7 +555,7 @@ export function App(): JSX.Element {
                   </div>
                   <button
                     aria-label="快速新建终端会话"
-                    className="flex items-center gap-2 rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-black shadow-sm transition-colors hover:bg-white/90"
+                    className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
                     onClick={() => setIsNewSessionOpen(true)}
                     type="button"
                   >
@@ -557,11 +591,12 @@ export function App(): JSX.Element {
                           outputHistoryRef.current.get(session.id) ?? EMPTY_OUTPUT_EVENTS
                         }
                         session={session}
+                        themeState={themeState ?? DEFAULT_THEME_STATE}
                       />
                     </div>
                   ))}
                   <div className="absolute right-4 top-4 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
-                    <div className="flex items-center overflow-hidden rounded-lg border border-border/80 bg-[#18181b] px-2.5 py-1.5 text-muted-foreground shadow-2xl backdrop-blur-md transition-colors focus-within:border-primary/50">
+                    <div className="flex items-center overflow-hidden rounded-lg border border-border/80 bg-popover px-2.5 py-1.5 text-muted-foreground shadow-2xl backdrop-blur-md transition-colors focus-within:border-primary/50">
                       <Search size={14} className="mr-2 text-muted-foreground/70" />
                       <input
                         aria-label="搜索终端输出"

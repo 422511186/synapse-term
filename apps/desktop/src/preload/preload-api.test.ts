@@ -25,4 +25,39 @@ describe('preload desktop API', () => {
       { channel: 'settings:update-general', args: [{ hideCompletionProbeEcho: false }] },
     ]);
   });
+
+  it('reads theme state over the restricted theme channel and subscribes to changes', async () => {
+    const state = {
+      mode: 'system',
+      scheme: 'dark',
+      customTheme: {
+        enabled: false,
+        background: '#09090b',
+        foreground: '#fafafa',
+        accent: '#fafafa',
+      },
+    };
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    let listener: ((payload: unknown) => void) | undefined;
+    const ipc: RendererIpc = {
+      invoke: async (channel, ...args) => {
+        calls.push({ channel, args });
+        return state;
+      },
+      on: (channel, handler) => {
+        if (channel === 'theme:changed') listener = handler;
+        return () => undefined;
+      },
+    };
+    const api = createDesktopApi(ipc);
+
+    await expect(api.theme.getState()).resolves.toEqual(state);
+    let received: unknown;
+    api.theme.onChanged((next) => {
+      received = next;
+    });
+    listener?.({ ...state, scheme: 'light' });
+    expect(received).toEqual({ ...state, scheme: 'light' });
+    expect(calls).toEqual([{ channel: 'theme:get-state', args: [] }]);
+  });
 });

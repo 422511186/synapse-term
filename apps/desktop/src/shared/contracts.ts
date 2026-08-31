@@ -35,8 +35,27 @@ export interface AppStatus {
   sessions: number;
 }
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+export const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+export interface CustomThemePalette {
+  enabled: boolean;
+  background: string;
+  foreground: string;
+  accent: string;
+}
+
 export interface GeneralSettings {
   hideCompletionProbeEcho: boolean;
+  themeMode: ThemeMode;
+  customTheme: CustomThemePalette;
+}
+
+export interface ThemeState {
+  mode: ThemeMode;
+  scheme: 'light' | 'dark';
+  customTheme: CustomThemePalette;
 }
 
 export type McpApprovalMode = 'read_only' | 'managed' | 'full';
@@ -103,6 +122,10 @@ export interface DesktopApi {
   general: {
     getSettings(): Promise<GeneralSettings>;
     updateSettings(patch: Partial<GeneralSettings>): Promise<GeneralSettings>;
+  };
+  theme: {
+    getState(): Promise<ThemeState>;
+    onChanged(listener: (state: ThemeState) => void): () => void;
   };
   mcp: {
     getSettings(): Promise<McpSettings>;
