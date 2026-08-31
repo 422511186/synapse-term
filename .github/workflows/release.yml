@@ -149,9 +149,15 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "Synapse Term $GITHUB_REF_NAME" \
-            --generate-notes \
-            $PRERELEASE_FLAG
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Synapse Term $GITHUB_REF_NAME" \
+              --generate-notes \
+              $PRERELEASE_FLAG
+          fi
