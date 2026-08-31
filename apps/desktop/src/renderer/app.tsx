@@ -625,7 +625,11 @@ export function App(): JSX.Element {
           )}
         </>
       ) : (
-        <SettingsWorkspace api={api} onBack={() => setView('workspace')} />
+        <SettingsWorkspace
+          api={api}
+          onBack={() => setView('workspace')}
+          themeScheme={themeState?.scheme}
+        />
       )}
 
       {isNewSessionOpen && (

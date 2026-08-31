@@ -1,11 +1,13 @@
-import { Check, Palette } from 'lucide-react';
+import { Check, Palette, RotateCcw } from 'lucide-react';
 import type { JSX } from 'react';
 
 import {
   HEX_COLOR_PATTERN,
   type CustomThemePalette,
+  type TerminalTextPalette,
   type ThemeMode,
 } from '../../shared/contracts.js';
+import { ANSI_TEXT_FIELDS, SCHEME_ANSI_PALETTES } from './theme-palette.js';
 
 const MODES: Array<{ value: ThemeMode; label: string; description: string }> = [
   { value: 'light', label: '浅色', description: '使用明亮的外观配色。' },
@@ -22,8 +24,28 @@ const COLOR_FIELDS: Array<{
   { key: 'accent', label: '强调色' },
 ];
 
+const ANSI_LABELS: Record<keyof TerminalTextPalette, string> = {
+  black: '黑',
+  red: '红',
+  green: '绿',
+  yellow: '黄',
+  blue: '蓝',
+  magenta: '品红',
+  cyan: '青',
+  white: '白',
+  brightBlack: '亮黑',
+  brightRed: '亮红',
+  brightGreen: '亮绿',
+  brightYellow: '亮黄',
+  brightBlue: '亮蓝',
+  brightMagenta: '亮品红',
+  brightCyan: '亮青',
+  brightWhite: '亮白',
+};
+
 export interface ThemeSettingsViewProps {
   busy: boolean;
+  scheme: 'light' | 'dark';
   settings: { themeMode: ThemeMode; customTheme: CustomThemePalette };
   onSetMode: (mode: ThemeMode) => void;
   onSetCustomTheme: (palette: CustomThemePalette) => void;
@@ -31,6 +53,7 @@ export interface ThemeSettingsViewProps {
 
 export function ThemeSettingsView({
   busy,
+  scheme,
   settings,
   onSetMode,
   onSetCustomTheme,
@@ -40,6 +63,19 @@ export function ThemeSettingsView({
     if (!HEX_COLOR_PATTERN.test(value)) return;
     onSetCustomTheme({ ...settings.customTheme, [key]: value });
   };
+
+  const updateTerminalColor = (key: keyof TerminalTextPalette, value: string): void => {
+    if (!HEX_COLOR_PATTERN.test(value)) return;
+    const base = settings.customTheme.terminalText ?? SCHEME_ANSI_PALETTES[scheme];
+    onSetCustomTheme({ ...settings.customTheme, terminalText: { ...base, [key]: value } });
+  };
+
+  const resetTerminalText = (): void => {
+    onSetCustomTheme({ ...settings.customTheme, terminalText: undefined });
+  };
+
+  const terminalText = settings.customTheme.terminalText;
+  const canEdit = !busy && settings.customTheme.enabled;
 
   return (
     <section
@@ -52,7 +88,7 @@ export function ThemeSettingsView({
           <Palette aria-hidden="true" size={14} /> 外观
         </div>
         <h3 id="theme-settings-title">主题</h3>
-        <p>选择浅色、深色或跟随系统外观，也可以自定义核心配色。</p>
+        <p>选择浅色、深色或跟随系统外观，也可以自定义核心配色与终端文字。</p>
       </div>
 
       <div
@@ -110,7 +146,7 @@ export function ThemeSettingsView({
               <input
                 aria-label={`${field.label} 输入`}
                 className="theme-color-input"
-                disabled={busy || !settings.customTheme.enabled}
+                disabled={!canEdit}
                 onChange={(event) => updateColor(field.key, event.target.value)}
                 spellCheck={false}
                 type="text"
@@ -119,7 +155,7 @@ export function ThemeSettingsView({
               <input
                 aria-label={`${field.label} 选择器`}
                 className="theme-color-swatch"
-                disabled={busy || !settings.customTheme.enabled}
+                disabled={!canEdit}
                 onChange={(event) => updateColor(field.key, event.target.value)}
                 type="color"
                 value={settings.customTheme[field.key]}
@@ -128,8 +164,58 @@ export function ThemeSettingsView({
           ))}
         </div>
 
+        <div className="theme-terminal-heading">
+          <div>
+            <p className="theme-terminal-title">终端文字配色</p>
+            <p className="theme-terminal-note">
+              未定制时终端文字跟随当前浅色/深色主题；定制后覆盖内置 ANSI 色板。
+            </p>
+          </div>
+          {terminalText !== undefined && (
+            <button
+              aria-label="恢复默认终端文字配色"
+              className="theme-terminal-reset"
+              disabled={!canEdit}
+              onClick={resetTerminalText}
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={13} />
+              恢复默认
+            </button>
+          )}
+        </div>
+
+        <div className="theme-color-grid">
+          {ANSI_TEXT_FIELDS.map((key) => {
+            const value = terminalText?.[key] ?? SCHEME_ANSI_PALETTES[scheme][key];
+            return (
+              <label className="theme-color-row" key={key}>
+                <span className="theme-color-label">{ANSI_LABELS[key]}</span>
+                <input
+                  aria-label={`终端文字 ${ANSI_LABELS[key]} 输入`}
+                  className="theme-color-input"
+                  disabled={!canEdit}
+                  onChange={(event) => updateTerminalColor(key, event.target.value)}
+                  spellCheck={false}
+                  type="text"
+                  value={value}
+                />
+                <input
+                  aria-label={`终端文字 ${ANSI_LABELS[key]} 选择器`}
+                  className="theme-color-swatch"
+                  disabled={!canEdit}
+                  onChange={(event) => updateTerminalColor(key, event.target.value)}
+                  type="color"
+                  value={value}
+                />
+              </label>
+            );
+          })}
+        </div>
+
         <p className="theme-custom-note">
-          自定义配色会覆盖内置主题的背景、前景与强调色，其余颜色沿用当前主题的默认值。
+          自定义配色会覆盖内置主题的背景、前景与强调色，并可选覆盖终端文字 16
+          色；其余颜色沿用当前主题的默认值。
         </p>
       </div>
     </section>

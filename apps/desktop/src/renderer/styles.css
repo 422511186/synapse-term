@@ -1337,8 +1337,101 @@ button:not(:disabled) {
 .settings-workspace-main {
   min-height: 0;
   flex: 1 1 auto;
+  display: flex;
+  overflow: hidden;
+  padding: 30px 40px 40px;
+}
+
+.settings-workspace-body {
+  display: flex;
+  width: 100%;
+  max-width: 1240px;
+  min-width: 0;
+  margin: 0 auto;
+  gap: 26px;
+}
+
+.settings-nav {
+  display: flex;
+  flex: 0 0 212px;
+  flex-direction: column;
+  gap: 6px;
+  align-self: flex-start;
+  position: sticky;
+  top: 0;
+}
+
+.settings-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--muted-foreground);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.settings-nav-item:hover {
+  border-color: var(--surface-hover-border);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--secondary) 55%, transparent);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 0;
+  border-color: var(--ring);
+}
+
+.settings-nav-item.is-active {
+  border-color: var(--surface-active-border);
+  color: var(--foreground);
+  background: linear-gradient(
+    115deg,
+    color-mix(in oklab, var(--accent) 16%, transparent),
+    transparent 70%
+  );
+}
+
+.settings-nav-icon {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.settings-nav-item.is-active .settings-nav-icon {
+  color: var(--ring);
+}
+
+.settings-nav-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-title {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.settings-nav-description {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.settings-panel {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
-  padding: 36px 40px 56px;
 }
 
 .settings-loading {
@@ -2386,6 +2479,22 @@ button:not(:disabled) {
     padding: 22px 16px 36px;
   }
 
+  .settings-workspace-body {
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .settings-nav {
+    flex: none;
+    flex-direction: row;
+    position: static;
+    overflow-x: auto;
+  }
+
+  .settings-nav-item {
+    flex: 0 0 auto;
+  }
+
   .mcp-settings-hero {
     align-items: flex-start;
     flex-direction: column;
@@ -2566,4 +2675,73 @@ button:not(:disabled) {
   color: var(--text-faint);
   font-size: 10px;
   line-height: 1.55;
+}
+
+.theme-terminal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--surface-hover-border);
+}
+
+.theme-terminal-title {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.theme-terminal-note {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.theme-terminal-reset {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--surface-active-border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.theme-terminal-reset:hover:not(:disabled),
+.theme-terminal-reset:focus-visible {
+  outline: 0;
+  border-color: var(--ring);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--secondary) 55%, transparent);
+}
+
+.theme-terminal-reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.theme-color-grid {
+  display: grid;
+  margin-top: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+@media (max-width: 1080px) {
+  .theme-color-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

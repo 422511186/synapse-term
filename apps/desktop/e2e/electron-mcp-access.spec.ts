@@ -73,6 +73,10 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   await expect(page.getByRole('tab')).toBeVisible();
 
   await page.getByRole('button', { name: '设置' }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /MCP 服务/ })
+    .click();
   const enabledToggle = page
     .locator('label')
     .filter({ hasText: '启用本机 MCP 端点' })

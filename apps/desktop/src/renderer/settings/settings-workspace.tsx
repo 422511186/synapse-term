@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Palette, Server, Settings2 } from 'lucide-react';
 import { useEffect, useState, type JSX } from 'react';
 
 import synapseTermLogoUrl from '../assets/synapse-term-logo.svg';
@@ -13,12 +13,27 @@ import type {
 } from '../../shared/contracts.js';
 import type { DesktopApi } from '../../preload/preload-api.js';
 
+type SettingsCategoryId = 'general' | 'appearance' | 'mcp';
+
+const SETTINGS_CATEGORIES: ReadonlyArray<{
+  id: SettingsCategoryId;
+  label: string;
+  description: string;
+  icon: typeof Settings2;
+}> = [
+  { id: 'general', label: '通用', description: '终端显示与通用行为', icon: Settings2 },
+  { id: 'appearance', label: '外观', description: '主题、模式与配色', icon: Palette },
+  { id: 'mcp', label: 'MCP 服务', description: '内嵌端点与会话共享', icon: Server },
+];
+
 export function SettingsWorkspace({
   api,
   onBack,
+  themeScheme,
 }: {
   api?: DesktopApi | undefined;
   onBack: () => void;
+  themeScheme?: 'light' | 'dark' | undefined;
 }): JSX.Element {
   const [settings, setSettings] = useState<McpSettings | undefined>();
   const [generalSettings, setGeneralSettings] = useState<GeneralSettings | undefined>();
@@ -26,6 +41,7 @@ export function SettingsWorkspace({
   const [shared, setShared] = useState<SharedMcpSession[]>([]);
   const [busy, setBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>('general');
 
   useEffect(() => {
     if (api === undefined) return;
@@ -111,50 +127,82 @@ export function SettingsWorkspace({
             设置加载中…
           </div>
         ) : (
-          <>
-            <GeneralSettingsView
-              busy={busy}
-              onToggleHideProbeEcho={(hide) =>
-                api &&
-                void applyGeneral(api.general.updateSettings({ hideCompletionProbeEcho: hide }))
-              }
-              settings={generalSettings}
-            />
-            <ThemeSettingsView
-              busy={busy}
-              onSetCustomTheme={(customTheme) =>
-                api && void applyGeneral(api.general.updateSettings({ customTheme }))
-              }
-              onSetMode={(themeMode) =>
-                api && void applyGeneral(api.general.updateSettings({ themeMode }))
-              }
-              settings={generalSettings}
-            />
-            <McpSettingsView
-              busy={busy}
-              onRegenerateToken={() => api && void apply(api.mcp.regenerateToken())}
-              onRevokeToken={() => api && void apply(api.mcp.revokeToken())}
-              onSetMode={(approvalMode: McpApprovalMode) =>
-                api && void apply(api.mcp.updateSettings({ approvalMode }))
-              }
-              onSetPort={(port) => api && void apply(api.mcp.updateSettings({ port }))}
-              onToggleEnabled={(enabled) => api && void apply(api.mcp.updateSettings({ enabled }))}
-              onToggleShowToken={() => setShowToken((visible) => !visible)}
-              onUnshare={(sessionId) => {
-                if (api === undefined) return;
-                setBusy(true);
-                void api.mcp
-                  .unshareSession(sessionId)
-                  .then(() => refreshMcpState())
-                  .catch(() => undefined)
-                  .finally(() => setBusy(false));
-              }}
-              shared={shared}
-              settings={settings}
-              showToken={showToken}
-              status={status}
-            />
-          </>
+          <div className="settings-workspace-body">
+            <nav aria-label="设置分类" className="settings-nav">
+              {SETTINGS_CATEGORIES.map((category) => {
+                const Icon = category.icon;
+                const active = activeCategory === category.id;
+                return (
+                  <button
+                    aria-current={active ? 'page' : undefined}
+                    className={`settings-nav-item ${active ? 'is-active' : ''}`}
+                    key={category.id}
+                    onClick={() => setActiveCategory(category.id)}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" className="settings-nav-icon" size={16} />
+                    <span className="settings-nav-copy">
+                      <span className="settings-nav-title">{category.label}</span>
+                      <span className="settings-nav-description">{category.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="settings-panel" data-testid="settings-topic-content">
+              {activeCategory === 'general' && (
+                <GeneralSettingsView
+                  busy={busy}
+                  onToggleHideProbeEcho={(hide) =>
+                    api &&
+                    void applyGeneral(api.general.updateSettings({ hideCompletionProbeEcho: hide }))
+                  }
+                  settings={generalSettings}
+                />
+              )}
+              {activeCategory === 'appearance' && (
+                <ThemeSettingsView
+                  busy={busy}
+                  onSetCustomTheme={(customTheme) =>
+                    api && void applyGeneral(api.general.updateSettings({ customTheme }))
+                  }
+                  onSetMode={(themeMode) =>
+                    api && void applyGeneral(api.general.updateSettings({ themeMode }))
+                  }
+                  scheme={themeScheme ?? 'dark'}
+                  settings={generalSettings}
+                />
+              )}
+              {activeCategory === 'mcp' && (
+                <McpSettingsView
+                  busy={busy}
+                  onRegenerateToken={() => api && void apply(api.mcp.regenerateToken())}
+                  onRevokeToken={() => api && void apply(api.mcp.revokeToken())}
+                  onSetMode={(approvalMode: McpApprovalMode) =>
+                    api && void apply(api.mcp.updateSettings({ approvalMode }))
+                  }
+                  onSetPort={(port) => api && void apply(api.mcp.updateSettings({ port }))}
+                  onToggleEnabled={(enabled) =>
+                    api && void apply(api.mcp.updateSettings({ enabled }))
+                  }
+                  onToggleShowToken={() => setShowToken((visible) => !visible)}
+                  onUnshare={(sessionId) => {
+                    if (api === undefined) return;
+                    setBusy(true);
+                    void api.mcp
+                      .unshareSession(sessionId)
+                      .then(() => refreshMcpState())
+                      .catch(() => undefined)
+                      .finally(() => setBusy(false));
+                  }}
+                  shared={shared}
+                  settings={settings}
+                  showToken={showToken}
+                  status={status}
+                />
+              )}
+            </div>
+          </div>
         )}
       </main>
     </div>

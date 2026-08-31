@@ -1,6 +1,6 @@
 import type { ITheme } from '@xterm/xterm';
 
-import type { ThemeState } from '../../shared/contracts.js';
+import type { TerminalTextPalette, ThemeState } from '../../shared/contracts.js';
 
 export type ThemeScheme = 'light' | 'dark';
 
@@ -139,28 +139,88 @@ export function applyThemeToDocument(state: ThemeState): void {
   root.dataset.theme = state.scheme;
 }
 
-// ANSI palette is shared across schemes; only the surface colors vary.
-const ANSI_THEME_COLORS: Omit<
-  ITheme,
-  'background' | 'foreground' | 'cursor' | 'cursorAccent' | 'selectionBackground'
-> = {
-  black: '#000000',
-  red: '#f87171',
-  green: '#34d399',
-  yellow: '#fcd34d',
-  blue: '#60a5fa',
-  magenta: '#c084fc',
-  cyan: '#22d3ee',
-  white: '#d4d4d8',
-  brightBlack: '#71717a',
-  brightWhite: '#f4f4f5',
+// Terminal text ANSI palettes differ per scheme so terminal output stays
+// readable on the corresponding surface. When a custom theme is enabled and
+// `terminalText` is customized, those values win over the scheme palette.
+export const SCHEME_ANSI_PALETTES: Record<ThemeScheme, TerminalTextPalette> = {
+  dark: {
+    black: '#000000',
+    red: '#f87171',
+    green: '#34d399',
+    yellow: '#fcd34d',
+    blue: '#60a5fa',
+    magenta: '#c084fc',
+    cyan: '#22d3ee',
+    white: '#d4d4d8',
+    brightBlack: '#71717a',
+    brightRed: '#fb923c',
+    brightGreen: '#4ade80',
+    brightYellow: '#fde047',
+    brightBlue: '#93c5fd',
+    brightMagenta: '#d8b4fe',
+    brightCyan: '#67e8f9',
+    brightWhite: '#f4f4f5',
+  },
+  light: {
+    black: '#000000',
+    red: '#dc2626',
+    green: '#059669',
+    yellow: '#b45309',
+    blue: '#2563eb',
+    magenta: '#9333ea',
+    cyan: '#0891b2',
+    white: '#52525b',
+    brightBlack: '#71717a',
+    brightRed: '#ef4444',
+    brightGreen: '#10b981',
+    brightYellow: '#d97706',
+    brightBlue: '#3b82f6',
+    brightMagenta: '#a855f7',
+    brightCyan: '#06b6d4',
+    brightWhite: '#18181b',
+  },
 };
 
+// The ANSI fields in the order they map onto the xterm theme.
+export const ANSI_TEXT_FIELDS: ReadonlyArray<keyof TerminalTextPalette> = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+];
+
+function ansiOverrides(palette: TerminalTextPalette): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const key of ANSI_TEXT_FIELDS) overrides[key] = palette[key];
+  return overrides;
+}
+
+// Resolves which ANSI palette the terminal should use for a theme state.
+export function resolveTerminalTextPalette(state: ThemeState): TerminalTextPalette {
+  if (state.customTheme.enabled && state.customTheme.terminalText !== undefined) {
+    return state.customTheme.terminalText;
+  }
+  return SCHEME_ANSI_PALETTES[state.scheme];
+}
+
 export function buildXtermTheme(state: ThemeState): ITheme {
+  const text = resolveTerminalTextPalette(state);
   if (state.customTheme.enabled) {
     const { background, foreground, accent } = state.customTheme;
     return {
-      ...ANSI_THEME_COLORS,
+      ...ansiOverrides(text),
       background,
       foreground,
       cursor: accent,
@@ -170,7 +230,7 @@ export function buildXtermTheme(state: ThemeState): ITheme {
   }
   const dark = state.scheme === 'dark';
   return {
-    ...ANSI_THEME_COLORS,
+    ...ansiOverrides(text),
     background: dark ? '#000000' : '#ffffff',
     foreground: dark ? '#d4d4d8' : '#09090b',
     cursor: dark ? '#34d399' : '#18181b',

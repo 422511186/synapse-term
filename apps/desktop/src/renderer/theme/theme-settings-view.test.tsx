@@ -12,6 +12,7 @@ describe('ThemeSettingsView', () => {
         busy={false}
         onSetCustomTheme={vi.fn()}
         onSetMode={vi.fn()}
+        scheme="dark"
         settings={{
           themeMode: 'system',
           customTheme: {
@@ -34,12 +35,54 @@ describe('ThemeSettingsView', () => {
     expect(markup).toContain('#101418');
   });
 
+  it('renders the terminal text palette and a reset control once customized', () => {
+    const markup = renderToStaticMarkup(
+      <ThemeSettingsView
+        busy={false}
+        onSetCustomTheme={vi.fn()}
+        onSetMode={vi.fn()}
+        scheme="dark"
+        settings={{
+          themeMode: 'system',
+          customTheme: {
+            enabled: true,
+            background: '#101418',
+            foreground: '#e8eef2',
+            accent: '#3b82f6',
+            terminalText: {
+              black: '#000000',
+              red: '#ff0000',
+              green: '#00ff00',
+              yellow: '#ffff00',
+              blue: '#0000ff',
+              magenta: '#ff00ff',
+              cyan: '#00ffff',
+              white: '#ffffff',
+              brightBlack: '#333333',
+              brightRed: '#ff3333',
+              brightGreen: '#33ff33',
+              brightYellow: '#ffff33',
+              brightBlue: '#3333ff',
+              brightMagenta: '#ff33ff',
+              brightCyan: '#33ffff',
+              brightWhite: '#f4f4f5',
+            },
+          },
+        }}
+      />,
+    );
+    expect(markup).toContain('终端文字配色');
+    expect(markup).toContain('恢复默认');
+    expect(markup).toContain('终端文字 红 输入');
+  });
+
   it('selects the active mode and disables palette controls when busy or custom colors are off', () => {
     const markup = renderToStaticMarkup(
       <ThemeSettingsView
         busy
         onSetCustomTheme={vi.fn()}
         onSetMode={vi.fn()}
+        scheme="dark"
         settings={{
           themeMode: 'dark',
           customTheme: {

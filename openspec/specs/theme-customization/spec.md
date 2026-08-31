@@ -18,11 +18,15 @@
 - **THEN** 有效 scheme MUST 为 `dark`；操作系统外观切换为浅色后，界面 MUST 跟随切换为浅色，无需重启应用
 
 ### Requirement: Custom Core Palette
-桌面端 MUST 允许用户自定义核心配色，包括背景（background）、前景（foreground）与强调色（accent）三组颜色；自定义配色 MUST 有显式启用开关，关闭时 MUST 使用内置浅色/深色主题的默认值。颜色输入 MUST 为合法的六位十六进制颜色，非法值 MUST 在持久化时被拒绝并保留原值。
+桌面端 MUST 允许用户自定义核心配色与终端文字配色：核心配色包括背景（background）、前景（foreground）与强调色（accent），终端文字配色包括终端前景与 16 个 ANSI 颜色（black/red/green/yellow/blue/magenta/cyan/white 及其 bright 变体）；自定义配色 MUST 有显式启用开关，关闭时 MUST 使用内置浅色/深色主题的默认值。颜色输入 MUST 为合法的六位十六进制颜色，非法值 MUST 在持久化时被拒绝并保留原值。
 
 #### Scenario: Enable custom colors
 - **WHEN** 用户启用自定义配色并设置背景、前景、强调色
 - **THEN** 桌面 UI 的背景、前景文字与强调色 MUST 使用自定义值，其余表面沿用当前内置主题的默认值
+
+#### Scenario: Customize terminal text colors
+- **WHEN** 用户启用自定义配色并编辑终端文字颜色（如将红色设为指定值）
+- **THEN** 终端表面对应的 ANSI 颜色 MUST 使用自定义值
 
 #### Scenario: Reject an invalid color
 - **WHEN** 用户在颜色输入中提交一个非六位十六进制值
@@ -30,7 +34,7 @@
 
 #### Scenario: Disable custom colors
 - **WHEN** 用户关闭自定义配色开关
-- **THEN** 桌面 UI MUST 回退到当前内置浅色/深色主题的默认配色
+- **THEN** 桌面 UI 与终端表面 MUST 回退到当前内置浅色/深色主题的默认配色
 
 ### Requirement: Theme Persistence
 主题设置（模式与自定义配色）MUST 与通用设置一同持久化到本地设置文件；应用重启后 MUST 恢复用户所选的主题模式与自定义配色。设置文件缺失或字段损坏时 MUST 回退默认值而不崩溃。
@@ -45,3 +49,10 @@
 #### Scenario: Notify on scheme change
 - **WHEN** 主题模式为 `system` 且操作系统外观发生变化
 - **THEN** 系统 MUST 推送新的主题状态，Renderer 界面 MUST 无需用户操作即更新配色
+
+### Requirement: Terminal Text Palette
+桌面端 MUST 为浅色与深色主题分别提供一套适配的终端文字 ANSI 色板（含前景、背景与 16 个 ANSI 颜色）；主题模式或有效 scheme 变化时，终端表面 MUST 切换为对应 scheme 的色板。
+
+#### Scenario: Terminal text follows scheme
+- **WHEN** 用户把主题模式从浅色切换为深色
+- **THEN** 终端表面的文字与 ANSI 颜色 MUST 切换为深色色板

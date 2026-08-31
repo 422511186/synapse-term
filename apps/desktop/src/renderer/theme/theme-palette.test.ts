@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ThemeState } from '../../shared/contracts.js';
 import {
   BASE_THEME_PALETTES,
+  SCHEME_ANSI_PALETTES,
   applyThemeToDocument,
   buildXtermTheme,
   readableOn,
+  resolveTerminalTextPalette,
   resolveThemeCssVariables,
 } from './theme-palette.js';
 
@@ -105,5 +107,68 @@ describe('theme palette', () => {
     expect(customTerminal.background).toBe('#101418');
     expect(customTerminal.foreground).toBe('#e8eef2');
     expect(customTerminal.cursor).toBe('#3b82f6');
+  });
+
+  it('provides distinct terminal text palettes for light and dark schemes', () => {
+    expect(SCHEME_ANSI_PALETTES.dark.red).not.toBe(SCHEME_ANSI_PALETTES.light.red);
+    expect(SCHEME_ANSI_PALETTES.light.red).toBe('#dc2626');
+    expect(SCHEME_ANSI_PALETTES.dark.red).toBe('#f87171');
+    // Every field of the palette is defined for both schemes.
+    for (const key of Object.keys(SCHEME_ANSI_PALETTES.dark)) {
+      expect(
+        SCHEME_ANSI_PALETTES.light[key as keyof typeof SCHEME_ANSI_PALETTES.dark],
+      ).toBeTruthy();
+    }
+  });
+
+  it('lets the xterm ANSI colors follow the scheme when terminal text is not customized', () => {
+    const darkTerminal = buildXtermTheme(darkState);
+    expect(darkTerminal.red).toBe('#f87171');
+    const lightTerminal = buildXtermTheme(lightState);
+    expect(lightTerminal.red).toBe('#dc2626');
+    // A custom theme without terminalText still falls back to the scheme palette.
+    const customWithoutText = buildXtermTheme({
+      ...darkState,
+      customTheme: {
+        enabled: true,
+        background: '#101418',
+        foreground: '#e8eef2',
+        accent: '#3b82f6',
+      },
+    });
+    expect(customWithoutText.red).toBe('#f87171');
+  });
+
+  it('applies a customized terminal text palette over the scheme defaults', () => {
+    const state: ThemeState = {
+      ...darkState,
+      customTheme: {
+        enabled: true,
+        background: '#101418',
+        foreground: '#e8eef2',
+        accent: '#3b82f6',
+        terminalText: { ...SCHEME_ANSI_PALETTES.dark, red: '#ff0000', green: '#00ff00' },
+      },
+    };
+    const terminal = buildXtermTheme(state);
+    expect(terminal.red).toBe('#ff0000');
+    expect(terminal.green).toBe('#00ff00');
+    expect(terminal.black).toBe(SCHEME_ANSI_PALETTES.dark.black);
+  });
+
+  it('resolves the terminal text palette from the custom theme or the scheme', () => {
+    expect(resolveTerminalTextPalette(darkState)).toBe(SCHEME_ANSI_PALETTES.dark);
+    const custom = { ...SCHEME_ANSI_PALETTES.dark, blue: '#0000ff' };
+    const state: ThemeState = {
+      ...darkState,
+      customTheme: {
+        enabled: true,
+        background: '#101418',
+        foreground: '#e8eef2',
+        accent: '#3b82f6',
+        terminalText: custom,
+      },
+    };
+    expect(resolveTerminalTextPalette(state)).toBe(custom);
   });
 });
