@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ThemeState } from '../../shared/contracts.js';
 import {
+  applyTerminalTextEdit,
   BASE_THEME_PALETTES,
   SCHEME_ANSI_PALETTES,
   applyThemeToDocument,
@@ -170,5 +171,26 @@ describe('theme palette', () => {
       },
     };
     expect(resolveTerminalTextPalette(state)).toBe(custom);
+  });
+
+  describe('applyTerminalTextEdit', () => {
+    it('rejects an invalid color without producing a new palette', () => {
+      const result = applyTerminalTextEdit(SCHEME_ANSI_PALETTES.dark, 'dark', 'red', 'nope');
+      expect(result).toEqual({ applied: false });
+    });
+
+    it('initializes the full 16-color palette from the scheme when nothing is customized yet', () => {
+      const result = applyTerminalTextEdit(undefined, 'light', 'red', '#ff0000');
+      expect(result).toEqual({
+        applied: true,
+        terminalText: { ...SCHEME_ANSI_PALETTES.light, red: '#ff0000' },
+      });
+    });
+
+    it('edits the existing custom palette in place without touching other fields', () => {
+      const base = { ...SCHEME_ANSI_PALETTES.dark, red: '#aa0000' };
+      const result = applyTerminalTextEdit(base, 'dark', 'green', '#00ff00');
+      expect(result).toEqual({ applied: true, terminalText: { ...base, green: '#00ff00' } });
+    });
   });
 });

@@ -7,7 +7,7 @@ import {
   type TerminalTextPalette,
   type ThemeMode,
 } from '../../shared/contracts.js';
-import { ANSI_TEXT_FIELDS, SCHEME_ANSI_PALETTES } from './theme-palette.js';
+import { applyTerminalTextEdit, ANSI_TEXT_FIELDS, SCHEME_ANSI_PALETTES } from './theme-palette.js';
 
 const MODES: Array<{ value: ThemeMode; label: string; description: string }> = [
   { value: 'light', label: '浅色', description: '使用明亮的外观配色。' },
@@ -65,9 +65,10 @@ export function ThemeSettingsView({
   };
 
   const updateTerminalColor = (key: keyof TerminalTextPalette, value: string): void => {
-    if (!HEX_COLOR_PATTERN.test(value)) return;
-    const base = settings.customTheme.terminalText ?? SCHEME_ANSI_PALETTES[scheme];
-    onSetCustomTheme({ ...settings.customTheme, terminalText: { ...base, [key]: value } });
+    const result = applyTerminalTextEdit(settings.customTheme.terminalText, scheme, key, value);
+    if (result.applied) {
+      onSetCustomTheme({ ...settings.customTheme, terminalText: result.terminalText });
+    }
   };
 
   const resetTerminalText = (): void => {

@@ -1,5 +1,6 @@
 import type { ITheme } from '@xterm/xterm';
 
+import { HEX_COLOR_PATTERN } from '../../shared/contracts.js';
 import type { TerminalTextPalette, ThemeState } from '../../shared/contracts.js';
 
 export type ThemeScheme = 'light' | 'dark';
@@ -213,6 +214,24 @@ export function resolveTerminalTextPalette(state: ThemeState): TerminalTextPalet
     return state.customTheme.terminalText;
   }
   return SCHEME_ANSI_PALETTES[state.scheme];
+}
+
+export type TerminalTextEditResult =
+  { applied: true; terminalText: TerminalTextPalette } | { applied: false };
+
+// Produces the next custom terminal text palette for a color edit. Invalid
+// colors are rejected and leave the palette untouched; when nothing is
+// customized yet, the full palette is initialized from the current scheme so
+// only the edited field differs from the built-in scheme colors.
+export function applyTerminalTextEdit(
+  current: TerminalTextPalette | undefined,
+  scheme: ThemeScheme,
+  key: keyof TerminalTextPalette,
+  value: string,
+): TerminalTextEditResult {
+  if (!HEX_COLOR_PATTERN.test(value)) return { applied: false };
+  const base = current ?? SCHEME_ANSI_PALETTES[scheme];
+  return { applied: true, terminalText: { ...base, [key]: value } };
 }
 
 export function buildXtermTheme(state: ThemeState): ITheme {
