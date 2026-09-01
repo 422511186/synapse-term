@@ -13,6 +13,7 @@ import type {
   SessionLaunchInput,
   SessionSummary,
   TerminalOutputEvent,
+  ThemeState,
   SharedMcpSession,
 } from '../preload/preload-api.js';
 
@@ -53,7 +54,27 @@ export function createMockDesktopApi(): DesktopApi {
     approvalMode: scenarioParams?.get('mcpEnabled') === 'true' ? 'managed' : 'read_only',
     port: 4_739,
   };
-  let generalSettings: GeneralSettings = { hideCompletionProbeEcho: true };
+  let generalSettings: GeneralSettings = {
+    hideCompletionProbeEcho: true,
+    themeMode: 'system',
+    customTheme: {
+      enabled: false,
+      background: '#09090b',
+      foreground: '#fafafa',
+      accent: '#fafafa',
+    },
+  };
+  const themeListeners = new Set<(state: ThemeState) => void>();
+  const themeState = (): ThemeState => ({
+    mode: generalSettings.themeMode,
+    // The mock operating system is dark; only an explicit light mode switches scheme.
+    scheme: generalSettings.themeMode === 'light' ? 'light' : 'dark',
+    customTheme: generalSettings.customTheme,
+  });
+  const emitTheme = (): void => {
+    const state = themeState();
+    for (const listener of themeListeners) listener(state);
+  };
   const sharedSessions = new Map<string, SharedMcpSession>();
   const inSessionGrants = new Set<string>();
   let approvalSequence = 0;
@@ -88,6 +109,31 @@ export function createMockDesktopApi(): DesktopApi {
   const emitOutput = (event: TerminalOutputEvent): void => {
     for (const listener of outputListeners) listener(event);
   };
+
+  // A small ANSI 16-color sample so the "终端文字配色" editor has visible
+  // feedback in the Mock renderer. Each character carries its color-slot
+  // number (0-15) next to the name so users can map it to the settings rows.
+  const standardSample = [
+    '\x1b[30m0黑\x1b[0m',
+    '\x1b[31m1红\x1b[0m',
+    '\x1b[32m2绿\x1b[0m',
+    '\x1b[33m3黄\x1b[0m',
+    '\x1b[34m4蓝\x1b[0m',
+    '\x1b[35m5品红\x1b[0m',
+    '\x1b[36m6青\x1b[0m',
+    '\x1b[37m7白\x1b[0m',
+  ];
+  const brightSample = [
+    '\x1b[90m8亮黑\x1b[0m',
+    '\x1b[91m9亮红\x1b[0m',
+    '\x1b[92m10亮绿\x1b[0m',
+    '\x1b[93m11亮黄\x1b[0m',
+    '\x1b[94m12亮蓝\x1b[0m',
+    '\x1b[95m13亮品红\x1b[0m',
+    '\x1b[96m14亮青\x1b[0m',
+    '\x1b[97m15亮白\x1b[0m',
+  ];
+  const terminalColorSample = `\r\n下面的 0-15 号颜色可在「外观 → 终端文字配色」中逐行修改，修改后此处的对应字会跟着变：\r\n  标准色  ${standardSample.join('  ')}\r\n  亮色    ${brightSample.join('  ')}\r\n`;
 
   if (typeof globalThis.window !== 'undefined') {
     Object.assign(globalThis.window, {
@@ -147,7 +193,7 @@ export function createMockDesktopApi(): DesktopApi {
         const event: TerminalOutputEvent = {
           sessionId: session.id,
           sequence: outputSequence++,
-          data: `\r\n[Synapse Term] ${session.title} 已就绪\r\n`,
+          data: `\r\n[Synapse Term] ${session.title} 已就绪\r\n${terminalColorSample}`,
         };
         emitOutput(event);
         emitSession(session);
@@ -194,8 +240,18 @@ export function createMockDesktopApi(): DesktopApi {
             typeof patch.hideCompletionProbeEcho === 'boolean'
               ? patch.hideCompletionProbeEcho
               : generalSettings.hideCompletionProbeEcho,
+          themeMode: patch.themeMode ?? generalSettings.themeMode,
+          customTheme: patch.customTheme ?? generalSettings.customTheme,
         };
+        emitTheme();
         return structuredClone(generalSettings);
+      },
+    },
+    theme: {
+      getState: async () => themeState(),
+      onChanged: (listener) => {
+        themeListeners.add(listener);
+        return () => themeListeners.delete(listener);
       },
     },
     mcp: {

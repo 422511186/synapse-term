@@ -15,7 +15,7 @@ body,
 }
 
 body {
-  background: #09090b;
+  background: var(--background);
 }
 
 button:not(:disabled) {
@@ -71,7 +71,7 @@ button:not(:disabled) {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: rgb(82 82 91 / 90%) transparent;
+  scrollbar-color: var(--surface-scroll) transparent;
   scroll-behavior: smooth;
 }
 
@@ -87,12 +87,12 @@ button:not(:disabled) {
 .session-tab-list::-webkit-scrollbar-thumb {
   border: 1px solid transparent;
   border-radius: 999px;
-  background: rgb(82 82 91 / 90%);
+  background: var(--surface-scroll);
   background-clip: padding-box;
 }
 
 .session-tab-list::-webkit-scrollbar-thumb:hover {
-  background: rgb(113 113 122 / 95%);
+  background: var(--surface-scroll-hover);
   background-clip: padding-box;
 }
 
@@ -113,12 +113,12 @@ button:not(:disabled) {
 }
 
 .session-tab:hover {
-  background: rgb(63 63 70 / 62%);
+  background: var(--surface-hover);
 }
 
 .session-tab.is-active {
-  background: rgb(63 63 70 / 82%);
-  border-bottom-color: #f4f4f5;
+  background: var(--surface-hover-strong);
+  border-bottom-color: var(--foreground);
 }
 
 .session-tab-select,
@@ -137,7 +137,7 @@ button:not(:disabled) {
   min-width: 0;
   padding: 0 7px 0 9px;
   overflow: hidden;
-  color: #e4e4e7;
+  color: var(--text-body);
   text-align: left;
   background: transparent;
 }
@@ -152,7 +152,7 @@ button:not(:disabled) {
 .session-tab-title {
   min-width: 0;
   overflow: hidden;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
@@ -166,7 +166,7 @@ button:not(:disabled) {
   max-width: 76px;
   overflow: hidden;
   padding: 0;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   line-height: 1;
@@ -179,7 +179,7 @@ button:not(:disabled) {
 .session-all-close {
   display: grid;
   place-items: center;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   background: transparent;
 }
 
@@ -201,8 +201,8 @@ button:not(:disabled) {
 
 .session-tab-close:hover,
 .session-all-close:hover {
-  color: #f4f4f5;
-  background: rgb(82 82 91 / 30%);
+  color: var(--foreground);
+  background: var(--surface-faint);
 }
 
 .session-tab-close:hover {
@@ -216,13 +216,13 @@ button:not(:disabled) {
   align-items: center;
   gap: 3px;
   padding-left: 2px;
-  border-left: 1px solid rgb(63 63 70 / 75%);
+  border-left: 1px solid var(--surface-hover-border);
 }
 
 .session-tab-tool {
   width: 30px;
   height: 30px;
-  border: 1px solid rgb(82 82 91 / 78%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
@@ -231,9 +231,9 @@ button:not(:disabled) {
 
 .session-tab-tool:hover,
 .session-tab-tool[aria-expanded='true'] {
-  border-color: rgb(161 161 170 / 78%);
-  color: #fafafa;
-  background: rgb(63 63 70 / 75%);
+  border-color: color-mix(in oklab, var(--muted-foreground) 78%, transparent);
+  color: var(--foreground);
+  background: var(--surface-hover-strong);
 }
 
 .session-tab-tool-wide {
@@ -279,9 +279,9 @@ button:not(:disabled) {
   z-index: 90;
   min-width: 132px;
   padding: 4px;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #18181b;
+  background: var(--popover);
   box-shadow: 0 12px 30px rgb(0 0 0 / 45%);
 }
 
@@ -293,7 +293,7 @@ button:not(:disabled) {
   padding: 7px 9px;
   border: 0;
   border-radius: 4px;
-  color: #e4e4e7;
+  color: var(--text-body);
   background: transparent;
   font-size: 12px;
   text-align: left;
@@ -302,7 +302,7 @@ button:not(:disabled) {
 .session-context-menu button:hover,
 .session-context-menu button:focus-visible {
   outline: 0;
-  background: rgb(63 63 70 / 72%);
+  background: var(--surface-hover-soft);
 }
 
 .session-action-feedback {
@@ -332,9 +332,9 @@ button:not(:disabled) {
 
 .session-rename-dialog {
   width: min(380px, 100%);
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: #18181b;
+  background: var(--popover);
   box-shadow: 0 24px 70px rgb(0 0 0 / 55%);
 }
 
@@ -344,18 +344,18 @@ button:not(:disabled) {
   justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
-  border-bottom: 1px solid rgb(63 63 70 / 78%);
+  border-bottom: 1px solid var(--surface-active-border);
 }
 
 .session-rename-header h2 {
   margin: 3px 0 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 15px;
   font-weight: 650;
 }
 
 .session-rename-eyebrow {
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   letter-spacing: 0;
@@ -369,15 +369,15 @@ button:not(:disabled) {
   place-items: center;
   border: 0;
   border-radius: 5px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   background: transparent;
 }
 
 .session-rename-close:hover,
 .session-rename-close:focus-visible {
   outline: 0;
-  color: #f4f4f5;
-  background: rgb(63 63 70 / 72%);
+  color: var(--foreground);
+  background: var(--surface-hover-soft);
 }
 
 .session-rename-dialog form {
@@ -387,7 +387,7 @@ button:not(:disabled) {
 }
 
 .session-rename-dialog label {
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 12px;
   font-weight: 600;
 }
@@ -396,17 +396,17 @@ button:not(:disabled) {
   width: 100%;
   box-sizing: border-box;
   padding: 9px 10px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
   outline: 0;
-  color: #f4f4f5;
-  background: #09090b;
+  color: var(--foreground);
+  background: var(--background);
   font-size: 13px;
 }
 
 .session-rename-dialog input:focus {
-  border-color: #a1a1aa;
-  box-shadow: 0 0 0 2px rgb(161 161 170 / 18%);
+  border-color: var(--muted-foreground);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--muted-foreground) 18%, transparent);
 }
 
 .session-rename-actions {
@@ -419,30 +419,30 @@ button:not(:disabled) {
 .session-rename-actions button {
   min-width: 72px;
   padding: 7px 11px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   background: transparent;
   font-size: 12px;
 }
 
 .session-rename-actions button:last-child {
-  border-color: #f4f4f5;
-  color: #09090b;
-  background: #f4f4f5;
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
   font-weight: 650;
 }
 
 .session-rename-actions button:hover:not(:disabled),
 .session-rename-actions button:focus-visible:not(:disabled) {
   outline: 0;
-  background: #3f3f46;
+  background: var(--secondary);
 }
 
 .session-rename-actions button:last-child:hover:not(:disabled),
 .session-rename-actions button:last-child:focus-visible:not(:disabled) {
-  color: #09090b;
-  background: #d4d4d8;
+  color: var(--primary-foreground);
+  background: var(--secondary);
 }
 
 .session-rename-actions button:disabled {
@@ -462,7 +462,7 @@ button:not(:disabled) {
 
 .share-description {
   margin: 0;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -478,9 +478,9 @@ button:not(:disabled) {
   justify-content: center;
   gap: 8px;
   padding: 9px 12px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   background: transparent;
   font-size: 12px;
   font-weight: 550;
@@ -489,21 +489,21 @@ button:not(:disabled) {
 .dialog-button:hover:not(:disabled),
 .dialog-button:focus-visible:not(:disabled) {
   outline: 0;
-  border-color: #a1a1aa;
-  background: #3f3f46;
+  border-color: var(--muted-foreground);
+  background: var(--secondary);
 }
 
 .dialog-button.primary {
-  border-color: #f4f4f5;
-  color: #09090b;
-  background: #f4f4f5;
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
   font-weight: 650;
 }
 
 .dialog-button.primary:hover:not(:disabled),
 .dialog-button.primary:focus-visible:not(:disabled) {
-  border-color: #d4d4d8;
-  background: #d4d4d8;
+  border-color: var(--secondary);
+  background: var(--secondary);
 }
 
 .share-feedback {
@@ -531,7 +531,7 @@ button:not(:disabled) {
   overflow: auto;
   border: 1px solid rgb(251 191 36 / 34%);
   border-radius: 9px;
-  background: #171719;
+  background: var(--surface-dialog);
   box-shadow: 0 26px 80px rgb(0 0 0 / 58%);
 }
 
@@ -540,13 +540,13 @@ button:not(:disabled) {
   align-items: center;
   gap: 10px;
   padding: 16px 18px;
-  border-bottom: 1px solid rgb(63 63 70 / 78%);
+  border-bottom: 1px solid var(--surface-active-border);
   color: #fbbf24;
 }
 
 .approval-header h2 {
   margin: 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 15px;
   font-weight: 650;
 }
@@ -559,7 +559,7 @@ button:not(:disabled) {
 }
 
 .approval-card dt {
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   text-transform: uppercase;
@@ -567,7 +567,7 @@ button:not(:disabled) {
 
 .approval-card dd {
   margin: 6px 0 0;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -576,10 +576,10 @@ button:not(:disabled) {
 .approval-card pre {
   margin: 0;
   padding: 10px;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 5px;
-  background: #09090b;
-  color: #f4f4f5;
+  background: var(--background);
+  color: var(--foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.6;
@@ -591,9 +591,9 @@ button:not(:disabled) {
   display: inline-flex;
   align-items: center;
   padding: 3px 7px;
-  border: 1px solid rgb(161 161 170 / 45%);
+  border: 1px solid color-mix(in oklab, var(--muted-foreground) 45%, transparent);
   border-radius: 999px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 11px;
 }
 
@@ -622,9 +622,9 @@ button:not(:disabled) {
 .approval-actions button {
   flex: 1 1 150px;
   padding: 9px 10px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   background: transparent;
   font-size: 12px;
   font-weight: 600;
@@ -633,20 +633,20 @@ button:not(:disabled) {
 .approval-actions button:hover:not(:disabled),
 .approval-actions button:focus-visible:not(:disabled) {
   outline: 0;
-  border-color: #a1a1aa;
-  background: #3f3f46;
+  border-color: var(--muted-foreground);
+  background: var(--secondary);
 }
 
 .approval-actions button.primary {
-  border-color: #f4f4f5;
-  color: #09090b;
-  background: #f4f4f5;
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
 }
 
 .approval-actions button.primary:hover:not(:disabled),
 .approval-actions button.primary:focus-visible:not(:disabled) {
-  border-color: #d4d4d8;
-  background: #d4d4d8;
+  border-color: var(--secondary);
+  background: var(--secondary);
 }
 
 .approval-actions button.danger {
@@ -694,9 +694,9 @@ button:not(:disabled) {
 }
 
 .settings-nav-item[aria-current='true'] {
-  border-color: rgb(63 63 70 / 90%);
-  color: #f4f4f5;
-  background: #18181b;
+  border-color: var(--surface-active-border);
+  color: var(--foreground);
+  background: var(--popover);
 }
 
 .mcp-section {
@@ -707,27 +707,27 @@ button:not(:disabled) {
 
 .mcp-section-heading h2 {
   margin: 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 18px;
   font-weight: 650;
 }
 
 .mcp-section-heading p {
   margin: 6px 0 0;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
 .settings-card {
   padding: 16px;
-  border: 1px solid rgb(63 63 70 / 72%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 8px;
-  background: #111113;
+  background: var(--surface-raised);
 }
 
 .settings-card > h3 {
   margin: 0 0 12px;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 14px;
   font-weight: 650;
 }
@@ -736,7 +736,7 @@ button:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 13px;
 }
 
@@ -745,12 +745,12 @@ button:not(:disabled) {
   width: 15px;
   height: 15px;
   margin: 0;
-  accent-color: #f4f4f5;
+  accent-color: var(--primary);
 }
 
 .settings-status {
   margin: 10px 0 0;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -768,18 +768,18 @@ button:not(:disabled) {
   min-width: 0;
   box-sizing: border-box;
   padding: 8px 10px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
   outline: 0;
-  color: #e4e4e7;
-  background: #09090b;
+  color: var(--text-body);
+  background: var(--background);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
 }
 
 .settings-input:focus {
-  border-color: #a1a1aa;
-  box-shadow: 0 0 0 2px rgb(161 161 170 / 16%);
+  border-color: var(--muted-foreground);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--muted-foreground) 16%, transparent);
 }
 
 .settings-button {
@@ -788,10 +788,10 @@ button:not(:disabled) {
   justify-content: center;
   gap: 6px;
   padding: 8px 10px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 5px;
-  color: #d4d4d8;
-  background: #18181b;
+  color: var(--text-subtle);
+  background: var(--popover);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -799,8 +799,8 @@ button:not(:disabled) {
 .settings-button:hover:not(:disabled),
 .settings-button:focus-visible:not(:disabled) {
   outline: 0;
-  border-color: #a1a1aa;
-  background: #27272a;
+  border-color: var(--muted-foreground);
+  background: var(--secondary);
 }
 
 .settings-button:disabled {
@@ -834,13 +834,13 @@ button:not(:disabled) {
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 5px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 13px;
 }
 
 .settings-radio:hover {
-  border-color: rgb(63 63 70 / 80%);
-  background: #18181b;
+  border-color: var(--surface-active-border);
+  background: var(--popover);
 }
 
 .settings-warning {
@@ -866,10 +866,10 @@ button:not(:disabled) {
   flex: 1 1 240px;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 5px;
-  color: #e4e4e7;
-  background: #09090b;
+  color: var(--text-body);
+  background: var(--background);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   overflow-wrap: anywhere;
@@ -888,15 +888,15 @@ button:not(:disabled) {
   align-items: center;
   gap: 4px 12px;
   padding: 10px;
-  border: 1px solid rgb(63 63 70 / 68%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 5px;
-  background: #09090b;
+  background: var(--background);
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .shared-title {
   overflow: hidden;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -904,7 +904,7 @@ button:not(:disabled) {
 
 .shared-time {
   grid-column: 1 / -1;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
 }
@@ -953,9 +953,9 @@ button:not(:disabled) {
   width: min(380px, calc(100vw - 24px));
   max-height: min(440px, calc(100vh - 108px));
   overflow: hidden;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: #18181b;
+  background: var(--popover);
   box-shadow: 0 18px 44px rgb(0 0 0 / 48%);
 }
 
@@ -966,9 +966,9 @@ button:not(:disabled) {
   gap: 8px;
   height: 38px;
   padding: 0 10px;
-  border-bottom: 1px solid rgb(63 63 70 / 90%);
-  color: #71717a;
-  background: #101011;
+  border-bottom: 1px solid var(--surface-active-border);
+  color: var(--text-faint);
+  background: var(--surface-raised-2);
 }
 
 .session-all-search input {
@@ -976,13 +976,13 @@ button:not(:disabled) {
   min-width: 0;
   border: 0;
   outline: 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   background: transparent;
   font-size: 12px;
 }
 
 .session-all-search input::placeholder {
-  color: #71717a;
+  color: var(--text-faint);
 }
 
 .session-all-list {
@@ -1000,7 +1000,7 @@ button:not(:disabled) {
 
 .session-all-row:hover,
 .session-all-row:focus-within {
-  background: rgb(63 63 70 / 62%);
+  background: var(--surface-hover);
 }
 
 .session-all-select {
@@ -1010,7 +1010,7 @@ button:not(:disabled) {
   gap: 10px;
   min-width: 0;
   padding: 6px 8px;
-  color: #e4e4e7;
+  color: var(--text-body);
   text-align: left;
   background: transparent;
 }
@@ -1028,7 +1028,7 @@ button:not(:disabled) {
 
 .session-all-title {
   overflow: hidden;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1036,7 +1036,7 @@ button:not(:disabled) {
 
 .session-all-status {
   flex: 0 0 auto;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
 }
@@ -1053,7 +1053,7 @@ button:not(:disabled) {
 
 .session-all-empty {
   padding: 16px 10px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -1128,8 +1128,8 @@ button:not(:disabled) {
   min-height: 0;
   padding: 20px;
   overflow: hidden;
-  background: #000000;
-  color: #d4d4d8;
+  background: var(--terminal-bg);
+  color: var(--terminal-fg);
   font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
   line-height: 22.75px;
@@ -1147,7 +1147,7 @@ button:not(:disabled) {
   width: 100%;
   height: 100%;
   max-width: 100%;
-  background: #000000;
+  background: var(--terminal-bg);
 }
 
 .prototype-shell [role='menu'] {
@@ -1170,7 +1170,7 @@ button:not(:disabled) {
   padding: 16px;
   border: 1px solid rgb(248 113 113 / 42%);
   border-radius: 9px;
-  background: #171719;
+  background: var(--surface-dialog);
   box-shadow: 0 18px 60px rgb(0 0 0 / 48%);
 }
 
@@ -1197,18 +1197,18 @@ button:not(:disabled) {
   place-items: center;
   border: 0;
   border-radius: 4px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   background: transparent;
 }
 
 .runtime-error-close:hover {
-  color: #fafafa;
-  background: rgb(63 63 70 / 55%);
+  color: var(--foreground);
+  background: var(--surface-hover-soft);
 }
 
 .runtime-error-message {
   margin-top: 12px;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   line-height: 1.55;
@@ -1235,8 +1235,9 @@ button:not(:disabled) {
 
 /* MCP settings workspace */
 .settings-workspace-shell {
-  color: #f4f4f5;
-  background: radial-gradient(circle at 82% -10%, rgb(37 99 235 / 16%), transparent 34%), #08090b;
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 82% -10%, rgb(37 99 235 / 16%), transparent 34%), var(--background);
 }
 
 .settings-workspace-header {
@@ -1246,8 +1247,8 @@ button:not(:disabled) {
   align-items: center;
   gap: 20px;
   padding: 0 40px;
-  border-bottom: 1px solid rgb(63 63 70 / 72%);
-  background: rgb(9 9 11 / 88%);
+  border-bottom: 1px solid var(--surface-hover-border);
+  background: color-mix(in oklab, var(--background) 88%, transparent);
   box-shadow: 0 8px 30px rgb(0 0 0 / 16%);
 }
 
@@ -1260,7 +1261,7 @@ button:not(:disabled) {
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 9px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   background: transparent;
   font-size: 12px;
   transition:
@@ -1272,9 +1273,9 @@ button:not(:disabled) {
 .settings-back-button:hover,
 .settings-back-button:focus-visible {
   outline: 0;
-  border-color: rgb(82 82 91 / 78%);
-  color: #f4f4f5;
-  background: rgb(39 39 42 / 72%);
+  border-color: var(--surface-active-border);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--secondary) 72%, transparent);
 }
 
 .settings-workspace-brand {
@@ -1283,7 +1284,7 @@ button:not(:disabled) {
   align-items: center;
   gap: 11px;
   padding-left: 20px;
-  border-left: 1px solid rgb(63 63 70 / 72%);
+  border-left: 1px solid var(--surface-hover-border);
 }
 
 .settings-workspace-brand img {
@@ -1308,7 +1309,7 @@ button:not(:disabled) {
 
 .settings-workspace-brand h1 {
   margin-top: 3px;
-  color: #fafafa;
+  color: var(--foreground);
   font-size: 16px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -1336,8 +1337,101 @@ button:not(:disabled) {
 .settings-workspace-main {
   min-height: 0;
   flex: 1 1 auto;
+  display: flex;
+  overflow: hidden;
+  padding: 30px 40px 40px;
+}
+
+.settings-workspace-body {
+  display: flex;
+  width: 100%;
+  max-width: 1240px;
+  min-width: 0;
+  margin: 0 auto;
+  gap: 26px;
+}
+
+.settings-nav {
+  display: flex;
+  flex: 0 0 212px;
+  flex-direction: column;
+  gap: 6px;
+  align-self: flex-start;
+  position: sticky;
+  top: 0;
+}
+
+.settings-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--muted-foreground);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.settings-nav-item:hover {
+  border-color: var(--surface-hover-border);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--secondary) 55%, transparent);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 0;
+  border-color: var(--ring);
+}
+
+.settings-nav-item.is-active {
+  border-color: var(--surface-active-border);
+  color: var(--foreground);
+  background: linear-gradient(
+    115deg,
+    color-mix(in oklab, var(--accent) 16%, transparent),
+    transparent 70%
+  );
+}
+
+.settings-nav-icon {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.settings-nav-item.is-active .settings-nav-icon {
+  color: var(--ring);
+}
+
+.settings-nav-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-title {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.settings-nav-description {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.settings-panel {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
-  padding: 36px 40px 56px;
 }
 
 .settings-loading {
@@ -1346,7 +1440,7 @@ button:not(:disabled) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 
@@ -1494,9 +1588,13 @@ button:not(:disabled) {
 .mcp-settings-card {
   min-width: 0;
   padding: 22px;
-  border: 1px solid rgb(63 63 70 / 78%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 17px;
-  background: linear-gradient(145deg, rgb(24 24 27 / 96%), rgb(17 17 19 / 96%));
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklab, var(--popover) 96%, transparent),
+    color-mix(in oklab, var(--surface-raised) 96%, transparent)
+  );
   box-shadow: 0 12px 30px rgb(0 0 0 / 14%);
 }
 
@@ -1510,7 +1608,11 @@ button:not(:disabled) {
   border-color: rgb(52 211 153 / 22%);
   background:
     linear-gradient(115deg, rgb(6 78 59 / 18%), transparent 56%),
-    linear-gradient(145deg, rgb(24 24 27 / 96%), rgb(17 17 19 / 96%));
+    linear-gradient(
+      145deg,
+      color-mix(in oklab, var(--popover) 96%, transparent),
+      color-mix(in oklab, var(--surface-raised) 96%, transparent)
+    );
 }
 
 .general-settings-copy {
@@ -1519,7 +1621,7 @@ button:not(:disabled) {
 
 .general-settings-copy h2 {
   margin: 7px 0 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 15px;
   font-weight: 680;
 }
@@ -1527,7 +1629,7 @@ button:not(:disabled) {
 .general-settings-copy p,
 .general-settings-safety-note {
   margin: 6px 0 0;
-  color: #8a8a94;
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.6;
 }
@@ -1540,7 +1642,7 @@ button:not(:disabled) {
   grid-column: 1 / -1;
   margin-top: 0;
   padding-top: 12px;
-  border-top: 1px solid rgb(63 63 70 / 55%);
+  border-top: 1px solid var(--surface-hover-border);
   color: #a7f3d0;
   font-size: 10px;
 }
@@ -1574,7 +1676,7 @@ button:not(:disabled) {
 
 .mcp-card-heading h3 {
   margin: 7px 0 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 15px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -1593,7 +1695,7 @@ button:not(:disabled) {
   flex: 0 0 auto;
   align-items: center;
   gap: 9px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -1617,9 +1719,9 @@ button:not(:disabled) {
   height: 22px;
   align-items: center;
   padding: 3px;
-  border: 1px solid #52525b;
+  border: 1px solid var(--border-input);
   border-radius: 999px;
-  background: #27272a;
+  background: var(--secondary);
   transition:
     border-color 160ms ease,
     background 160ms ease;
@@ -1629,7 +1731,7 @@ button:not(:disabled) {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #a1a1aa;
+  background: var(--muted-foreground);
   box-shadow: 0 1px 4px rgb(0 0 0 / 42%);
   transition:
     background 160ms ease,
@@ -1670,7 +1772,7 @@ button:not(:disabled) {
 .mcp-label-with-badge > label {
   display: block;
   margin-bottom: 8px;
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 11px;
   font-weight: 650;
 }
@@ -1689,10 +1791,10 @@ button:not(:disabled) {
 .mcp-token-display code {
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
-  color: #dbeafe;
-  background: #0b0b0d;
+  color: var(--foreground);
+  background: var(--surface-input);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
 }
@@ -1732,7 +1834,7 @@ button:not(:disabled) {
 
 .mcp-field-help {
   margin: 7px 0 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -1744,10 +1846,10 @@ button:not(:disabled) {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--border-soft);
   border-radius: 10px;
-  color: #d4d4d8;
-  background: #202024;
+  color: var(--text-subtle);
+  background: var(--surface-button);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -1769,8 +1871,8 @@ button:not(:disabled) {
 .mcp-icon-button:focus-visible {
   outline: 0;
   border-color: rgb(96 165 250 / 66%);
-  color: #eff6ff;
-  background: #27272a;
+  color: var(--foreground);
+  background: var(--secondary);
 }
 
 .mcp-action-button:active:not(:disabled),
@@ -1838,10 +1940,10 @@ button:not(:disabled) {
   align-items: center;
   gap: 11px;
   padding: 12px;
-  border: 1px solid rgb(63 63 70 / 70%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 11px;
-  color: #d4d4d8;
-  background: rgb(9 9 11 / 34%);
+  color: var(--text-subtle);
+  background: color-mix(in oklab, var(--background) 34%, transparent);
   cursor: pointer;
   transition:
     border-color 160ms ease,
@@ -1849,13 +1951,17 @@ button:not(:disabled) {
 }
 
 .mcp-mode-option:hover {
-  border-color: rgb(82 82 91 / 90%);
-  background: rgb(39 39 42 / 55%);
+  border-color: var(--surface-active-border);
+  background: color-mix(in oklab, var(--secondary) 55%, transparent);
 }
 
 .mcp-mode-option.is-selected {
   border-color: rgb(96 165 250 / 58%);
-  background: linear-gradient(100deg, rgb(30 64 175 / 22%), rgb(9 9 11 / 30%));
+  background: linear-gradient(
+    100deg,
+    rgb(30 64 175 / 22%),
+    color-mix(in oklab, var(--background) 30%, transparent)
+  );
 }
 
 .mcp-mode-option input {
@@ -1882,7 +1988,7 @@ button:not(:disabled) {
 
 .mcp-mode-option.is-selected .mcp-mode-radio {
   border-color: #60a5fa;
-  box-shadow: inset 0 0 0 4px #18181b;
+  box-shadow: inset 0 0 0 4px var(--popover);
   background: #60a5fa;
 }
 
@@ -1893,14 +1999,14 @@ button:not(:disabled) {
 }
 
 .mcp-mode-title {
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 12px;
   font-weight: 650;
 }
 
 .mcp-mode-description {
   overflow: hidden;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1996,9 +2102,9 @@ button:not(:disabled) {
   gap: 12px;
   margin-top: 20px;
   padding: 16px;
-  border: 1px dashed rgb(82 82 91 / 72%);
+  border: 1px dashed var(--surface-active-border);
   border-radius: 12px;
-  background: rgb(9 9 11 / 28%);
+  background: color-mix(in oklab, var(--background) 28%, transparent);
 }
 
 .mcp-empty-icon {
@@ -2008,18 +2114,18 @@ button:not(:disabled) {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 9px;
-  color: #71717a;
-  background: #27272a;
+  color: var(--text-faint);
+  background: var(--secondary);
 }
 
 .mcp-empty-state strong {
-  color: #d4d4d8;
+  color: var(--text-subtle);
   font-size: 12px;
 }
 
 .mcp-empty-state p {
   margin: 4px 0 0;
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 10px;
 }
 
@@ -2037,9 +2143,9 @@ button:not(:disabled) {
   align-items: center;
   gap: 12px;
   padding: 11px 12px;
-  border: 1px solid rgb(63 63 70 / 66%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 11px;
-  background: rgb(9 9 11 / 36%);
+  background: color-mix(in oklab, var(--background) 36%, transparent);
 }
 
 .mcp-shared-status-dot {
@@ -2055,7 +2161,7 @@ button:not(:disabled) {
 
 .mcp-shared-identity strong {
   overflow: hidden;
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2102,7 +2208,7 @@ button:not(:disabled) {
   overflow: hidden;
   border: 1px solid rgb(96 165 250 / 34%);
   border-radius: 20px;
-  background: #111113;
+  background: var(--surface-raised);
   box-shadow: 0 28px 100px rgb(0 0 0 / 65%);
 }
 
@@ -2112,8 +2218,12 @@ button:not(:disabled) {
   justify-content: space-between;
   gap: 16px;
   padding: 19px 22px;
-  border-bottom: 1px solid rgb(63 63 70 / 76%);
-  background: linear-gradient(120deg, rgb(30 41 59 / 70%), rgb(17 17 19 / 40%));
+  border-bottom: 1px solid var(--surface-active-border);
+  background: linear-gradient(
+    120deg,
+    rgb(30 41 59 / 70%),
+    color-mix(in oklab, var(--surface-raised) 40%, transparent)
+  );
 }
 
 .share-dialog-heading {
@@ -2141,7 +2251,7 @@ button:not(:disabled) {
 
 .share-dialog-header h2 {
   margin: 0;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 16px;
   font-weight: 680;
 }
@@ -2154,16 +2264,16 @@ button:not(:disabled) {
   place-items: center;
   border: 1px solid transparent;
   border-radius: 8px;
-  color: #a1a1aa;
+  color: var(--muted-foreground);
   background: transparent;
 }
 
 .share-dialog-close:hover,
 .share-dialog-close:focus-visible {
   outline: 0;
-  border-color: #3f3f46;
-  color: #f4f4f5;
-  background: #27272a;
+  border-color: var(--border-soft);
+  color: var(--foreground);
+  background: var(--secondary);
 }
 
 .share-dialog-body {
@@ -2178,9 +2288,9 @@ button:not(:disabled) {
   align-items: center;
   gap: 11px;
   padding: 12px;
-  border: 1px solid rgb(63 63 70 / 72%);
+  border: 1px solid var(--surface-hover-border);
   border-radius: 12px;
-  background: rgb(9 9 11 / 42%);
+  background: color-mix(in oklab, var(--background) 42%, transparent);
 }
 
 .share-session-icon {
@@ -2198,7 +2308,7 @@ button:not(:disabled) {
 
 .share-session-copy strong {
   overflow: hidden;
-  color: #f4f4f5;
+  color: var(--foreground);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2214,7 +2324,7 @@ button:not(:disabled) {
 }
 
 .share-session-copy code {
-  color: #a1a1aa;
+  color: var(--muted-foreground);
 }
 
 .share-session-badge,
@@ -2268,10 +2378,10 @@ button:not(:disabled) {
 
 .share-preview {
   margin-top: 16px;
-  border: 1px solid rgb(63 63 70 / 78%);
+  border: 1px solid var(--surface-active-border);
   border-radius: 13px;
   overflow: hidden;
-  background: #09090b;
+  background: var(--background);
 }
 
 .share-preview-heading {
@@ -2280,8 +2390,8 @@ button:not(:disabled) {
   justify-content: space-between;
   gap: 12px;
   padding: 11px 13px;
-  border-bottom: 1px solid rgb(63 63 70 / 72%);
-  background: rgb(24 24 27 / 78%);
+  border-bottom: 1px solid var(--surface-hover-border);
+  background: color-mix(in oklab, var(--surface-raised) 78%, transparent);
 }
 
 .share-preview-heading > div {
@@ -2291,13 +2401,13 @@ button:not(:disabled) {
 }
 
 .share-preview-label {
-  color: #e4e4e7;
+  color: var(--text-body);
   font-size: 11px;
   font-weight: 650;
 }
 
 .share-preview-hint {
-  color: #71717a;
+  color: var(--text-faint);
   font-size: 9px;
 }
 
@@ -2313,7 +2423,7 @@ button:not(:disabled) {
   margin: 0;
   padding: 14px;
   overflow: auto;
-  color: #cbd5e1;
+  color: var(--text-body);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   line-height: 1.7;
@@ -2338,8 +2448,8 @@ button:not(:disabled) {
 .share-dialog-button:focus-visible {
   outline: 0;
   border-color: rgb(96 165 250 / 66%);
-  color: #eff6ff;
-  background: #27272a;
+  color: var(--foreground);
+  background: var(--secondary);
 }
 
 .share-dialog-button.is-primary {
@@ -2367,6 +2477,22 @@ button:not(:disabled) {
 
   .settings-workspace-main {
     padding: 22px 16px 36px;
+  }
+
+  .settings-workspace-body {
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .settings-nav {
+    flex: none;
+    flex-direction: row;
+    position: static;
+    overflow-x: auto;
+  }
+
+  .settings-nav-item {
+    flex: 0 0 auto;
   }
 
   .mcp-settings-hero {
@@ -2472,5 +2598,170 @@ button:not(:disabled) {
   .share-preview-heading > div {
     display: grid;
     gap: 3px;
+  }
+}
+
+/* Theme settings section */
+.theme-settings-card {
+  width: min(1120px, 100%);
+  margin: 0 auto 16px;
+}
+
+.theme-mode-options .mcp-mode-description {
+  white-space: normal;
+}
+
+.theme-custom-block {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--surface-hover-border);
+}
+
+.theme-color-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.theme-color-row {
+  display: grid;
+  grid-template-columns: minmax(84px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-color-grid .theme-color-row {
+  grid-template-columns: minmax(104px, auto) minmax(0, 1fr) auto;
+}
+
+.theme-color-label {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.theme-color-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  margin-right: 6px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-button);
+  color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.theme-color-input {
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: 8px;
+  outline: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.theme-color-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
+.theme-color-swatch {
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-input);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-color-input:disabled,
+.theme-color-swatch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.theme-custom-note {
+  margin: 12px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.theme-terminal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--surface-hover-border);
+}
+
+.theme-terminal-title {
+  margin: 0;
+  color: var(--text-body);
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.theme-terminal-note {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.theme-terminal-reset {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--surface-active-border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.theme-terminal-reset:hover:not(:disabled),
+.theme-terminal-reset:focus-visible {
+  outline: 0;
+  border-color: var(--ring);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--secondary) 55%, transparent);
+}
+
+.theme-terminal-reset:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.theme-color-grid {
+  display: grid;
+  margin-top: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+@media (max-width: 1080px) {
+  .theme-color-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

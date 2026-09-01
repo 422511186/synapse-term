@@ -10,17 +10,21 @@ import type {
   SessionLaunchInput,
   SessionSummary,
   TerminalOutputEvent,
+  ThemeState,
   SharedMcpSession,
 } from '../shared/contracts.js';
 
 export type {
   AppStatus,
+  CustomThemePalette,
   DesktopApi,
   GeneralSettings,
   SessionEnvironment,
   SessionLaunchInput,
   SessionSummary,
   TerminalOutputEvent,
+  ThemeMode,
+  ThemeState,
   McpApprovalDecision,
   McpApprovalRequest,
   McpExecutionEvent,
@@ -60,6 +64,11 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
     general: {
       getSettings: () => invoke<GeneralSettings>('settings:get-general'),
       updateSettings: (patch) => invoke('settings:update-general', patch),
+    },
+    theme: {
+      getState: () => invoke<ThemeState>('theme:get-state'),
+      onChanged: (listener) =>
+        ipc.on('theme:changed', (payload) => listener(payload as ThemeState)),
     },
     mcp: {
       getSettings: () => invoke<McpSettings>('mcp:get-settings'),

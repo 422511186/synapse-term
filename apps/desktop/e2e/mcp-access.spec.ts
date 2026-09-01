@@ -8,6 +8,10 @@ test('covers approval decisions across the endpoint setup and four resolution pa
   await page.goto('/?sessions=1');
 
   await page.getByRole('button', { name: '设置' }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /MCP 服务/ })
+    .click();
   await page.locator('label').filter({ hasText: '启用本机 MCP 端点' }).locator('input').check();
   await page.getByLabel('托管').check();
   await expect(page.getByLabel('MCP 服务端口')).toHaveValue('4739');
@@ -62,6 +66,10 @@ test('refreshes MCP status and Sharing after cancellation and token changes', as
   await page.goto('/?sessions=1');
 
   await page.getByRole('button', { name: '设置' }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /MCP 服务/ })
+    .click();
   await page.getByLabel('启用本机 MCP 端点').check();
   await expect(page.getByText('运行状态：运行中')).toBeVisible();
   await page.getByRole('button', { name: '返回工作区' }).click();
@@ -71,6 +79,10 @@ test('refreshes MCP status and Sharing after cancellation and token changes', as
   await page.getByRole('dialog', { name: '共享终端会话' }).getByLabel('关闭共享').click();
 
   await page.getByRole('button', { name: '设置' }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /MCP 服务/ })
+    .click();
   const workspace = page.getByTestId('settings-workspace');
   await expect(workspace.getByText('session 1')).toBeVisible();
   await workspace.getByRole('button', { name: '取消共享' }).click();

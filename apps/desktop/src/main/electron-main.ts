@@ -1,16 +1,19 @@
 import { join, resolve } from 'node:path';
 
-import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, shell } from 'electron';
 
+import type { GeneralSettings, ThemeState } from '../shared/contracts.js';
 import {
   DESKTOP_IPC_REQUEST_CHANNELS,
   type DesktopIpcEventChannel,
 } from '../shared/desktop-ipc-channels.js';
 import { DesktopWindowRegistry, createBrowserWindowOptions } from './electron-window.js';
+import { resolveWindowBackgroundColor } from './electron-window.js';
 import { ApprovalQueue } from './mcp/approval-queue.js';
 import { EmbeddedMcpServer } from './mcp/embedded-mcp-server.js';
 import { McpController } from './mcp/mcp-controller.js';
 import { GeneralSettingsController } from './settings/general-settings-controller.js';
+import { sanitizeGeneralSettings } from './settings/general-settings.js';
 import { TerminalHost } from './terminal-host.js';
 
 const windows = new DesktopWindowRegistry<BrowserWindow>();
@@ -18,6 +21,29 @@ const windows = new DesktopWindowRegistry<BrowserWindow>();
 const userDataOverride = process.env.SYNAPSE_TERM_USER_DATA_DIR?.trim();
 if (userDataOverride !== undefined && userDataOverride.length > 0) {
   app.setPath('userData', resolve(userDataOverride));
+}
+
+// The most recently applied general settings; used to rebuild ThemeState when the
+// operating system appearance changes while the theme is set to follow the system.
+let appliedGeneralSettings: GeneralSettings = sanitizeGeneralSettings(undefined);
+
+function buildThemeState(settings: GeneralSettings): ThemeState {
+  return {
+    mode: settings.themeMode,
+    scheme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    customTheme: settings.customTheme,
+  };
+}
+
+function applyTheme(settings: GeneralSettings): void {
+  appliedGeneralSettings = settings;
+  nativeTheme.themeSource = settings.themeMode;
+  const scheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.setBackgroundColor(resolveWindowBackgroundColor(scheme));
+  }
+  broadcast('theme:changed', buildThemeState(settings));
 }
 
 function createWindow(): void {
@@ -47,7 +73,10 @@ function createWindow(): void {
 
 function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsController): void {
   for (const channel of DESKTOP_IPC_REQUEST_CHANNELS.filter(
-    (channel) => !channel.startsWith('mcp:') && !channel.startsWith('settings:'),
+    (channel) =>
+      !channel.startsWith('mcp:') &&
+      !channel.startsWith('settings:') &&
+      !channel.startsWith('theme:'),
   )) {
     ipcMain.handle(channel, (event, ...argumentsValue: unknown[]) => {
       if (!isTrustedRendererEvent(event)) {
@@ -63,10 +92,12 @@ function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsControl
   ipcMain.handle('settings:update-general', async (event, patch: unknown) => {
     if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
     return generalSettings.updateSettings(
-      typeof patch === 'object' && patch !== null
-        ? (patch as { hideCompletionProbeEcho?: boolean })
-        : {},
+      typeof patch === 'object' && patch !== null ? (patch as Partial<GeneralSettings>) : {},
     );
+  });
+  ipcMain.handle('theme:get-state', async (event) => {
+    if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+    return buildThemeState(appliedGeneralSettings);
   });
 }
 
@@ -127,11 +158,19 @@ async function startDesktopMain(): Promise<void> {
   const host = new TerminalHost({ version: app.getVersion() });
   const generalSettings = new GeneralSettingsController({
     settingsStoreDirectory: join(app.getPath('userData'), 'settings'),
-    apply: (settings) => host.setProbeEchoVisibility(settings.hideCompletionProbeEcho),
+    apply: async (settings) => {
+      host.setProbeEchoVisibility(settings.hideCompletionProbeEcho);
+      applyTheme(settings);
+    },
   });
   await generalSettings.reload().catch((error: unknown) => {
     console.error('[desktop-settings] general settings load failed', error);
   });
+  const handleThemeUpdated = (): void => {
+    // Re-emits when the OS appearance changes while the theme follows the system.
+    broadcast('theme:changed', buildThemeState(appliedGeneralSettings));
+  };
+  nativeTheme.on('updated', handleThemeUpdated);
   const approvalTimeoutOverride = process.env.SYNAPSE_TERM_MCP_APPROVAL_TIMEOUT_MS;
   const approvalTimeoutMs = approvalTimeoutOverride ? Number(approvalTimeoutOverride) : 60_000;
   const approvalQueue = new ApprovalQueue({
@@ -183,6 +222,7 @@ async function startDesktopMain(): Promise<void> {
       .shutdown()
       .catch((error: unknown) => console.error('[desktop-main] shutdown failed', error))
       .finally(async () => {
+        nativeTheme.removeListener('updated', handleThemeUpdated);
         removeSessionListener();
         removeOutputListener();
         removeApprovalListener();

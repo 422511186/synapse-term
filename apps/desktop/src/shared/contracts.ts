@@ -35,8 +35,48 @@ export interface AppStatus {
   sessions: number;
 }
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+export const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+export interface CustomThemePalette {
+  enabled: boolean;
+  background: string;
+  foreground: string;
+  accent: string;
+  /** 终端文字 16 色；未定制（undefined）时回退当前 scheme 的内置色板。 */
+  terminalText?: TerminalTextPalette | undefined;
+}
+
+export interface TerminalTextPalette {
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
 export interface GeneralSettings {
   hideCompletionProbeEcho: boolean;
+  themeMode: ThemeMode;
+  customTheme: CustomThemePalette;
+}
+
+export interface ThemeState {
+  mode: ThemeMode;
+  scheme: 'light' | 'dark';
+  customTheme: CustomThemePalette;
 }
 
 export type McpApprovalMode = 'read_only' | 'managed' | 'full';
@@ -103,6 +143,10 @@ export interface DesktopApi {
   general: {
     getSettings(): Promise<GeneralSettings>;
     updateSettings(patch: Partial<GeneralSettings>): Promise<GeneralSettings>;
+  };
+  theme: {
+    getState(): Promise<ThemeState>;
+    onChanged(listener: (state: ThemeState) => void): () => void;
   };
   mcp: {
     getSettings(): Promise<McpSettings>;

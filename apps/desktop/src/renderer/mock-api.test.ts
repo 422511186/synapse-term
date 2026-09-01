@@ -39,9 +39,35 @@ describe('mock desktop API', () => {
   it('round-trips the general probe visibility setting through the restricted API', async () => {
     const api = createMockDesktopApi();
 
-    await expect(api.general.getSettings()).resolves.toEqual({ hideCompletionProbeEcho: true });
-    await expect(api.general.updateSettings({ hideCompletionProbeEcho: false })).resolves.toEqual({
+    const defaults = await api.general.getSettings();
+    expect(defaults.hideCompletionProbeEcho).toBe(true);
+    expect(defaults.themeMode).toBe('system');
+    expect(defaults.customTheme.enabled).toBe(false);
+
+    const updated = await api.general.updateSettings({
       hideCompletionProbeEcho: false,
+      themeMode: 'light',
+      customTheme: {
+        enabled: true,
+        background: '#101418',
+        foreground: '#e8eef2',
+        accent: '#3b82f6',
+      },
     });
+    expect(updated).toMatchObject({
+      hideCompletionProbeEcho: false,
+      themeMode: 'light',
+      customTheme: { enabled: true, background: '#101418' },
+    });
+  });
+
+  it('exposes theme state and notifies listeners on theme changes', async () => {
+    const api = createMockDesktopApi();
+    const received: Array<{ mode: string }> = [];
+    api.theme.onChanged((state) => received.push({ mode: state.mode }));
+
+    await expect(api.theme.getState()).resolves.toMatchObject({ mode: 'system', scheme: 'dark' });
+    await api.general.updateSettings({ themeMode: 'dark' });
+    expect(received.map((item) => item.mode)).toEqual(['dark']);
   });
 });

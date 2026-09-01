@@ -9,6 +9,7 @@ export const DESKTOP_IPC_REQUEST_CHANNELS = [
   'app:status',
   'settings:get-general',
   'settings:update-general',
+  'theme:get-state',
   'mcp:get-settings',
   'mcp:update-settings',
   'mcp:regenerate-token',
@@ -23,6 +24,7 @@ export const DESKTOP_IPC_REQUEST_CHANNELS = [
 export const DESKTOP_IPC_EVENT_CHANNELS = [
   'terminal:output',
   'session:changed',
+  'theme:changed',
   'mcp:approval',
   'mcp:approval-closed',
   'mcp:execution',

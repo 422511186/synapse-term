@@ -58,3 +58,9 @@ export function createBrowserWindowOptions(preloadPath: string): DesktopBrowserW
     },
   };
 }
+
+// Keeps the native window surface in sync with the effective theme scheme so the
+// initial paint and the title bar match the Renderer background.
+export function resolveWindowBackgroundColor(scheme: 'light' | 'dark'): string {
+  return scheme === 'light' ? '#ffffff' : '#09090b';
+}
