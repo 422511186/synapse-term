@@ -1,7 +1,11 @@
 import type { ITheme } from '@xterm/xterm';
 
 import { HEX_COLOR_PATTERN } from '../../shared/contracts.js';
-import type { TerminalTextPalette, ThemeState } from '../../shared/contracts.js';
+import type {
+  CustomThemePalette,
+  TerminalTextPalette,
+  ThemeState,
+} from '../../shared/contracts.js';
 
 export type ThemeScheme = 'light' | 'dark';
 
