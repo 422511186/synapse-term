@@ -2625,15 +2625,35 @@ button:not(:disabled) {
 
 .theme-color-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(84px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.theme-color-grid .theme-color-row {
+  grid-template-columns: minmax(104px, auto) minmax(0, 1fr) auto;
 }
 
 .theme-color-label {
   color: var(--text-subtle);
   font-size: 12px;
   font-weight: 600;
+}
+
+.theme-color-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  margin-right: 6px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-button);
+  color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .theme-color-input {

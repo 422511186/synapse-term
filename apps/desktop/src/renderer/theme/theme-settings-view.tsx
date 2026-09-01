@@ -48,6 +48,27 @@ const ANSI_LABELS: Record<keyof TerminalTextPalette, string> = {
   brightWhite: '亮白',
 };
 
+// 0-15 color-slot number for each ANSI field so the settings rows can be
+// correlated with the numbered color sample printed by the Mock terminal.
+const ANSI_SLOTS: Record<keyof TerminalTextPalette, number> = {
+  black: 0,
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  magenta: 5,
+  cyan: 6,
+  white: 7,
+  brightBlack: 8,
+  brightRed: 9,
+  brightGreen: 10,
+  brightYellow: 11,
+  brightBlue: 12,
+  brightMagenta: 13,
+  brightCyan: 14,
+  brightWhite: 15,
+};
+
 export interface ThemeSettingsViewProps {
   busy: boolean;
   scheme: 'light' | 'dark';
@@ -176,7 +197,8 @@ export function ThemeSettingsView({
           <div>
             <p className="theme-terminal-title">终端文字配色</p>
             <p className="theme-terminal-note">
-              未定制时终端文字跟随当前浅色/深色主题；定制后覆盖内置 ANSI 色板。
+              终端里命令输出（如 git、ls）会用编号 0-15 的 ANSI
+              颜色上色；这里可逐行改这些颜色。未定制时 跟随当前浅色/深色主题的内置色板。
             </p>
           </div>
           {terminalText !== undefined && (
@@ -198,7 +220,10 @@ export function ThemeSettingsView({
             const value = terminalText?.[key] ?? SCHEME_ANSI_PALETTES[scheme][key];
             return (
               <label className="theme-color-row" key={key}>
-                <span className="theme-color-label">{ANSI_LABELS[key]}</span>
+                <span className="theme-color-label">
+                  <span className="theme-color-slot">{ANSI_SLOTS[key]}</span>
+                  {ANSI_LABELS[key]}
+                </span>
                 <input
                   aria-label={`终端文字 ${ANSI_LABELS[key]} 输入`}
                   className="theme-color-input"

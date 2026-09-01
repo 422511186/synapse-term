@@ -111,29 +111,29 @@ export function createMockDesktopApi(): DesktopApi {
   };
 
   // A small ANSI 16-color sample so the "终端文字配色" editor has visible
-  // feedback in the Mock renderer: each character is colored with one of the
-  // standard (30-37) and bright (90-97) SGR color codes.
+  // feedback in the Mock renderer. Each character carries its color-slot
+  // number (0-15) next to the name so users can map it to the settings rows.
   const standardSample = [
-    '\x1b[30m黑\x1b[0m',
-    '\x1b[31m红\x1b[0m',
-    '\x1b[32m绿\x1b[0m',
-    '\x1b[33m黄\x1b[0m',
-    '\x1b[34m蓝\x1b[0m',
-    '\x1b[35m品红\x1b[0m',
-    '\x1b[36m青\x1b[0m',
-    '\x1b[37m白\x1b[0m',
+    '\x1b[30m0黑\x1b[0m',
+    '\x1b[31m1红\x1b[0m',
+    '\x1b[32m2绿\x1b[0m',
+    '\x1b[33m3黄\x1b[0m',
+    '\x1b[34m4蓝\x1b[0m',
+    '\x1b[35m5品红\x1b[0m',
+    '\x1b[36m6青\x1b[0m',
+    '\x1b[37m7白\x1b[0m',
   ];
   const brightSample = [
-    '\x1b[90m亮黑\x1b[0m',
-    '\x1b[91m亮红\x1b[0m',
-    '\x1b[92m亮绿\x1b[0m',
-    '\x1b[93m亮黄\x1b[0m',
-    '\x1b[94m亮蓝\x1b[0m',
-    '\x1b[95m亮品红\x1b[0m',
-    '\x1b[96m亮青\x1b[0m',
-    '\x1b[97m亮白\x1b[0m',
+    '\x1b[90m8亮黑\x1b[0m',
+    '\x1b[91m9亮红\x1b[0m',
+    '\x1b[92m10亮绿\x1b[0m',
+    '\x1b[93m11亮黄\x1b[0m',
+    '\x1b[94m12亮蓝\x1b[0m',
+    '\x1b[95m13亮品红\x1b[0m',
+    '\x1b[96m14亮青\x1b[0m',
+    '\x1b[97m15亮白\x1b[0m',
   ];
-  const terminalColorSample = `\r\n下面的颜色可在「外观 → 终端文字配色」中修改：\r\n  标准色  ${standardSample.join('  ')}\r\n  亮色    ${brightSample.join('  ')}\r\n`;
+  const terminalColorSample = `\r\n下面的 0-15 号颜色可在「外观 → 终端文字配色」中逐行修改，修改后此处的对应字会跟着变：\r\n  标准色  ${standardSample.join('  ')}\r\n  亮色    ${brightSample.join('  ')}\r\n`;
 
   if (typeof globalThis.window !== 'undefined') {
     Object.assign(globalThis.window, {
