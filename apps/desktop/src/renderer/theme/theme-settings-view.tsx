@@ -7,7 +7,12 @@ import {
   type TerminalTextPalette,
   type ThemeMode,
 } from '../../shared/contracts.js';
-import { applyTerminalTextEdit, ANSI_TEXT_FIELDS, SCHEME_ANSI_PALETTES } from './theme-palette.js';
+import {
+  applyTerminalTextEdit,
+  ANSI_TEXT_FIELDS,
+  SCHEME_ANSI_PALETTES,
+  setCustomThemeEnabled,
+} from './theme-palette.js';
 
 const MODES: Array<{ value: ThemeMode; label: string; description: string }> = [
   { value: 'light', label: '浅色', description: '使用明亮的外观配色。' },
@@ -130,7 +135,9 @@ export function ThemeSettingsView({
             checked={settings.customTheme.enabled}
             disabled={busy}
             onChange={(event) =>
-              onSetCustomTheme({ ...settings.customTheme, enabled: event.target.checked })
+              onSetCustomTheme(
+                setCustomThemeEnabled(settings.customTheme, event.target.checked, scheme),
+              )
             }
             type="checkbox"
           />

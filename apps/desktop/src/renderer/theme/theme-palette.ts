@@ -5,6 +5,36 @@ import type { TerminalTextPalette, ThemeState } from '../../shared/contracts.js'
 
 export type ThemeScheme = 'light' | 'dark';
 
+// Default core colors used to seed a freshly enabled custom palette. The
+// locked-in value is always the dark system palette; enabling custom colors on
+// a light scheme repaints these so foreground and background stay readable.
+export const SCHEME_CORE_PALETTES: Record<
+  ThemeScheme,
+  Omit<CustomThemePalette, 'enabled' | 'terminalText'>
+> = {
+  dark: { background: '#09090b', foreground: '#fafafa', accent: '#fafafa' },
+  light: { background: '#ffffff', foreground: '#09090b', accent: '#09090b' },
+};
+
+// Returns the next custom palette for an enable/disable toggle. When enabling
+// and the palette still holds the untouched built-in default values, the core
+// colors are re-seeded from the current scheme so text never becomes invisible
+// against the (possibly light) background. User-customized values are kept.
+export function setCustomThemeEnabled(
+  custom: CustomThemePalette,
+  enabled: boolean,
+  scheme: ThemeScheme,
+): CustomThemePalette {
+  if (!enabled) return { ...custom, enabled: false };
+  const defaults = SCHEME_CORE_PALETTES.dark;
+  const untouched =
+    custom.background === defaults.background &&
+    custom.foreground === defaults.foreground &&
+    custom.accent === defaults.accent;
+  if (!untouched) return { ...custom, enabled: true };
+  return { ...custom, ...SCHEME_CORE_PALETTES[scheme], enabled: true };
+}
+
 // The CSS custom properties the desktop UI relies on. Values follow the zinc
 // palette already defined for the built-in dark theme in prototype-tailwind.css.
 export const BASE_THEME_PALETTES: Record<ThemeScheme, Record<string, string>> = {

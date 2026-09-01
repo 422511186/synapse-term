@@ -114,10 +114,13 @@ test('keeps terminal content when switching tabs', async ({ page }) => {
 
 test('switches theme mode and custom terminal colors from settings', async ({ page }) => {
   await page.goto('/?sessions=1');
-  const rootBackground = (): Promise<string> =>
-    page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--background'),
+  const rootVar = (name: string): Promise<string> =>
+    page.evaluate(
+      (prop) => getComputedStyle(document.documentElement).getPropertyValue(prop),
+      name,
     );
+  const rootBackground = (): Promise<string> => rootVar('--background');
+  const rootForeground = (): Promise<string> => rootVar('--foreground');
 
   await expect.poll(rootBackground).toBe('#09090b');
 
@@ -132,9 +135,16 @@ test('switches theme mode and custom terminal colors from settings', async ({ pa
   // Switch to the light scheme and verify the CSS variables repaint.
   await themeSection.getByText('浅色', { exact: true }).click();
   await expect.poll(rootBackground).toBe('#ffffff');
+  await expect.poll(rootForeground).toBe('#09090b');
 
-  // Enable the custom palette and set a custom background color.
+  // Enabling the custom palette on a light scheme must seed readable core
+  // colors (dark foreground on light background) instead of keeping the
+  // default dark values, otherwise terminal text would be invisible.
   await themeSection.getByLabel('启用自定义配色').check();
+  await expect.poll(rootBackground).toBe('#ffffff');
+  await expect.poll(rootForeground).toBe('#09090b');
+
+  // Set the custom background color; the foreground stays readable.
   await themeSection.getByLabel('背景色 选择器').fill('#123456');
   await expect.poll(rootBackground).toBe('#123456');
 

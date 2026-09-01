@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ThemeState } from '../../shared/contracts.js';
+import type { CustomThemePalette, ThemeState } from '../../shared/contracts.js';
 import {
   applyTerminalTextEdit,
   BASE_THEME_PALETTES,
@@ -10,6 +10,8 @@ import {
   readableOn,
   resolveTerminalTextPalette,
   resolveThemeCssVariables,
+  SCHEME_CORE_PALETTES,
+  setCustomThemeEnabled,
 } from './theme-palette.js';
 
 const darkState: ThemeState = {
@@ -191,6 +193,55 @@ describe('theme palette', () => {
       const base = { ...SCHEME_ANSI_PALETTES.dark, red: '#aa0000' };
       const result = applyTerminalTextEdit(base, 'dark', 'green', '#00ff00');
       expect(result).toEqual({ applied: true, terminalText: { ...base, green: '#00ff00' } });
+    });
+  });
+
+  describe('setCustomThemeEnabled', () => {
+    const untouched: CustomThemePalette = {
+      enabled: false,
+      background: '#09090b',
+      foreground: '#fafafa',
+      accent: '#fafafa',
+    };
+
+    it('seeds scheme-appropriate core colors when customizing a fresh dark default palette', () => {
+      // The locked-in default palette always starts as the dark system values;
+      // enabling custom colors on a light scheme must repaint the core colors
+      // so foreground/background never collide (e.g. white text on white bg).
+      const result = setCustomThemeEnabled(untouched, true, 'light');
+      expect(result.enabled).toBe(true);
+      expect(result.background).toBe(SCHEME_CORE_PALETTES.light.background);
+      expect(result.foreground).toBe(SCHEME_CORE_PALETTES.light.foreground);
+      expect(result.accent).toBe(SCHEME_CORE_PALETTES.light.accent);
+    });
+
+    it('keeps the dark scheme defaults when customizing under a dark scheme', () => {
+      const result = setCustomThemeEnabled(untouched, true, 'dark');
+      expect(result).toEqual({ ...untouched, enabled: true });
+    });
+
+    it('preserves user-customized core colors when re-enabling', () => {
+      const customized: CustomThemePalette = {
+        ...untouched,
+        background: '#112233',
+        foreground: '#ddeeff',
+        accent: '#aa3366',
+      };
+      const result = setCustomThemeEnabled(customized, true, 'light');
+      expect(result.background).toBe('#112233');
+      expect(result.foreground).toBe('#ddeeff');
+      expect(result.accent).toBe('#aa3366');
+    });
+
+    it('merges an existing terminalText and only flips the enabled flag when disabled', () => {
+      const withText: CustomThemePalette = {
+        ...untouched,
+        enabled: true,
+        terminalText: { ...SCHEME_ANSI_PALETTES.dark, red: '#ff0000' },
+      };
+      const disabled = setCustomThemeEnabled(withText, false, 'light');
+      expect(disabled.enabled).toBe(false);
+      expect(disabled.terminalText).toBe(withText.terminalText);
     });
   });
 });
