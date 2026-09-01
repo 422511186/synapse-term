@@ -467,7 +467,7 @@ export function App(): JSX.Element {
                   </button>
                   <div className="my-1 border-t border-border/60" />
                   <button onClick={closeCurrentFromContextMenu} role="menuitem" type="button">
-                    <X size={14} /> 关闭当前
+                    关闭当前
                   </button>
                   <button
                     onClick={() => closeRangeFromContextMenu('left')}
@@ -567,7 +567,7 @@ export function App(): JSX.Element {
                 <>
                   {activeSession !== undefined && executions.has(activeSession.id) && (
                     <div
-                      className="external-execution-banner pointer-events-none absolute left-0 right-0 top-0 z-20 border-b border-amber-400/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+                      className="external-execution-banner pointer-events-none absolute left-0 right-0 top-0 z-20 px-4 py-2 text-xs"
                       data-testid="external-execution-banner"
                     >
                       <Radio aria-hidden="true" size={13} />

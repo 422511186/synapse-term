@@ -915,6 +915,16 @@ button:not(:disabled) {
   gap: 8px;
   min-width: 0;
   padding-right: 300px;
+  border-bottom: 1px solid rgb(251 191 36 / 40%);
+  color: #fde68a;
+  background: rgb(120 53 15 / 60%);
+  backdrop-filter: blur(2px);
+}
+
+[data-theme='light'] .external-execution-banner {
+  border-bottom-color: rgb(180 83 9 / 25%);
+  color: #78350f;
+  background: rgb(251 191 36 / 22%);
 }
 
 .external-execution-banner svg {
@@ -1147,7 +1157,7 @@ button:not(:disabled) {
   width: 100%;
   height: 100%;
   max-width: 100%;
-  background: var(--terminal-bg);
+  background: var(--terminal-bg) !important;
 }
 
 .prototype-shell [role='menu'] {
@@ -1300,7 +1310,7 @@ button:not(:disabled) {
 }
 
 .settings-workspace-brand p {
-  color: #71717a;
+  color: var(--muted-foreground);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1320,7 +1330,7 @@ button:not(:disabled) {
   margin-left: auto;
   align-items: center;
   gap: 9px;
-  color: #71717a;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -1647,6 +1657,10 @@ button:not(:disabled) {
   font-size: 10px;
 }
 
+[data-theme='light'] .general-settings-safety-note {
+  color: #166534;
+}
+
 .mcp-settings-card-wide {
   grid-column: 1 / -1;
 }
@@ -1674,6 +1688,10 @@ button:not(:disabled) {
   text-transform: uppercase;
 }
 
+[data-theme='light'] .mcp-card-kicker {
+  color: #1d4ed8;
+}
+
 .mcp-card-heading h3 {
   margin: 7px 0 0;
   color: var(--foreground);
@@ -1684,7 +1702,7 @@ button:not(:disabled) {
 
 .mcp-card-heading p {
   margin: 6px 0 0;
-  color: #71717a;
+  color: var(--text-subtle);
   font-size: 11px;
   line-height: 1.55;
 }
@@ -1834,7 +1852,7 @@ button:not(:disabled) {
 
 .mcp-field-help {
   margin: 7px 0 0;
-  color: var(--text-faint);
+  color: var(--muted-foreground);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -2006,7 +2024,7 @@ button:not(:disabled) {
 
 .mcp-mode-description {
   overflow: hidden;
-  color: var(--text-faint);
+  color: var(--muted-foreground);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2030,6 +2048,12 @@ button:not(:disabled) {
   background: rgb(120 53 15 / 19%);
   font-size: 10px;
   line-height: 1.55;
+}
+
+[data-theme='light'] .mcp-warning {
+  border-color: rgb(180 83 9 / 22%);
+  color: #78350f;
+  background: rgb(251 191 36 / 16%);
 }
 
 .mcp-warning svg {
@@ -2170,7 +2194,7 @@ button:not(:disabled) {
 .mcp-shared-identity code,
 .mcp-shared-row time {
   overflow: hidden;
-  color: #71717a;
+  color: var(--muted-foreground);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   text-overflow: ellipsis;
@@ -2692,7 +2716,7 @@ button:not(:disabled) {
 
 .theme-custom-note {
   margin: 12px 0 0;
-  color: var(--text-faint);
+  color: var(--muted-foreground);
   font-size: 10px;
   line-height: 1.55;
 }

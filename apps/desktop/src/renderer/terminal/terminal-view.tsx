@@ -113,6 +113,7 @@ export function TerminalView({
     const terminal = terminalRef.current;
     if (terminal === null) return;
     terminal.options.theme = buildXtermTheme(themeState);
+    terminal.refresh(0, terminal.rows - 1);
   }, [themeState]);
 
   return (
