@@ -84,6 +84,23 @@ export const BASE_THEME_PALETTES: Record<ThemeScheme, Record<string, string>> = 
     '--text-body': '#e4e4e7',
     '--text-subtle': '#d4d4d8',
     '--text-faint': '#71717a',
+    '--ui-surface-base': '#09090b',
+    '--ui-text-primary': '#fafafa',
+    '--ui-text-secondary': '#d4d4d8',
+    '--ui-text-muted': '#a1a1aa',
+    '--ui-text-disabled': '#71717a',
+    '--ui-border-strong': '#a1a1aa',
+    '--ui-focus-ring': '#93c5fd',
+    '--ui-status-info-bg': '#172554',
+    '--ui-status-info-fg': '#bfdbfe',
+    '--ui-status-execution-bg': '#451a03',
+    '--ui-status-execution-fg': '#fde68a',
+    '--ui-status-success-bg': '#064e3b',
+    '--ui-status-success-fg': '#a7f3d0',
+    '--ui-status-warning-bg': '#78350f',
+    '--ui-status-warning-fg': '#fde68a',
+    '--ui-status-danger-bg': '#7f1d1d',
+    '--ui-status-danger-fg': '#fecaca',
   },
   light: {
     '--background': '#ffffff',
@@ -125,6 +142,23 @@ export const BASE_THEME_PALETTES: Record<ThemeScheme, Record<string, string>> = 
     '--text-body': '#18181b',
     '--text-subtle': '#3f3f46',
     '--text-faint': '#71717a',
+    '--ui-surface-base': '#ffffff',
+    '--ui-text-primary': '#18181b',
+    '--ui-text-secondary': '#3f3f46',
+    '--ui-text-muted': '#52525b',
+    '--ui-text-disabled': '#71717a',
+    '--ui-border-strong': '#71717a',
+    '--ui-focus-ring': '#1d4ed8',
+    '--ui-status-info-bg': '#eff6ff',
+    '--ui-status-info-fg': '#1d4ed8',
+    '--ui-status-execution-bg': '#fff7ed',
+    '--ui-status-execution-fg': '#9a3412',
+    '--ui-status-success-bg': '#f0fdf4',
+    '--ui-status-success-fg': '#166534',
+    '--ui-status-warning-bg': '#fffbeb',
+    '--ui-status-warning-fg': '#92400e',
+    '--ui-status-danger-bg': '#fef2f2',
+    '--ui-status-danger-fg': '#b91c1c',
   },
 };
 
@@ -137,12 +171,91 @@ function parseHex(value: string): [number, number, number] {
   ];
 }
 
-// Picks black or white text that stays readable on the given background color.
-export function readableOn(color: string): string {
+function relativeLuminance(color: string): number {
   const [red, green, blue] = parseHex(color);
-  // WCAG relative luminance approximation.
-  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-  return luminance > 140 ? '#09090b' : '#fafafa';
+  const linearize = (channel: number): number => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return linearize(red) * 0.2126 + linearize(green) * 0.7152 + linearize(blue) * 0.0722;
+}
+
+export function contrastRatio(foreground: string, background: string): number {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  return (
+    (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+    (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+  );
+}
+
+// Picks the black or white text color with the stronger contrast on a background.
+export function readableOn(color: string): string {
+  const darkText = '#09090b';
+  const lightText = '#fafafa';
+  return contrastRatio(darkText, color) >= contrastRatio(lightText, color) ? darkText : lightText;
+}
+
+export type CustomThemeContrastPair =
+  'background-foreground' | 'accent-foreground' | 'accent-background';
+
+export interface CustomThemeContrastIssue {
+  pair: CustomThemeContrastPair;
+  foreground: string;
+  background: string;
+  minimum: number;
+  ratio: number;
+}
+
+// Core custom colors are saved as entered, but their combinations are checked
+// before they are used for UI text, controls, and focus indicators.
+export function getCustomThemeContrastIssues(
+  customTheme: Pick<CustomThemePalette, 'background' | 'foreground' | 'accent'>,
+): CustomThemeContrastIssue[] {
+  const pairs: Array<{
+    pair: CustomThemeContrastPair;
+    foreground: string;
+    background: string;
+    minimum: number;
+  }> = [
+    {
+      pair: 'background-foreground',
+      foreground: customTheme.foreground,
+      background: customTheme.background,
+      minimum: 4.5,
+    },
+    {
+      pair: 'accent-foreground',
+      foreground: customTheme.foreground,
+      background: customTheme.accent,
+      minimum: 3,
+    },
+    {
+      pair: 'accent-background',
+      foreground: customTheme.accent,
+      background: customTheme.background,
+      minimum: 3,
+    },
+  ];
+  return pairs
+    .map((pair) => ({ ...pair, ratio: contrastRatio(pair.foreground, pair.background) }))
+    .filter((pair) => pair.ratio < pair.minimum);
+}
+
+function readableTextColor(preferred: string, background: string): string {
+  return contrastRatio(preferred, background) >= 4.5 ? preferred : readableOn(background);
+}
+
+function readableControlColor(preferred: string, background: string, fallback: string): string {
+  if (contrastRatio(preferred, background) >= 3) return preferred;
+  if (contrastRatio(fallback, background) >= 3) return fallback;
+  return readableOn(background);
+}
+
+function paletteValue(palette: Record<string, string>, name: string): string {
+  const value = palette[name];
+  if (value === undefined) throw new Error(`Missing theme palette value: ${name}`);
+  return value;
 }
 
 export function resolveThemeCssVariables(state: ThemeState): Record<string, string> {
@@ -160,6 +273,24 @@ export function resolveThemeCssVariables(state: ThemeState): Record<string, stri
     variables['--primary'] = accent;
     variables['--ring'] = accent;
     variables['--primary-foreground'] = readableOn(accent);
+    variables['--ui-surface-base'] = background;
+    variables['--ui-text-primary'] = readableTextColor(foreground, background);
+    variables['--ui-text-secondary'] = readableTextColor(foreground, background);
+    variables['--ui-text-muted'] = readableTextColor(
+      paletteValue(BASE_THEME_PALETTES[state.scheme], '--ui-text-muted'),
+      background,
+    );
+    variables['--ui-text-disabled'] = readableTextColor(
+      paletteValue(BASE_THEME_PALETTES[state.scheme], '--ui-text-disabled'),
+      background,
+    );
+    const safeControlColor = readableControlColor(
+      accent,
+      background,
+      paletteValue(BASE_THEME_PALETTES[state.scheme], '--ui-focus-ring'),
+    );
+    variables['--ui-border-strong'] = safeControlColor;
+    variables['--ui-focus-ring'] = safeControlColor;
   }
   return variables;
 }

@@ -160,3 +160,22 @@ test('switches theme mode and custom terminal colors from settings', async ({ pa
   await workspace.getByRole('button', { name: '返回工作区' }).click();
   await expect(page.locator('.prototype-shell')).toBeVisible();
 });
+
+test('keeps settings controls within a narrow light-scheme viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 420, height: 820 });
+  await page.goto('/?sessions=1');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const workspace = page.getByTestId('settings-workspace');
+  await workspace.getByRole('button', { name: /外观/ }).click();
+  const themeSection = workspace.getByTestId('theme-settings-section');
+  await themeSection.getByText('浅色', { exact: true }).click();
+
+  await expect(workspace).toBeVisible();
+  await expect(themeSection).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(420);
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollHeight))
+    .toBeLessThanOrEqual(820);
+});

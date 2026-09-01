@@ -6,6 +6,49 @@ import { createMockDesktopApi } from '../mock-api.js';
 import { ThemeSettingsView } from './theme-settings-view.js';
 
 describe('ThemeSettingsView', () => {
+  it('warns when custom core colors cannot provide readable UI text', () => {
+    const markup = renderToStaticMarkup(
+      <ThemeSettingsView
+        busy={false}
+        onSetCustomTheme={vi.fn()}
+        onSetMode={vi.fn()}
+        scheme="light"
+        settings={{
+          themeMode: 'light',
+          customTheme: {
+            enabled: true,
+            background: '#ffffff',
+            foreground: '#ffffff',
+            accent: '#09090b',
+          },
+        }}
+      />,
+    );
+    expect(markup).toContain('自定义配色对比度不足');
+    expect(markup).toContain('当前界面将使用安全文字色');
+  });
+
+  it('does not warn for a readable custom core palette', () => {
+    const markup = renderToStaticMarkup(
+      <ThemeSettingsView
+        busy={false}
+        onSetCustomTheme={vi.fn()}
+        onSetMode={vi.fn()}
+        scheme="dark"
+        settings={{
+          themeMode: 'dark',
+          customTheme: {
+            enabled: true,
+            background: '#101418',
+            foreground: '#e8eef2',
+            accent: '#3b82f6',
+          },
+        }}
+      />,
+    );
+    expect(markup).not.toContain('自定义配色对比度不足');
+  });
+
   it('renders the three theme modes and the custom palette editor', () => {
     const markup = renderToStaticMarkup(
       <ThemeSettingsView

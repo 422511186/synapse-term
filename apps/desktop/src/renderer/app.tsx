@@ -17,6 +17,7 @@ import { ConfirmDialog } from './feedback/index.js';
 import { errorMessageZh } from './i18n/zh-cn.js';
 import { createMockDesktopApi } from './mock-api.js';
 import { ApprovalCard } from './mcp/approval-card.js';
+import { ExternalExecutionStatus } from './mcp/external-execution-status.js';
 import { ShareDialog } from './mcp/share-dialog.js';
 import { buildSessionLaunch } from './session-launch.js';
 import { chooseInitialSessionId } from './session-selection.js';
@@ -180,6 +181,8 @@ export function App(): JSX.Element {
   }, [view]);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+  const activeExecution =
+    activeSession === undefined ? undefined : executions.get(activeSession.id);
 
   useEffect(
     () =>
@@ -410,7 +413,11 @@ export function App(): JSX.Element {
                           <span className="session-tab-type">{session.terminalType}</span>
                         </span>
                         {executions.has(session.id) && (
-                          <Radio aria-label="外部执行中" className="text-amber-300" size={12} />
+                          <Radio
+                            aria-label="外部执行中"
+                            className="session-execution-indicator"
+                            size={12}
+                          />
                         )}
                       </button>
                       <button
@@ -565,48 +572,40 @@ export function App(): JSX.Element {
                 </div>
               ) : (
                 <>
-                  {activeSession !== undefined && executions.has(activeSession.id) && (
-                    <div
-                      className="external-execution-banner pointer-events-none absolute left-0 right-0 top-0 z-20 px-4 py-2 text-xs"
-                      data-testid="external-execution-banner"
-                    >
-                      <Radio aria-hidden="true" size={13} />
-                      <span>
-                        外部执行中：{executions.get(activeSession.id)?.command} ·{' '}
-                        {executions.get(activeSession.id)?.source}
-                      </span>
-                    </div>
+                  {activeExecution !== undefined && (
+                    <ExternalExecutionStatus execution={activeExecution} />
                   )}
-                  {sessions.map((session) => (
-                    <div
-                      key={session.id}
-                      className="absolute inset-0"
-                      style={{
-                        visibility: session.id === activeSession?.id ? 'visible' : 'hidden',
-                      }}
-                    >
-                      <TerminalView
-                        api={api}
-                        initialEvents={
-                          outputHistoryRef.current.get(session.id) ?? EMPTY_OUTPUT_EVENTS
-                        }
-                        session={session}
-                        themeState={themeState ?? DEFAULT_THEME_STATE}
-                      />
-                    </div>
-                  ))}
-                  <div className="absolute right-4 top-4 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
-                    <div className="flex items-center overflow-hidden rounded-lg border border-border/80 bg-popover px-2.5 py-1.5 text-muted-foreground shadow-2xl backdrop-blur-md transition-colors focus-within:border-primary/50">
-                      <Search size={14} className="mr-2 text-muted-foreground/70" />
-                      <input
-                        aria-label="搜索终端输出"
-                        className="w-40 bg-transparent text-[13px] text-foreground outline-none transition-all duration-300 placeholder:text-muted-foreground focus:w-56"
-                        onChange={(event) => dispatchSearch(event.target.value)}
-                        placeholder="搜索终端输出 (Ctrl+F)"
-                        ref={terminalSearchInputRef}
-                        type="text"
-                        value={terminalSearch}
-                      />
+                  <div className="prototype-terminal-content">
+                    {sessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className="absolute inset-0"
+                        style={{
+                          visibility: session.id === activeSession?.id ? 'visible' : 'hidden',
+                        }}
+                      >
+                        <TerminalView
+                          api={api}
+                          initialEvents={
+                            outputHistoryRef.current.get(session.id) ?? EMPTY_OUTPUT_EVENTS
+                          }
+                          session={session}
+                          themeState={themeState ?? DEFAULT_THEME_STATE}
+                        />
+                      </div>
+                    ))}
+                    <div className="absolute right-4 top-4 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+                      <div className="terminal-search-control">
+                        <Search aria-hidden="true" size={14} />
+                        <input
+                          aria-label="搜索终端输出"
+                          onChange={(event) => dispatchSearch(event.target.value)}
+                          placeholder="搜索终端输出 (Ctrl+F)"
+                          ref={terminalSearchInputRef}
+                          type="text"
+                          value={terminalSearch}
+                        />
+                      </div>
                     </div>
                   </div>
                 </>

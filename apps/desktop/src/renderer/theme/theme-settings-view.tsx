@@ -1,4 +1,4 @@
-import { Check, Palette, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Check, Palette, RotateCcw } from 'lucide-react';
 import type { JSX } from 'react';
 
 import {
@@ -10,6 +10,7 @@ import {
 import {
   applyTerminalTextEdit,
   ANSI_TEXT_FIELDS,
+  getCustomThemeContrastIssues,
   SCHEME_ANSI_PALETTES,
   setCustomThemeEnabled,
 } from './theme-palette.js';
@@ -69,6 +70,12 @@ const ANSI_SLOTS: Record<keyof TerminalTextPalette, number> = {
   brightWhite: 15,
 };
 
+const CONTRAST_ISSUE_LABELS = {
+  'background-foreground': '背景色与前景色',
+  'accent-foreground': '强调色与前景色',
+  'accent-background': '强调色与背景色',
+} as const;
+
 export interface ThemeSettingsViewProps {
   busy: boolean;
   scheme: 'light' | 'dark';
@@ -103,6 +110,9 @@ export function ThemeSettingsView({
 
   const terminalText = settings.customTheme.terminalText;
   const canEdit = !busy && settings.customTheme.enabled;
+  const contrastIssues = settings.customTheme.enabled
+    ? getCustomThemeContrastIssues(settings.customTheme)
+    : [];
 
   return (
     <section
@@ -192,6 +202,20 @@ export function ThemeSettingsView({
             </label>
           ))}
         </div>
+
+        {contrastIssues.length > 0 && (
+          <div aria-live="polite" className="theme-contrast-warning" role="alert">
+            <AlertTriangle aria-hidden="true" size={16} />
+            <div>
+              <strong>自定义配色对比度不足</strong>
+              <p>
+                当前界面将使用安全文字色。以下组合需要调整：{' '}
+                {contrastIssues.map((issue) => CONTRAST_ISSUE_LABELS[issue.pair]).join('、')}。
+                已保存的合法颜色值仍会保留。
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="theme-terminal-heading">
           <div>

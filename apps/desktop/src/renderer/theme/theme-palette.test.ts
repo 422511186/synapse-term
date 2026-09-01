@@ -7,6 +7,7 @@ import {
   SCHEME_ANSI_PALETTES,
   applyThemeToDocument,
   buildXtermTheme,
+  getCustomThemeContrastIssues,
   readableOn,
   resolveTerminalTextPalette,
   resolveThemeCssVariables,
@@ -26,7 +27,80 @@ const lightState: ThemeState = {
   customTheme: { enabled: false, background: '#ffffff', foreground: '#09090b', accent: '#09090b' },
 };
 
+const semanticTextPairs = [
+  ['--ui-text-primary', '--ui-surface-base'],
+  ['--ui-text-secondary', '--ui-surface-base'],
+  ['--ui-status-info-fg', '--ui-status-info-bg'],
+  ['--ui-status-execution-fg', '--ui-status-execution-bg'],
+  ['--ui-status-success-fg', '--ui-status-success-bg'],
+  ['--ui-status-warning-fg', '--ui-status-warning-bg'],
+  ['--ui-status-danger-fg', '--ui-status-danger-bg'],
+] as const;
+
+const semanticControlPairs = [
+  ['--ui-border-strong', '--ui-surface-base'],
+  ['--ui-focus-ring', '--ui-surface-base'],
+] as const;
+
+function contrastRatioForTest(foreground: string, background: string): number {
+  const luminance = (color: string): number => {
+    const normalized = color.replace(/^#/, '');
+    const channels = [0, 1, 2].map((index) => {
+      const channel = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16) / 255;
+      return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const [red = 0, green = 0, blue = 0] = channels;
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  };
+  const foregroundLuminance = luminance(foreground);
+  const backgroundLuminance = luminance(background);
+  return (
+    (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+    (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+  );
+}
+
+function paletteValue(palette: Record<string, string>, name: string): string {
+  const value = palette[name];
+  if (value === undefined) throw new Error(`Missing theme palette value: ${name}`);
+  return value;
+}
+
 describe('theme palette', () => {
+  it('defines readable semantic text and control pairs for both schemes', () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      const palette = BASE_THEME_PALETTES[scheme];
+      for (const [foreground, background] of semanticTextPairs) {
+        expect(paletteValue(palette, foreground), `${scheme} ${foreground}`).toMatch(
+          /^#[0-9a-f]{6}$/i,
+        );
+        expect(paletteValue(palette, background), `${scheme} ${background}`).toMatch(
+          /^#[0-9a-f]{6}$/i,
+        );
+        expect(
+          contrastRatioForTest(
+            paletteValue(palette, foreground),
+            paletteValue(palette, background),
+          ),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const [foreground, background] of semanticControlPairs) {
+        expect(paletteValue(palette, foreground), `${scheme} ${foreground}`).toMatch(
+          /^#[0-9a-f]{6}$/i,
+        );
+        expect(paletteValue(palette, background), `${scheme} ${background}`).toMatch(
+          /^#[0-9a-f]{6}$/i,
+        );
+        expect(
+          contrastRatioForTest(
+            paletteValue(palette, foreground),
+            paletteValue(palette, background),
+          ),
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
   it('exposes complete dark and light base palettes with distinct surface colors', () => {
     expect(BASE_THEME_PALETTES.dark['--background']).toBe('#09090b');
     expect(BASE_THEME_PALETTES.dark['--foreground']).toBe('#fafafa');
@@ -62,8 +136,39 @@ describe('theme palette', () => {
     expect(variables['--terminal-fg']).toBe('#e8eef2');
     expect(variables['--primary']).toBe('#3b82f6');
     expect(variables['--ring']).toBe('#3b82f6');
-    // Dark accent gets light readable text.
-    expect(variables['--primary-foreground']).toBe('#fafafa');
+    // The stronger WCAG contrast for this blue accent is the dark foreground.
+    expect(variables['--primary-foreground']).toBe('#09090b');
+  });
+
+  it('detects low-contrast custom core colors and keeps the stored values available', () => {
+    const customTheme: CustomThemePalette = {
+      enabled: true,
+      background: '#ffffff',
+      foreground: '#ffffff',
+      accent: '#09090b',
+    };
+    const issues = getCustomThemeContrastIssues(customTheme);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ pair: 'background-foreground', minimum: 4.5 }),
+      ]),
+    );
+    const variables = resolveThemeCssVariables({ ...lightState, customTheme });
+    expect(variables['--foreground']).toBe('#ffffff');
+    expect(variables['--ui-text-primary']).toBe(readableOn(customTheme.background));
+  });
+
+  it('uses readable custom foreground and accent values when their pairs pass contrast checks', () => {
+    const customTheme: CustomThemePalette = {
+      enabled: true,
+      background: '#101418',
+      foreground: '#e8eef2',
+      accent: '#3b82f6',
+    };
+    expect(getCustomThemeContrastIssues(customTheme)).toHaveLength(0);
+    const variables = resolveThemeCssVariables({ ...lightState, customTheme });
+    expect(variables['--ui-text-primary']).toBe(customTheme.foreground);
+    expect(variables['--ui-focus-ring']).toBe(customTheme.accent);
   });
 
   it('picks a readable foreground color from the accent luminance', () => {

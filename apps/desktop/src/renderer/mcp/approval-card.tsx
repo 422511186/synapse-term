@@ -27,6 +27,7 @@ function formatReason(reason: string): string {
     ['empty command', '命令为空'],
     ['redirection can change filesystem state', '重定向可能修改文件系统'],
     ['all commands match read-only rules', '所有命令均匹配只读规则'],
+    ['irreversible', '命令具有不可逆的破坏性影响'],
   ]);
   return explanations.get(reason) ?? reason;
 }
@@ -42,31 +43,73 @@ export function ApprovalCard({
     <div aria-label="MCP 审批" aria-modal="true" className="approval-backdrop" role="dialog">
       <section aria-labelledby="approval-title" className="approval-card">
         <div className="approval-header">
-          <ShieldAlert aria-hidden="true" size={18} />
-          <h2 id="approval-title">外部工具请求审批</h2>
+          <div className="approval-header-icon">
+            <ShieldAlert aria-hidden="true" size={20} />
+          </div>
+          <div>
+            <p className="approval-eyebrow">审批卡片 / MANUAL DECISION</p>
+            <h2 id="approval-title">需要人工裁决</h2>
+            <p className="approval-header-note">外部客户端请求执行一条需要你确认的命令。</p>
+          </div>
         </div>
-        <dl>
-          <dt>目标会话</dt>
-          <dd>{request.sessionId}</dd>
-          <dt>风险分类</dt>
-          <dd>
-            <span className={`risk-badge is-${request.risk}`}>{RISK_LABELS[request.risk]}</span>
-          </dd>
-          <dt>命令全文</dt>
-          <dd>
-            <pre>{request.command}</pre>
-          </dd>
-          <dt>风险理由</dt>
-          <dd>{request.reasons.map(formatReason).join('；') || '策略引擎未提供理由'}</dd>
-        </dl>
+        <div className="approval-content">
+          <dl className="approval-details">
+            <div className="approval-detail">
+              <dt>目标 Session</dt>
+              <dd>
+                <code>{request.sessionId}</code>
+              </dd>
+            </div>
+            <div className="approval-detail">
+              <dt>风险分类</dt>
+              <dd>
+                <span className={`risk-badge is-${request.risk}`}>{RISK_LABELS[request.risk]}</span>
+              </dd>
+            </div>
+          </dl>
+
+          <section className="approval-section" aria-labelledby="approval-command-title">
+            <div className="approval-section-heading">
+              <div>
+                <h3 id="approval-command-title">命令全文</h3>
+                <p>请确认命令目标和参数后再选择裁决。</p>
+              </div>
+              <span className="approval-section-hint">可滚动查看</span>
+            </div>
+            <pre aria-label="命令全文" className="approval-command-scroll" title={request.command}>
+              {request.command}
+            </pre>
+          </section>
+
+          <section className="approval-section approval-reason-section">
+            <h3>风险理由</h3>
+            <p className="approval-reason">
+              {request.reasons.map(formatReason).join('；') || '策略引擎未提供理由'}
+            </p>
+          </section>
+        </div>
         <div className="approval-actions">
-          <button className="primary" onClick={() => onDecide('allow_once')} type="button">
+          <button
+            className="primary"
+            data-decision="allow_once"
+            onClick={() => onDecide('allow_once')}
+            type="button"
+          >
             允许一次
           </button>
-          <button onClick={() => onDecide('allow_session')} type="button">
+          <button
+            data-decision="allow_session"
+            onClick={() => onDecide('allow_session')}
+            type="button"
+          >
             本会话内放行该命令
           </button>
-          <button className="danger" onClick={() => onDecide('denied')} type="button">
+          <button
+            className="danger"
+            data-decision="denied"
+            onClick={() => onDecide('denied')}
+            type="button"
+          >
             拒绝
           </button>
         </div>

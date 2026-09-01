@@ -206,8 +206,8 @@ button:not(:disabled) {
 }
 
 .session-tab-close:hover {
-  color: #f87171;
-  background: rgb(127 29 29 / 30%);
+  color: var(--ui-status-danger-fg);
+  background: var(--ui-status-danger-bg);
 }
 
 .session-tab-tools {
@@ -253,25 +253,25 @@ button:not(:disabled) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #71717a;
-  box-shadow: 0 0 0 2px rgb(255 255 255 / 5%);
+  background: var(--ui-text-disabled);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-surface-base) 95%, transparent);
 }
 
 .session-status-dot.is-ready {
-  background: #34d399;
+  background: var(--ui-status-success-fg);
 }
 
 .session-status-dot.is-busy {
-  background: #fbbf24;
-  box-shadow: 0 0 8px rgb(251 191 36 / 42%);
+  background: var(--ui-status-execution-fg);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--ui-status-execution-fg) 42%, transparent);
 }
 
 .session-status-dot.is-error {
-  background: #f87171;
+  background: var(--ui-status-danger-fg);
 }
 
 .session-status-dot.is-muted {
-  background: #71717a;
+  background: var(--ui-text-disabled);
 }
 
 .session-context-menu {
@@ -311,10 +311,10 @@ button:not(:disabled) {
   top: calc(100% + 5px);
   right: 0;
   padding: 5px 8px;
-  border: 1px solid rgb(52 211 153 / 35%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-success-fg) 68%, transparent);
   border-radius: 4px;
-  color: #a7f3d0;
-  background: #10231f;
+  color: var(--ui-status-success-fg);
+  background: var(--ui-status-success-bg);
   box-shadow: 0 8px 18px rgb(0 0 0 / 35%);
   font-size: 10px;
   white-space: nowrap;
@@ -525,41 +525,84 @@ button:not(:disabled) {
 
 .approval-card {
   display: flex;
-  width: min(580px, 100%);
-  max-height: min(760px, 100%);
+  width: min(640px, 100%);
+  max-height: min(780px, 100%);
   flex-direction: column;
-  overflow: auto;
-  border: 1px solid rgb(251 191 36 / 34%);
-  border-radius: 9px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 14px;
   background: var(--surface-dialog);
   box-shadow: 0 26px 80px rgb(0 0 0 / 58%);
 }
 
 .approval-header {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 18px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 22px;
   border-bottom: 1px solid var(--surface-active-border);
-  color: #fbbf24;
+  background: color-mix(in oklab, var(--ui-status-warning-bg) 42%, var(--surface-dialog));
+}
+
+.approval-header-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--ui-status-warning-fg) 62%, transparent);
+  border-radius: 10px;
+  color: var(--ui-status-warning-fg);
+  background: var(--ui-status-warning-bg);
+}
+
+.approval-eyebrow {
+  margin: 0;
+  color: var(--ui-status-warning-fg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .approval-header h2 {
-  margin: 0;
-  color: var(--foreground);
-  font-size: 15px;
-  font-weight: 650;
+  margin: 4px 0 0;
+  color: var(--ui-text-primary);
+  font-size: 17px;
+  font-weight: 700;
 }
 
-.approval-card dl {
+.approval-header-note {
+  margin: 5px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.approval-content {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.approval-details {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   margin: 0;
-  padding: 18px;
+  padding: 18px 22px 0;
+}
+
+.approval-detail {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--surface-active-border);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ui-surface-base) 54%, var(--surface-dialog));
 }
 
 .approval-card dt {
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   text-transform: uppercase;
@@ -567,19 +610,58 @@ button:not(:disabled) {
 
 .approval-card dd {
   margin: 6px 0 0;
-  color: var(--text-body);
+  color: var(--ui-text-primary);
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
-.approval-card pre {
+.approval-card dd code {
+  color: inherit;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.approval-section {
+  margin: 18px 22px 0;
+}
+
+.approval-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.approval-section h3 {
   margin: 0;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: var(--background);
-  color: var(--foreground);
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.approval-section-heading p {
+  margin: 4px 0 0;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.approval-section-hint {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+
+.approval-command-scroll {
+  max-height: min(250px, 30vh);
+  margin: 0;
+  padding: 13px;
+  overflow: auto;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 9px;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-base);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.6;
@@ -587,54 +669,87 @@ button:not(:disabled) {
   word-break: break-word;
 }
 
+.approval-reason-section {
+  margin-bottom: 20px;
+  padding: 12px 13px;
+  border-left: 3px solid var(--ui-status-warning-fg);
+  border-radius: 0 9px 9px 0;
+  background: color-mix(in oklab, var(--ui-status-warning-bg) 48%, var(--surface-dialog));
+}
+
+.approval-reason {
+  margin: 6px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .risk-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+  padding: 4px 8px;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 999px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
+  font-weight: 650;
 }
 
 .risk-badge.is-unknown {
-  border-color: rgb(251 191 36 / 48%);
-  color: #fde68a;
+  border-color: var(--ui-status-warning-fg);
+  color: var(--ui-status-warning-fg);
+  background: var(--ui-status-warning-bg);
+}
+
+.risk-badge.is-mutating {
+  border-color: var(--ui-status-info-fg);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
 }
 
 .risk-badge.is-privileged {
-  border-color: rgb(251 146 60 / 52%);
-  color: #fdba74;
+  border-color: var(--ui-status-execution-fg);
+  color: var(--ui-status-execution-fg);
+  background: var(--ui-status-execution-bg);
 }
 
 .risk-badge.is-destructive {
-  border-color: rgb(248 113 113 / 52%);
-  color: #fecaca;
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: var(--ui-status-danger-bg);
 }
 
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 18px 18px;
+  padding: 16px 22px 22px;
+  border-top: 1px solid var(--surface-active-border);
+  background: color-mix(in oklab, var(--ui-surface-base) 34%, var(--surface-dialog));
 }
 
 .approval-actions button {
   flex: 1 1 150px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-input);
-  border-radius: 5px;
-  color: var(--text-subtle);
-  background: transparent;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 8px;
+  color: var(--ui-text-secondary);
+  background: var(--surface-button);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .approval-actions button:hover:not(:disabled),
 .approval-actions button:focus-visible:not(:disabled) {
-  outline: 0;
-  border-color: var(--muted-foreground);
-  background: var(--secondary);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
+  background: var(--surface-hover-strong);
+}
+
+.approval-actions button:focus-visible:not(:disabled) {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 2px;
 }
 
 .approval-actions button.primary {
@@ -645,20 +760,54 @@ button:not(:disabled) {
 
 .approval-actions button.primary:hover:not(:disabled),
 .approval-actions button.primary:focus-visible:not(:disabled) {
-  border-color: var(--secondary);
-  background: var(--secondary);
+  border-color: var(--ui-focus-ring);
+  color: var(--primary-foreground);
+  background: color-mix(in oklab, var(--primary) 82%, var(--ui-focus-ring));
 }
 
 .approval-actions button.danger {
-  border-color: rgb(248 113 113 / 52%);
-  color: #fecaca;
-  background: rgb(127 29 29 / 22%);
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: var(--ui-status-danger-bg);
 }
 
 .approval-actions button.danger:hover:not(:disabled),
 .approval-actions button.danger:focus-visible:not(:disabled) {
-  border-color: rgb(252 165 165 / 72%);
-  background: rgb(127 29 29 / 42%);
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: color-mix(in oklab, var(--ui-status-danger-bg) 72%, var(--ui-status-danger-fg));
+}
+
+@media (max-width: 560px) {
+  .approval-backdrop {
+    padding: 12px;
+  }
+
+  .approval-header,
+  .approval-details,
+  .approval-actions {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .approval-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .approval-section {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .approval-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .approval-actions button {
+    flex-basis: 100%;
+  }
 }
 
 .mcp-settings {
@@ -676,7 +825,7 @@ button:not(:disabled) {
 
 .settings-nav-eyebrow {
   margin: 0 0 2px;
-  color: #a1a1aa;
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   text-transform: uppercase;
@@ -687,7 +836,7 @@ button:not(:disabled) {
   padding: 9px 11px;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: #a1a1aa;
+  color: var(--ui-text-secondary);
   background: transparent;
   font-size: 13px;
   text-align: left;
@@ -695,8 +844,8 @@ button:not(:disabled) {
 
 .settings-nav-item[aria-current='true'] {
   border-color: var(--surface-active-border);
-  color: var(--foreground);
-  background: var(--popover);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-base);
 }
 
 .mcp-section {
@@ -707,14 +856,14 @@ button:not(:disabled) {
 
 .mcp-section-heading h2 {
   margin: 0;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 18px;
   font-weight: 650;
 }
 
 .mcp-section-heading p {
   margin: 6px 0 0;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
@@ -727,7 +876,7 @@ button:not(:disabled) {
 
 .settings-card > h3 {
   margin: 0 0 12px;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 14px;
   font-weight: 650;
 }
@@ -736,7 +885,7 @@ button:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--text-body);
+  color: var(--ui-text-secondary);
   font-size: 13px;
 }
 
@@ -750,7 +899,7 @@ button:not(:disabled) {
 
 .settings-status {
   margin: 10px 0 0;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 12px;
 }
 
@@ -771,15 +920,15 @@ button:not(:disabled) {
   border: 1px solid var(--border-input);
   border-radius: 5px;
   outline: 0;
-  color: var(--text-body);
+  color: var(--ui-text-primary);
   background: var(--background);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
 }
 
 .settings-input:focus {
-  border-color: var(--muted-foreground);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--muted-foreground) 16%, transparent);
+  border-color: var(--ui-focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-focus-ring) 28%, transparent);
 }
 
 .settings-button {
@@ -790,8 +939,8 @@ button:not(:disabled) {
   padding: 8px 10px;
   border: 1px solid var(--border-input);
   border-radius: 5px;
-  color: var(--text-subtle);
-  background: var(--popover);
+  color: var(--ui-text-secondary);
+  background: var(--surface-button);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -799,8 +948,9 @@ button:not(:disabled) {
 .settings-button:hover:not(:disabled),
 .settings-button:focus-visible:not(:disabled) {
   outline: 0;
-  border-color: var(--muted-foreground);
-  background: var(--secondary);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
+  background: var(--surface-hover-strong);
 }
 
 .settings-button:disabled {
@@ -809,15 +959,15 @@ button:not(:disabled) {
 }
 
 .settings-button.danger {
-  border-color: rgb(248 113 113 / 48%);
-  color: #fecaca;
-  background: rgb(127 29 29 / 18%);
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: var(--ui-status-danger-bg);
 }
 
 .settings-button.danger:hover:not(:disabled),
 .settings-button.danger:focus-visible:not(:disabled) {
-  border-color: rgb(252 165 165 / 68%);
-  background: rgb(127 29 29 / 36%);
+  border-color: var(--ui-status-danger-fg);
+  background: color-mix(in oklab, var(--ui-status-danger-bg) 72%, var(--ui-status-danger-fg));
 }
 
 .settings-mode-list {
@@ -834,7 +984,7 @@ button:not(:disabled) {
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 5px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 13px;
 }
 
@@ -849,10 +999,10 @@ button:not(:disabled) {
   gap: 8px;
   margin: 12px 0 0;
   padding: 10px;
-  border: 1px solid rgb(251 191 36 / 38%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-warning-fg) 68%, transparent);
   border-radius: 5px;
-  color: #fde68a;
-  background: rgb(120 53 15 / 22%);
+  color: var(--ui-status-warning-fg);
+  background: var(--ui-status-warning-bg);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -868,7 +1018,7 @@ button:not(:disabled) {
   padding: 8px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 5px;
-  color: var(--text-body);
+  color: var(--ui-text-primary);
   background: var(--background);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
@@ -896,7 +1046,7 @@ button:not(:disabled) {
 
 .shared-title {
   overflow: hidden;
-  color: var(--text-body);
+  color: var(--ui-text-primary);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -904,41 +1054,146 @@ button:not(:disabled) {
 
 .shared-time {
   grid-column: 1 / -1;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
 }
 
-.external-execution-banner {
+.prototype-terminal-content {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
-  padding-right: 300px;
-  border-bottom: 1px solid rgb(251 191 36 / 40%);
-  color: #fde68a;
-  background: rgb(120 53 15 / 60%);
-  backdrop-filter: blur(2px);
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
-[data-theme='light'] .external-execution-banner {
-  border-bottom-color: rgb(180 83 9 / 25%);
-  color: #78350f;
-  background: rgb(251 191 36 / 22%);
+.external-execution-banner {
+  display: grid;
+  min-width: 0;
+  flex: 0 0 auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid color-mix(in oklab, var(--ui-status-execution-fg) 42%, transparent);
+  color: var(--ui-status-execution-fg);
+  background: var(--ui-status-execution-bg);
 }
 
-.external-execution-banner svg {
+.external-execution-status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.external-execution-status-label svg {
   flex: 0 0 auto;
 }
 
-.external-execution-banner span {
+.external-execution-command {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  color: inherit;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external-execution-source {
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  color: color-mix(in oklab, var(--ui-status-execution-fg) 82%, var(--ui-status-execution-bg));
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-execution-indicator {
+  flex: 0 0 auto;
+  color: var(--ui-status-execution-fg);
+}
+
+.terminal-search-control {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in oklab, var(--ui-border-strong) 72%, transparent);
+  border-radius: 8px;
+  color: var(--ui-text-muted);
+  background: var(--ui-surface-base);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(10px);
+  transition:
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.terminal-search-control:focus-within {
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-focus-ring) 28%, transparent);
+}
+
+.terminal-search-control input {
+  width: 10rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ui-text-primary);
+  background: transparent;
+  font-size: 13px;
+  transition: width 300ms ease;
+}
+
+.terminal-search-control input::placeholder {
+  color: var(--ui-text-muted);
+}
+
+.terminal-search-control input:focus {
+  width: 14rem;
 }
 
 @media (max-width: 760px) {
   .external-execution-banner {
-    padding-right: 16px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .external-execution-command {
+    overflow: hidden;
+    white-space: normal;
+  }
+
+  .external-execution-source {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .external-execution-banner {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .external-execution-source {
+    grid-column: auto;
+  }
+
+  .terminal-search-control input,
+  .terminal-search-control input:focus {
+    width: min(14rem, calc(100vw - 96px));
   }
 }
 
@@ -1245,9 +1500,14 @@ button:not(:disabled) {
 
 /* MCP settings workspace */
 .settings-workspace-shell {
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   background:
-    radial-gradient(circle at 82% -10%, rgb(37 99 235 / 16%), transparent 34%), var(--background);
+    radial-gradient(
+      circle at 82% -10%,
+      color-mix(in oklab, var(--ui-status-info-fg) 16%, transparent),
+      transparent 34%
+    ),
+    var(--background);
 }
 
 .settings-workspace-header {
@@ -1271,7 +1531,7 @@ button:not(:disabled) {
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 9px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   background: transparent;
   font-size: 12px;
   transition:
@@ -1282,9 +1542,8 @@ button:not(:disabled) {
 
 .settings-back-button:hover,
 .settings-back-button:focus-visible {
-  outline: 0;
-  border-color: var(--surface-active-border);
-  color: var(--foreground);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
   background: color-mix(in oklab, var(--secondary) 72%, transparent);
 }
 
@@ -1310,7 +1569,7 @@ button:not(:disabled) {
 }
 
 .settings-workspace-brand p {
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -1319,7 +1578,7 @@ button:not(:disabled) {
 
 .settings-workspace-brand h1 {
   margin-top: 3px;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 16px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -1330,7 +1589,7 @@ button:not(:disabled) {
   margin-left: auto;
   align-items: center;
   gap: 9px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -1340,8 +1599,8 @@ button:not(:disabled) {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #34d399;
-  box-shadow: 0 0 8px rgb(52 211 153 / 58%);
+  background: var(--ui-status-success-fg);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--ui-status-success-fg) 58%, transparent);
 }
 
 .settings-workspace-main {
@@ -1379,7 +1638,7 @@ button:not(:disabled) {
   padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 11px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -1391,32 +1650,33 @@ button:not(:disabled) {
 
 .settings-nav-item:hover {
   border-color: var(--surface-hover-border);
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   background: color-mix(in oklab, var(--secondary) 55%, transparent);
 }
 
 .settings-nav-item:focus-visible {
-  outline: 0;
-  border-color: var(--ring);
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 2px;
+  border-color: var(--ui-focus-ring);
 }
 
 .settings-nav-item.is-active {
   border-color: var(--surface-active-border);
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   background: linear-gradient(
     115deg,
-    color-mix(in oklab, var(--accent) 16%, transparent),
+    color-mix(in oklab, var(--ui-status-info-fg) 16%, transparent),
     transparent 70%
   );
 }
 
 .settings-nav-icon {
   flex: 0 0 auto;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
 }
 
 .settings-nav-item.is-active .settings-nav-icon {
-  color: var(--ring);
+  color: var(--ui-status-info-fg);
 }
 
 .settings-nav-copy {
@@ -1433,7 +1693,7 @@ button:not(:disabled) {
 }
 
 .settings-nav-description {
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 10px;
   line-height: 1.4;
 }
@@ -1450,15 +1710,15 @@ button:not(:disabled) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   font-size: 13px;
 }
 
 .settings-loading-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgb(161 161 170 / 24%);
-  border-top-color: #60a5fa;
+  border: 2px solid color-mix(in oklab, var(--ui-border-strong) 24%, transparent);
+  border-top-color: var(--ui-focus-ring);
   border-radius: 50%;
   animation: mcp-settings-spin 800ms linear infinite;
 }
@@ -1483,11 +1743,14 @@ button:not(:disabled) {
   gap: 24px;
   padding: 25px 28px;
   overflow: hidden;
-  border: 1px solid rgb(96 165 250 / 22%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 42%, var(--ui-surface-base));
   border-radius: 20px;
-  background:
-    linear-gradient(120deg, rgb(30 41 59 / 92%), rgb(15 23 42 / 82%) 62%, rgb(14 116 144 / 24%)),
-    #111827;
+  background: linear-gradient(
+    120deg,
+    color-mix(in oklab, var(--ui-status-info-bg) 76%, var(--ui-surface-base)),
+    var(--ui-surface-base) 62%,
+    color-mix(in oklab, var(--ui-status-info-fg) 14%, var(--ui-surface-base))
+  );
   box-shadow: 0 18px 60px rgb(0 0 0 / 25%);
 }
 
@@ -1497,11 +1760,11 @@ button:not(:disabled) {
   bottom: -100px;
   width: 260px;
   height: 260px;
-  border: 1px solid rgb(125 211 252 / 12%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 24%, transparent);
   border-radius: 50%;
   box-shadow:
-    0 0 0 24px rgb(125 211 252 / 3%),
-    0 0 0 48px rgb(125 211 252 / 2%);
+    0 0 0 24px color-mix(in oklab, var(--ui-status-info-fg) 6%, transparent),
+    0 0 0 48px color-mix(in oklab, var(--ui-status-info-fg) 4%, transparent);
   content: '';
   pointer-events: none;
 }
@@ -1521,16 +1784,16 @@ button:not(:disabled) {
   height: 48px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgb(125 211 252 / 32%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 64%, transparent);
   border-radius: 14px;
-  color: #7dd3fc;
-  background: rgb(14 116 144 / 22%);
-  box-shadow: inset 0 1px rgb(255 255 255 / 10%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
+  box-shadow: inset 0 1px color-mix(in oklab, var(--ui-text-primary) 10%, transparent);
 }
 
 .mcp-settings-eyebrow {
   margin: 0 0 6px;
-  color: #7dd3fc;
+  color: var(--ui-status-info-fg);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   font-weight: 700;
@@ -1539,7 +1802,7 @@ button:not(:disabled) {
 
 .mcp-settings-hero h2 {
   margin: 0;
-  color: #f8fafc;
+  color: var(--ui-text-primary);
   font-size: 24px;
   font-weight: 720;
   letter-spacing: -0.025em;
@@ -1547,7 +1810,7 @@ button:not(:disabled) {
 
 .mcp-settings-subtitle {
   margin: 7px 0 0;
-  color: #94a3b8;
+  color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
@@ -1559,18 +1822,18 @@ button:not(:disabled) {
   align-items: center;
   gap: 8px;
   padding: 8px 11px;
-  border: 1px solid rgb(148 163 184 / 20%);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 999px;
-  color: #cbd5e1;
-  background: rgb(15 23 42 / 56%);
+  color: var(--ui-text-secondary);
+  background: color-mix(in oklab, var(--ui-surface-base) 72%, transparent);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .mcp-runtime-pill.is-running {
-  border-color: rgb(52 211 153 / 30%);
-  color: #a7f3d0;
-  background: rgb(6 78 59 / 24%);
+  border-color: var(--ui-status-success-fg);
+  color: var(--ui-status-success-fg);
+  background: var(--ui-status-success-bg);
 }
 
 .mcp-runtime-dot,
@@ -1580,12 +1843,12 @@ button:not(:disabled) {
   height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #71717a;
+  background: var(--ui-text-disabled);
 }
 
 .mcp-runtime-pill.is-running .mcp-runtime-dot {
-  background: #34d399;
-  box-shadow: 0 0 9px rgb(52 211 153 / 72%);
+  background: var(--ui-status-success-fg);
+  box-shadow: 0 0 9px color-mix(in oklab, var(--ui-status-success-fg) 72%, transparent);
 }
 
 .mcp-settings-grid {
@@ -1615,9 +1878,13 @@ button:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px 28px;
-  border-color: rgb(52 211 153 / 22%);
+  border-color: color-mix(in oklab, var(--ui-status-success-fg) 44%, var(--ui-surface-base));
   background:
-    linear-gradient(115deg, rgb(6 78 59 / 18%), transparent 56%),
+    linear-gradient(
+      115deg,
+      color-mix(in oklab, var(--ui-status-success-bg) 70%, transparent),
+      transparent 56%
+    ),
     linear-gradient(
       145deg,
       color-mix(in oklab, var(--popover) 96%, transparent),
@@ -1631,7 +1898,7 @@ button:not(:disabled) {
 
 .general-settings-copy h2 {
   margin: 7px 0 0;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 15px;
   font-weight: 680;
 }
@@ -1639,7 +1906,7 @@ button:not(:disabled) {
 .general-settings-copy p,
 .general-settings-safety-note {
   margin: 6px 0 0;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   line-height: 1.6;
 }
@@ -1653,12 +1920,8 @@ button:not(:disabled) {
   margin-top: 0;
   padding-top: 12px;
   border-top: 1px solid var(--surface-hover-border);
-  color: #a7f3d0;
+  color: var(--ui-status-success-fg);
   font-size: 10px;
-}
-
-[data-theme='light'] .general-settings-safety-note {
-  color: #166534;
 }
 
 .mcp-settings-card-wide {
@@ -1680,7 +1943,7 @@ button:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #60a5fa;
+  color: var(--ui-status-info-fg);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   font-weight: 700;
@@ -1688,13 +1951,9 @@ button:not(:disabled) {
   text-transform: uppercase;
 }
 
-[data-theme='light'] .mcp-card-kicker {
-  color: #1d4ed8;
-}
-
 .mcp-card-heading h3 {
   margin: 7px 0 0;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 15px;
   font-weight: 680;
   letter-spacing: -0.01em;
@@ -1702,7 +1961,7 @@ button:not(:disabled) {
 
 .mcp-card-heading p {
   margin: 6px 0 0;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   line-height: 1.55;
 }
@@ -1713,7 +1972,7 @@ button:not(:disabled) {
   flex: 0 0 auto;
   align-items: center;
   gap: 9px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -1727,7 +1986,7 @@ button:not(:disabled) {
 }
 
 .mcp-switch-control:has(input:focus-visible) .mcp-switch-track {
-  outline: 2px solid rgb(96 165 250 / 72%);
+  outline: 2px solid var(--ui-focus-ring);
   outline-offset: 3px;
 }
 
@@ -1737,7 +1996,7 @@ button:not(:disabled) {
   height: 22px;
   align-items: center;
   padding: 3px;
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 999px;
   background: var(--secondary);
   transition:
@@ -1749,7 +2008,7 @@ button:not(:disabled) {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--muted-foreground);
+  background: var(--ui-text-muted);
   box-shadow: 0 1px 4px rgb(0 0 0 / 42%);
   transition:
     background 160ms ease,
@@ -1757,12 +2016,12 @@ button:not(:disabled) {
 }
 
 .mcp-switch-control input:checked + .mcp-switch-track {
-  border-color: rgb(96 165 250 / 62%);
-  background: #2563eb;
+  border-color: var(--ui-focus-ring);
+  background: var(--primary);
 }
 
 .mcp-switch-control input:checked + .mcp-switch-track .mcp-switch-thumb {
-  background: #ffffff;
+  background: var(--primary-foreground);
   transform: translateX(16px);
 }
 
@@ -1790,7 +2049,7 @@ button:not(:disabled) {
 .mcp-label-with-badge > label {
   display: block;
   margin-bottom: 8px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 650;
 }
@@ -1809,9 +2068,9 @@ button:not(:disabled) {
 .mcp-token-display code {
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 10px;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   background: var(--surface-input);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
@@ -1832,8 +2091,9 @@ button:not(:disabled) {
 
 .mcp-readonly-input:focus,
 .mcp-number-input:focus {
-  border-color: rgb(96 165 250 / 72%);
-  box-shadow: 0 0 0 3px rgb(59 130 246 / 14%);
+  border-color: var(--ui-focus-ring);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-focus-ring) 24%, transparent);
+  outline: 0;
 }
 
 .mcp-port-input-wrap {
@@ -1844,7 +2104,7 @@ button:not(:disabled) {
   position: absolute;
   top: 50%;
   right: 12px;
-  color: #71717a;
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   transform: translateY(-50%);
@@ -1852,7 +2112,7 @@ button:not(:disabled) {
 
 .mcp-field-help {
   margin: 7px 0 0;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -1864,9 +2124,9 @@ button:not(:disabled) {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 10px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   background: var(--surface-button);
   font-size: 11px;
   font-weight: 600;
@@ -1888,9 +2148,15 @@ button:not(:disabled) {
 .mcp-icon-button:hover,
 .mcp-icon-button:focus-visible {
   outline: 0;
-  border-color: rgb(96 165 250 / 66%);
-  color: var(--foreground);
-  background: var(--secondary);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
+  background: var(--surface-hover-strong);
+}
+
+.mcp-action-button:focus-visible,
+.mcp-icon-button:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 2px;
 }
 
 .mcp-action-button:active:not(:disabled),
@@ -1904,16 +2170,16 @@ button:not(:disabled) {
 }
 
 .mcp-action-button.is-danger {
-  border-color: rgb(248 113 113 / 32%);
-  color: #fca5a5;
-  background: rgb(127 29 29 / 18%);
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: var(--ui-status-danger-bg);
 }
 
 .mcp-action-button.is-danger:hover:not(:disabled),
 .mcp-action-button.is-danger:focus-visible:not(:disabled) {
-  border-color: rgb(248 113 113 / 60%);
-  color: #fecaca;
-  background: rgb(127 29 29 / 34%);
+  border-color: var(--ui-status-danger-fg);
+  color: var(--ui-status-danger-fg);
+  background: color-mix(in oklab, var(--ui-status-danger-bg) 72%, var(--ui-status-danger-fg));
 }
 
 .mcp-label-with-badge {
@@ -1928,10 +2194,10 @@ button:not(:disabled) {
 
 .mcp-inline-code {
   padding: 3px 6px;
-  border: 1px solid rgb(96 165 250 / 28%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 64%, transparent);
   border-radius: 5px;
-  color: #93c5fd;
-  background: rgb(30 64 175 / 16%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
 }
@@ -1958,9 +2224,9 @@ button:not(:disabled) {
   align-items: center;
   gap: 11px;
   padding: 12px;
-  border: 1px solid var(--surface-active-border);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 11px;
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   background: color-mix(in oklab, var(--background) 34%, transparent);
   cursor: pointer;
   transition:
@@ -1974,10 +2240,10 @@ button:not(:disabled) {
 }
 
 .mcp-mode-option.is-selected {
-  border-color: rgb(96 165 250 / 58%);
+  border-color: var(--ui-status-info-fg);
   background: linear-gradient(
     100deg,
-    rgb(30 64 175 / 22%),
+    color-mix(in oklab, var(--ui-status-info-bg) 84%, var(--ui-surface-base)),
     color-mix(in oklab, var(--background) 30%, transparent)
   );
 }
@@ -1990,7 +2256,7 @@ button:not(:disabled) {
 }
 
 .mcp-mode-option:has(input:focus-visible) {
-  outline: 2px solid rgb(96 165 250 / 72%);
+  outline: 2px solid var(--ui-focus-ring);
   outline-offset: 2px;
 }
 
@@ -2000,14 +2266,14 @@ button:not(:disabled) {
   height: 16px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid #71717a;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 50%;
 }
 
 .mcp-mode-option.is-selected .mcp-mode-radio {
-  border-color: #60a5fa;
+  border-color: var(--ui-status-info-fg);
   box-shadow: inset 0 0 0 4px var(--popover);
-  background: #60a5fa;
+  background: var(--ui-status-info-fg);
 }
 
 .mcp-mode-copy {
@@ -2017,14 +2283,14 @@ button:not(:disabled) {
 }
 
 .mcp-mode-title {
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 12px;
   font-weight: 650;
 }
 
 .mcp-mode-description {
   overflow: hidden;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2033,7 +2299,7 @@ button:not(:disabled) {
 .mcp-mode-check {
   margin-left: auto;
   flex: 0 0 auto;
-  color: #60a5fa;
+  color: var(--ui-status-info-fg);
 }
 
 .mcp-warning {
@@ -2042,18 +2308,12 @@ button:not(:disabled) {
   gap: 9px;
   margin: 14px 0 0;
   padding: 11px 12px;
-  border: 1px solid rgb(251 191 36 / 32%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-warning-fg) 68%, transparent);
   border-radius: 10px;
-  color: #fde68a;
-  background: rgb(120 53 15 / 19%);
+  color: var(--ui-status-warning-fg);
+  background: var(--ui-status-warning-bg);
   font-size: 10px;
   line-height: 1.55;
-}
-
-[data-theme='light'] .mcp-warning {
-  border-color: rgb(180 83 9 / 22%);
-  color: #78350f;
-  background: rgb(251 191 36 / 16%);
 }
 
 .mcp-warning svg {
@@ -2079,7 +2339,7 @@ button:not(:disabled) {
 }
 
 .mcp-token-display code.is-empty {
-  color: #71717a;
+  color: var(--ui-text-disabled);
 }
 
 .mcp-icon-button {
@@ -2112,10 +2372,10 @@ button:not(:disabled) {
   height: 24px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgb(96 165 250 / 34%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 68%, transparent);
   border-radius: 8px;
-  color: #93c5fd;
-  background: rgb(30 64 175 / 18%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
 }
@@ -2138,18 +2398,18 @@ button:not(:disabled) {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 9px;
-  color: var(--text-faint);
+  color: var(--ui-text-muted);
   background: var(--secondary);
 }
 
 .mcp-empty-state strong {
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 12px;
 }
 
 .mcp-empty-state p {
   margin: 4px 0 0;
-  color: var(--text-faint);
+  color: var(--ui-text-muted);
   font-size: 10px;
 }
 
@@ -2173,8 +2433,8 @@ button:not(:disabled) {
 }
 
 .mcp-shared-status-dot {
-  background: #34d399;
-  box-shadow: 0 0 8px rgb(52 211 153 / 58%);
+  background: var(--ui-status-success-fg);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--ui-status-success-fg) 58%, transparent);
 }
 
 .mcp-shared-identity {
@@ -2185,7 +2445,7 @@ button:not(:disabled) {
 
 .mcp-shared-identity strong {
   overflow: hidden;
-  color: var(--text-body);
+  color: var(--ui-text-primary);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2194,7 +2454,7 @@ button:not(:disabled) {
 .mcp-shared-identity code,
 .mcp-shared-row time {
   overflow: hidden;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   text-overflow: ellipsis;
@@ -2230,7 +2490,7 @@ button:not(:disabled) {
   max-height: min(860px, 100%);
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgb(96 165 250 / 34%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 68%, transparent);
   border-radius: 20px;
   background: var(--surface-raised);
   box-shadow: 0 28px 100px rgb(0 0 0 / 65%);
@@ -2245,7 +2505,7 @@ button:not(:disabled) {
   border-bottom: 1px solid var(--surface-active-border);
   background: linear-gradient(
     120deg,
-    rgb(30 41 59 / 70%),
+    color-mix(in oklab, var(--ui-status-info-bg) 72%, var(--surface-raised)),
     color-mix(in oklab, var(--surface-raised) 40%, transparent)
   );
 }
@@ -2269,13 +2529,13 @@ button:not(:disabled) {
 .share-dialog-icon {
   width: 36px;
   height: 36px;
-  color: #93c5fd;
-  background: rgb(30 64 175 / 30%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
 }
 
 .share-dialog-header h2 {
   margin: 0;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 16px;
   font-weight: 680;
 }
@@ -2288,15 +2548,14 @@ button:not(:disabled) {
   place-items: center;
   border: 1px solid transparent;
   border-radius: 8px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   background: transparent;
 }
 
 .share-dialog-close:hover,
 .share-dialog-close:focus-visible {
-  outline: 0;
-  border-color: var(--border-soft);
-  color: var(--foreground);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
   background: var(--secondary);
 }
 
@@ -2320,8 +2579,8 @@ button:not(:disabled) {
 .share-session-icon {
   width: 34px;
   height: 34px;
-  color: #67e8f9;
-  background: rgb(8 145 178 / 18%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
 }
 
 .share-session-copy {
@@ -2332,7 +2591,7 @@ button:not(:disabled) {
 
 .share-session-copy strong {
   overflow: hidden;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2340,7 +2599,7 @@ button:not(:disabled) {
 
 .share-session-copy span {
   overflow: hidden;
-  color: #71717a;
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
   text-overflow: ellipsis;
@@ -2355,10 +2614,10 @@ button:not(:disabled) {
 .share-preview-safe {
   margin-left: auto;
   padding: 4px 7px;
-  border: 1px solid rgb(52 211 153 / 28%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-success-fg) 68%, transparent);
   border-radius: 999px;
-  color: #86efac;
-  background: rgb(6 78 59 / 23%);
+  color: var(--ui-status-success-fg);
+  background: var(--ui-status-success-bg);
   font-size: 9px;
   white-space: nowrap;
 }
@@ -2369,33 +2628,33 @@ button:not(:disabled) {
   gap: 10px;
   margin-top: 14px;
   padding: 12px;
-  border: 1px solid rgb(96 165 250 / 28%);
+  border: 1px solid color-mix(in oklab, var(--ui-status-info-fg) 68%, transparent);
   border-radius: 12px;
-  color: #bfdbfe;
-  background: rgb(30 64 175 / 14%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
 }
 
 .share-setup-check {
   width: 28px;
   height: 28px;
-  color: #93c5fd;
-  background: rgb(30 64 175 / 28%);
+  color: var(--ui-status-info-fg);
+  background: var(--ui-status-info-bg);
 }
 
 .share-setup-callout strong {
-  color: #dbeafe;
+  color: var(--ui-text-primary);
   font-size: 11px;
 }
 
 .share-setup-callout p {
   margin: 5px 0 0;
-  color: #93c5fd;
+  color: var(--ui-status-info-fg);
   font-size: 10px;
   line-height: 1.6;
 }
 
 .share-setup-callout code {
-  color: #e0f2fe;
+  color: var(--ui-text-primary);
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
 }
@@ -2425,19 +2684,19 @@ button:not(:disabled) {
 }
 
 .share-preview-label {
-  color: var(--text-body);
+  color: var(--ui-text-secondary);
   font-size: 11px;
   font-weight: 650;
 }
 
 .share-preview-hint {
-  color: var(--text-faint);
+  color: var(--ui-text-muted);
   font-size: 9px;
 }
 
 .share-preview-safe {
   margin-left: 0;
-  border-color: rgb(52 211 153 / 24%);
+  border-color: color-mix(in oklab, var(--ui-status-success-fg) 58%, transparent);
   font-family: 'JetBrains Mono', monospace;
   font-size: 8px;
 }
@@ -2447,7 +2706,7 @@ button:not(:disabled) {
   margin: 0;
   padding: 14px;
   overflow: auto;
-  color: var(--text-body);
+  color: var(--ui-text-secondary);
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   line-height: 1.7;
@@ -2470,23 +2729,22 @@ button:not(:disabled) {
 
 .share-dialog-button:hover,
 .share-dialog-button:focus-visible {
-  outline: 0;
-  border-color: rgb(96 165 250 / 66%);
-  color: var(--foreground);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
   background: var(--secondary);
 }
 
 .share-dialog-button.is-primary {
-  border-color: rgb(96 165 250 / 76%);
-  color: #eff6ff;
-  background: #2563eb;
-  box-shadow: 0 7px 20px rgb(37 99 235 / 24%);
+  border-color: var(--ui-focus-ring);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  box-shadow: 0 7px 20px color-mix(in oklab, var(--primary) 24%, transparent);
 }
 
 .share-dialog-button.is-primary:hover,
 .share-dialog-button.is-primary:focus-visible {
-  border-color: #93c5fd;
-  background: #1d4ed8;
+  border-color: var(--ui-focus-ring);
+  background: color-mix(in oklab, var(--primary) 82%, var(--ui-focus-ring));
 }
 
 @media (max-width: 800px) {
@@ -2659,7 +2917,7 @@ button:not(:disabled) {
 }
 
 .theme-color-label {
-  color: var(--text-subtle);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 600;
 }
@@ -2673,7 +2931,7 @@ button:not(:disabled) {
   padding: 1px 4px;
   border-radius: 4px;
   background: var(--surface-button);
-  color: var(--text-faint);
+  color: var(--ui-text-muted);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   font-weight: 500;
@@ -2684,25 +2942,26 @@ button:not(:disabled) {
   min-width: 0;
   box-sizing: border-box;
   padding: 8px 10px;
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 8px;
   outline: 0;
-  color: var(--foreground);
+  color: var(--ui-text-primary);
   background: var(--background);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
 }
 
 .theme-color-input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 18%, transparent);
+  border-color: var(--ui-focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-focus-ring) 28%, transparent);
+  outline: 0;
 }
 
 .theme-color-swatch {
   width: 36px;
   height: 34px;
   padding: 0;
-  border: 1px solid var(--border-input);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 8px;
   background: transparent;
   cursor: pointer;
@@ -2716,7 +2975,7 @@ button:not(:disabled) {
 
 .theme-custom-note {
   margin: 12px 0 0;
-  color: var(--muted-foreground);
+  color: var(--ui-text-muted);
   font-size: 10px;
   line-height: 1.55;
 }
@@ -2733,14 +2992,14 @@ button:not(:disabled) {
 
 .theme-terminal-title {
   margin: 0;
-  color: var(--text-body);
+  color: var(--ui-text-secondary);
   font-size: 12px;
   font-weight: 640;
 }
 
 .theme-terminal-note {
   margin: 4px 0 0;
-  color: var(--text-faint);
+  color: var(--ui-text-muted);
   font-size: 10px;
   line-height: 1.55;
 }
@@ -2754,7 +3013,7 @@ button:not(:disabled) {
   padding: 0 10px;
   border: 1px solid var(--surface-active-border);
   border-radius: 8px;
-  color: var(--muted-foreground);
+  color: var(--ui-text-secondary);
   background: transparent;
   font-size: 11px;
   cursor: pointer;
@@ -2767,9 +3026,39 @@ button:not(:disabled) {
 .theme-terminal-reset:hover:not(:disabled),
 .theme-terminal-reset:focus-visible {
   outline: 0;
-  border-color: var(--ring);
-  color: var(--foreground);
+  border-color: var(--ui-focus-ring);
+  color: var(--ui-text-primary);
   background: color-mix(in oklab, var(--secondary) 55%, transparent);
+}
+
+.theme-contrast-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in oklab, var(--ui-status-warning-fg) 68%, transparent);
+  border-radius: 10px;
+  color: var(--ui-status-warning-fg);
+  background: var(--ui-status-warning-bg);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.theme-contrast-warning svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.theme-contrast-warning strong {
+  display: block;
+  color: inherit;
+  font-weight: 700;
+}
+
+.theme-contrast-warning p {
+  margin: 3px 0 0;
+  color: inherit;
 }
 
 .theme-terminal-reset:disabled {

@@ -129,3 +129,75 @@ test('denies an approval without creating the external execution marker', async 
   await expect(card).toHaveCount(0);
   await expect(page.getByTestId('external-execution-banner')).toHaveCount(0);
 });
+
+test('keeps light-scheme approval and long external execution status readable', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.goto('/?sessions=1&mcpEnabled=true');
+
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const workspace = page.getByTestId('settings-workspace');
+  await workspace.getByRole('button', { name: /外观/ }).click();
+  const themeSection = workspace.getByTestId('theme-settings-section');
+  await themeSection.getByText('浅色', { exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--background'),
+      ),
+    )
+    .toBe('#ffffff');
+  await page.getByRole('button', { name: '返回工作区' }).click();
+
+  const longCommand =
+    'npm run deploy -- --environment production --region ap-southeast-1 --confirm --verbose';
+  await page.evaluate((command) => window.__synapseMockMcpApproval?.(command), longCommand);
+  const approval = page.getByRole('dialog', { name: 'MCP 审批' });
+  await expect(approval).toContainText('目标 Session');
+  await expect(approval).toContainText('风险理由');
+  await expect(approval.locator('pre[aria-label="命令全文"]')).toHaveAttribute(
+    'title',
+    longCommand,
+  );
+  await approval.getByRole('button', { name: '允许一次' }).click();
+
+  const banner = page.getByTestId('external-execution-banner');
+  await expect(banner).toContainText('外部执行中');
+  await expect(banner).toContainText('MCP 外部客户端');
+  await expect(banner.locator('.external-execution-command')).toHaveAttribute('title', longCommand);
+  const bannerBox = await banner.boundingBox();
+  const contentBox = await page.locator('.prototype-terminal-content').boundingBox();
+  expect(bannerBox).not.toBeNull();
+  expect(contentBox).not.toBeNull();
+  expect((bannerBox?.y ?? 0) + (bannerBox?.height ?? 0)).toBeLessThanOrEqual(contentBox?.y ?? 0);
+  await expect(page.locator('#active-terminal-panel .xterm:visible')).toBeVisible();
+
+  await page.setViewportSize({ width: 520, height: 820 });
+  await expect(banner).toBeVisible();
+  await expect(banner.locator('.external-execution-command')).toHaveCSS('white-space', 'normal');
+  await expect(page.locator('#active-terminal-panel .xterm:visible')).toBeVisible();
+});
+
+test('shows the saved custom colors and safe text fallback in light settings', async ({ page }) => {
+  await page.goto('/?sessions=1');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const workspace = page.getByTestId('settings-workspace');
+  await workspace.getByRole('button', { name: /外观/ }).click();
+  const themeSection = workspace.getByTestId('theme-settings-section');
+  await themeSection.getByText('浅色', { exact: true }).click();
+  await themeSection.getByLabel('启用自定义配色').check();
+  await themeSection.getByLabel('前景色 输入').fill('#ffffff');
+
+  await expect(themeSection).toContainText('自定义配色对比度不足');
+  await expect(themeSection).toContainText('当前界面将使用安全文字色');
+  await expect(themeSection.getByLabel('前景色 输入')).toHaveValue('#ffffff');
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        foreground: getComputedStyle(document.documentElement).getPropertyValue('--foreground'),
+        uiText: getComputedStyle(document.documentElement).getPropertyValue('--ui-text-primary'),
+      })),
+    )
+    .toEqual({ foreground: '#ffffff', uiText: '#09090b' });
+});
