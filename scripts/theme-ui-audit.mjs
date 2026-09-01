@@ -18,7 +18,10 @@ try {
   await page.screenshot({ path: `${OUT_DIR}/01-workspace-dark.png` });
 
   await page.getByRole('button', { name: '设置', exact: true }).click();
-  await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: /外观/ }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /外观/ })
+    .click();
   await page.waitForSelector('[data-testid="theme-settings-section"]');
   await sleep(400);
   await page.screenshot({ path: `${OUT_DIR}/02-appearance-default.png` });
