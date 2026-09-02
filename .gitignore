@@ -1,4 +1,5 @@
 .idea
+.workbuddy
 node_modules/
 .pnpm-store/
 .packaging/
