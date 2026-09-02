@@ -66,7 +66,7 @@ Session 仅存在于应用运行期内存中，应用退出即清空，不做任
 | `pnpm package:win`            | 构建 Windows NSIS 安装包                  |
 | `pnpm smoke:packaged-desktop` | 对已打包应用执行真实 PTY 冒烟             |
 
-更完整的说明见 [运行手册](docs/runbook.md) 与 [架构说明](docs/architecture.md)。
+更完整的说明见 [文档总览](docs/README.md)。
 
 ## 架构与数据
 
@@ -83,10 +83,13 @@ Renderer 不直接持有 Node API、PTY 或 Session 内部状态。Electron Main
 
 ## 文档
 
-- [架构说明](docs/architecture.md)
-- [安全边界](docs/security.md)
-- [运行手册](docs/runbook.md)
-- [验证矩阵](docs/verification-matrix.md)
+- [文档总览](docs/README.md)
+- [架构说明](docs/architecture/architecture.md)
+- [安全边界](docs/security/security.md)
+- [运行手册](docs/engineering/runbook.md)
+- [测试指南与验证矩阵](docs/engineering/testing.md)
+- [编码与 Git 约定](docs/engineering/conventions.md)
+- [Release 发布说明流程](docs/engineering/release.md)
 
 ## 许可证
 

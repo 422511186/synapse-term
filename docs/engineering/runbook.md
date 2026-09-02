@@ -1,5 +1,10 @@
 # 运行手册
 
+## 环境要求
+
+- Node.js `>=24.12.0 <25`：切换前先 `nvm ls` 检查本机版本，优先 `nvm use` 已安装的满足版本；缺失时执行 `nvm install 24.12.0`。
+- pnpm `10.28.1`（以根目录 `package.json` 的 `packageManager` 为准）：`corepack enable` 后安装依赖。
+
 ## 开发
 
 ```bash
@@ -13,8 +18,9 @@ pnpm start      # 启动真实 Electron
 ## 验证
 
 ```bash
-pnpm verify     # format:check + lint + typecheck + test
-pnpm test:e2e   # Playwright 浏览器 E2E（依赖 pnpm dev 的 Mock 模式）
+pnpm verify         # format:check + lint + typecheck + test
+pnpm test:coverage  # Vitest 覆盖率报告
+pnpm test:e2e       # Playwright 浏览器 E2E（依赖 pnpm dev 的 Mock 模式）
 ```
 
 ## 打包

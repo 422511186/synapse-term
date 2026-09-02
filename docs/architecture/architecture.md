@@ -35,6 +35,15 @@ Electron Main
 
 包通过各自 `src/index.ts` 公共出口互相引用；`domain` 的依赖方向测试约束领域层不反向依赖上层。
 
+## 仓库布局
+
+本仓库是 pnpm workspace monorepo：
+
+- `apps/desktop/`：Electron 主进程、preload、React Renderer 与 `e2e/`；字体等静态资源位于 `apps/desktop/src/renderer/assets/`。
+- `packages/`：`@synapse-term/domain`（Session/终端领域模型）、`@synapse-term/terminal-service`（PTY、Session、实时输出、Shell 发现）、`@synapse-term/test-kit`（测试替身）。
+- `docs/`：架构、安全与工程文档；`openspec/`：规格变更提案与归档。
+- 单元测试与源码同目录，命名为 `*.test.ts` 或 `*.test.tsx`。
+
 ## IPC 与契约
 
 Renderer 与 Main 通过 Electron `ipcMain`/`ipcRenderer` 通信，通道与 `DesktopApi` 类型位于 `apps/desktop/src/shared/`。当前通道只覆盖：
