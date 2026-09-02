@@ -6,7 +6,7 @@
 ## Requirements
 ### Requirement: General Probe Echo Preference
 
-系统 MUST 在“通用”设置中提供“隐藏自动 Probe 回显”开关，默认值为开启（`true`），并明确说明该设置只控制本地终端 UI 的显示。开启时，终端 UI MUST 隐藏 Synapse Term 自动注入的环境识别 Probe 和命令完成 Probe 的本地回显；关闭时，终端 UI MAY 显示这些自动 Probe 的回显以便诊断。
+系统 MUST 在“通用”设置中提供“隐藏自动 Probe 回显”开关，默认值为开启（`true`），并明确说明该设置只控制本地终端 UI 的显示。开启时，终端 UI MUST 隐藏可识别的 Synapse Term 自动注入环境识别 Probe 和命令完成 Probe 的完整本地回显，即使回显被拆到多个 PTY 数据块、被终端自动换行或重绘控制序列分隔，或在匹配完成帧之后才到达；关闭时，终端 UI MUST 不主动抑制这些自动 Probe 回显，以便用户诊断实际终端回显行为。
 
 #### Scenario: Default preference
 
@@ -15,8 +15,13 @@
 
 #### Scenario: Diagnostic visibility
 
-- **WHEN** 用户在“通用”设置中关闭“隐藏自动 Probe 回显”
-- **THEN** 本地终端 UI MAY 显示环境识别 Probe 和命令完成 Probe 的回显以便诊断，并 MUST 展示说明“Probe 仍会写入 PTY，远程服务器仍可能记录”
+- **WHEN** 用户在“通用”设置中关闭“隐藏自动 Probe 回显”，且 PTY 返回自动 Probe 的命令回显或结果回显
+- **THEN** 本地终端 UI MUST 不主动抑制这些回显以便诊断，并 MUST 展示说明“Probe 仍会写入 PTY，远程服务器仍可能记录”
+
+#### Scenario: Preference changes during an echoed Probe
+
+- **WHEN** 用户在自动 Probe 回显仍可能继续到达时切换“隐藏自动 Probe 回显”开关
+- **THEN** 后续交付给本地终端 UI 的回显 MUST 服从最新设置，已经交付的内容 MUST NOT 被回溯改写，协议消费者看到的输出和完成检测 MUST NOT 因该切换改变
 
 ### Requirement: Persisted Restricted Settings API
 
@@ -39,7 +44,17 @@ GeneralSettings MUST 由 Electron Main 持久化和校验；Renderer MUST 只能
 #### Scenario: Hidden UI echo
 
 - **WHEN** 设置为隐藏且 PTY 返回环境识别 Probe 命令/结果或命令完成 Probe 输入回显和匹配 OSC 777 完成帧
-- **THEN** 本地终端 UI MUST 隐藏自动 Probe 回显，ShellProbe/CommandExecutor MUST 仍能完成验证和事务收敛，且 PTY 写入内容 MUST 保持不变
+- **THEN** 本地终端 UI MUST 隐藏可识别的自动 Probe 回显，ShellProbe/CommandExecutor MUST 仍能完成验证和事务收敛，且 PTY 写入内容 MUST 保持不变
+
+#### Scenario: Fragmented wrapped and redrawn echo
+
+- **WHEN** 自动 Probe 回显的身份标记和结束边界被拆分在多个 PTY 数据块中，并且中间包含终端自动换行、ANSI/重绘控制序列或部分控制序列
+- **THEN** 隐藏设置下本地终端 UI MUST 隐藏完整的自动 Probe 回显，且 MUST 保留 Probe 前后以及不属于该 Probe 的用户命令、普通输出和提示符
+
+#### Scenario: Completion frame precedes delayed echo
+
+- **WHEN** 匹配的 OSC 777 完成帧先于命令完成 Probe 输入回显的最后一段到达，并且该回显仍在回显收尾窗口内到达
+- **THEN** 本地终端 UI MUST 继续隐藏该自动 Probe 回显，CommandExecutor MUST 保持已确认的事务状态、退出码和输出内容不变，普通延迟业务输出 MUST 继续保留
 
 #### Scenario: Visible UI echo does not leak to MCP
 

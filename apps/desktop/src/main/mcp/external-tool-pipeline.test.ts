@@ -314,23 +314,27 @@ describe('ExternalToolPipeline authorization matrix', () => {
     await Promise.resolve();
     expect(once).toMatchObject({ ok: true });
     expect(approvals).toBe(1);
+    await pipeline.wait({ transactionId: 'transaction-1' }, context);
 
     await pipeline.execute({ command: 'deploy-production.sh' }, context);
     backend.emitData(frame('n2'));
     await Promise.resolve();
     expect(approvals).toBe(2);
+    await pipeline.wait({ transactionId: 'transaction-2' }, context);
 
     const granted = await pipeline.execute({ command: 'unique-command' }, context);
     backend.emitData(frame('n3'));
     await Promise.resolve();
     expect(granted).toMatchObject({ ok: true });
     expect(approvals).toBe(3);
+    await pipeline.wait({ transactionId: 'transaction-3' }, context);
 
     const repeat = await pipeline.execute({ command: 'unique-command' }, context);
     backend.emitData(frame('n4'));
     await Promise.resolve();
     expect(repeat).toMatchObject({ ok: true });
     expect(approvals).toBe(3);
+    await pipeline.wait({ transactionId: 'transaction-4' }, context);
 
     await expect(
       pipeline.execute({ command: 'different-command' }, { ...context }),
