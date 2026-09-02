@@ -34,7 +34,7 @@
 ## 5. 规格与文案同步
 
 - [ ] 5.1 主 spec 同步：`openspec/specs/mcp-access/spec.md` 按本 change 的 `specs/mcp-access/spec.md` delta 合并（Synapse Tool Surface 六工具、Stable External Error Codes 补码、External Interactive Input 新需求——archive 时执行）
-- [ ] 5.2 检查 Share Text（共享文本）模板中的工具清单是否需提及第六工具（`apps/desktop` 内搜索共享文本模板）
+- [ ] 5.2 `apps/desktop/src/renderer/mcp/share-text.ts`：`MCP_TOOLS` 数组（L1-7）加入 `synapse_input`（共享文本 L57「可用工具：…」自动拼接），并新增一条操作规则说明交互输入用法（事务内输入补密码 / 自由输入需 expectedContextId 且响应返回新 ID）；`share-text.test.ts` 同步断言工具清单与关键规则文案（已勘察确认：现为硬编码五工具 + 9 条规则均未提及输入能力）
 
 ## 6. 验证
 
