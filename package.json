@@ -18,7 +18,6 @@
     "icons:generate": "node scripts/generate-icons.mjs",
     "lint": "eslint .",
     "postinstall": "node scripts/ensure-node-pty-helper.mjs",
-    "check:skills-mirror": "node scripts/check-openspec-skill-mirror.mjs",
     "package:win": "pnpm build && electron-builder --config electron-builder.yml --win nsis --publish never",
     "package:win:dir": "pnpm build && electron-builder --config electron-builder.yml --win dir --publish never",
     "package:mac": "pnpm build && electron-builder --config electron-builder.yml --mac dmg --publish never",
