@@ -10,11 +10,28 @@ export interface CompletionFrame {
   exitCode: number;
 }
 
+export type ExecutionContextId = string;
+export type TransactionId = string;
+/** 服务端签名、绑定当前 Session/Sharing 的不透明输出游标。 */
+export type OutputCursor = string;
+export type ExternalTransactionStatus = 'running' | 'completed' | 'interrupted' | 'unknown';
+
+export interface TransactionOutputRange {
+  startCursor: OutputCursor;
+  endCursor: OutputCursor;
+}
+
+export interface CompletionMetadata {
+  confirmed: boolean;
+  exitCode?: number | undefined;
+}
+
 export const LITERAL_SHELL_TRANSPORT = 'literal_shell' as const;
 
 export type CommandTransportMode = typeof LITERAL_SHELL_TRANSPORT;
 
-export type CommandAuditErrorCode = 'COMMAND_NOT_AUDITABLE' | 'UNSUPPORTED_SHELL';
+export type CommandAuditErrorCode =
+  'COMMAND_NOT_AUDITABLE' | 'INTERACTIVE_COMMAND_UNSUPPORTED' | 'UNSUPPORTED_SHELL';
 
 export function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -42,12 +59,25 @@ export function parseCompletionPayload(payload: string): CompletionFrame | null 
 }
 
 export function parseCompletionFrame(output: string): CompletionFrame | null {
-  const prefix = '\x1b]777;TA;';
-  const start = output.indexOf(prefix);
+  const prefixes = ['\x1b]777;TA;', '\x9d777;TA;'];
+  let start = -1;
+  let prefix = '';
+  for (const candidate of prefixes) {
+    const candidateStart = output.indexOf(candidate);
+    if (candidateStart >= 0 && (start < 0 || candidateStart < start)) {
+      start = candidateStart;
+      prefix = candidate;
+    }
+  }
   if (start < 0) return null;
 
   const frameStart = start + prefix.length;
-  const frameEnd = output.indexOf('\x07', frameStart);
-  if (frameEnd < 0) return null;
-  return parseCompletionPayload(`TA;${output.slice(frameStart, frameEnd)}`);
+  const terminators = [
+    { index: output.indexOf('\x07', frameStart), length: 1 },
+    { index: output.indexOf('\x9c', frameStart), length: 1 },
+    { index: output.indexOf('\x1b\\', frameStart), length: 2 },
+  ].filter((candidate) => candidate.index >= 0);
+  if (terminators.length === 0) return null;
+  const terminator = terminators.reduce((left, right) => (right.index < left.index ? right : left));
+  return parseCompletionPayload(`TA;${output.slice(frameStart, terminator.index)}`);
 }

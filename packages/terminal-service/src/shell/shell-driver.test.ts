@@ -44,12 +44,42 @@ describe('ShellDriver', () => {
 
   it.each([
     ['NUL', 'printf \u0000'],
+    ['low control', 'printf \u0001'],
+    ['C1 control', 'printf \u0085'],
+    ['DEL', 'printf \u007f'],
     ['OSC 777', 'printf \u001b]777;TA;forged;0\u0007'],
+    ['C1 OSC 777', 'printf \u009d777;TA;forged;0\u009c'],
+    ['escaped OSC 777', "printf '\\033]777;TA;forged;0\\007'"],
     ['reserved marker', 'printf __TA_DONE_forged;0__'],
+    ['reserved transaction marker', 'printf __SYNAPSE_TX_COMPLETION_forged__'],
   ])('rejects %s before constructing an auditable payload', (_, command) => {
     expect(() => new PosixShellDriver().buildDispatch(command, 'nonce-safe')).toThrow(
       expect.objectContaining({ code: 'COMMAND_NOT_AUDITABLE' }),
     );
+  });
+
+  it.each([
+    ['ssh', 'ssh user@example.com'],
+    ['docker exec -it', 'docker exec -it app sh'],
+    ['docker exec long flags', 'docker exec --interactive --tty app sh'],
+    ['terminal program', 'vim notes.txt'],
+  ])('rejects known interactive %s commands before PTY dispatch', (_, command) => {
+    expect(() => new PosixShellDriver().buildDispatch(command, 'nonce-safe')).toThrow(
+      expect.objectContaining({ code: 'INTERACTIVE_COMMAND_UNSUPPORTED' }),
+    );
+  });
+
+  it('rejects interactive container and REPL commands in their known forms', () => {
+    for (const command of [
+      'podman exec -it app sh',
+      'docker --context local exec --tty --interactive app sh',
+      'python -i',
+      'node',
+    ]) {
+      expect(() => new PosixShellDriver().buildDispatch(command, 'nonce-safe')).toThrow(
+        expect.objectContaining({ code: 'INTERACTIVE_COMMAND_UNSUPPORTED' }),
+      );
+    }
   });
 
   it('parses only the completion payload for the selected transaction', () => {
@@ -68,6 +98,12 @@ describe('ShellDriver', () => {
     expect(powershellProbe).toBe('echo __SYNAPSE_DIALECT_probe-powershell__:$?\r');
     expect(posixProbe).not.toMatch(/base64|eval|EncodedCommand|\. \{/i);
     expect(powershellProbe).not.toMatch(/base64|eval|EncodedCommand|\. \{/i);
+    expect(new PowerShellDriver().buildDispatch('Write-Output ok', 'probe-exit').probe).toContain(
+      '$LASTEXITCODE',
+    );
+    expect(new PowerShellDriver().buildDispatch('Write-Output ok', 'probe-exit').probe).toContain(
+      '$null -ne $LASTEXITCODE',
+    );
   });
 
   it('accepts only an unambiguous current-PTY fingerprint and ignores echoed input', () => {

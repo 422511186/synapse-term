@@ -4,7 +4,10 @@ import type { CommandRisk } from '@synapse-term/domain';
 
 export interface PolicyDecision {
   level: CommandRisk;
+  risk: CommandRisk;
+  confidence: 'high' | 'medium' | 'low';
   reasons: string[];
+  requiresConfirmation: boolean;
   commandHash: string;
 }
 
@@ -89,13 +92,14 @@ export class PolicyEngine {
   classify(command: string, hints: PolicyHints = {}): Promise<PolicyDecision> {
     const commandHash = hash(command);
     if (command.trim().length === 0) {
-      return Promise.resolve(decision('unknown', ['empty command'], commandHash));
+      return Promise.resolve(decision('unknown', 'low', ['empty command'], commandHash));
     }
     if (/[$(`]|\b(?:sudo|doas)\b/.test(command)) {
       const dynamic = /\$|`/.test(command);
       return Promise.resolve(
         decision(
           dynamic ? 'unknown' : 'privileged',
+          'low',
           dynamic
             ? ['command substitution is not proven safe']
             : ['command requests privilege escalation'],
@@ -106,16 +110,31 @@ export class PolicyEngine {
 
     const reasons: string[] = [];
     let level: CommandRisk = 'read_only';
+    let confidence: PolicyDecision['confidence'] = 'high';
+    let hasUnknownSegment = false;
     for (const segment of command.split(/\s*(?:&&|\|\||[|;])\s*/).filter(Boolean)) {
       const classified = this.#classifySegment(segment, hints.terminalType, reasons);
       level = higherRisk(level, classified);
+      if (classified === 'unknown') {
+        hasUnknownSegment = true;
+        confidence = 'low';
+      } else if (command.includes('|') || command.includes('&&') || command.includes('||')) {
+        confidence = 'medium';
+      }
     }
     if (/[<>]/.test(command)) {
       level = higherRisk(level, 'mutating');
       reasons.push('redirection can change filesystem state');
+      confidence = 'low';
     }
     if (level === 'read_only') reasons.push('all commands match read-only rules');
-    return Promise.resolve(decision(level, unique(reasons), commandHash));
+    if (hasUnresolvedShellStructure(command)) {
+      confidence = 'low';
+      reasons.push('scripts, aliases, or dynamic shell structure cannot be fully expanded safely');
+      level = higherRisk(level, 'unknown');
+    }
+    if (hasUnknownSegment && level !== 'destructive') level = 'unknown';
+    return Promise.resolve(decision(level, confidence, unique(reasons), commandHash));
   }
 
   #classifySegment(
@@ -167,8 +186,20 @@ export class PolicyEngine {
   }
 }
 
-function decision(level: CommandRisk, reasons: string[], commandHash: string): PolicyDecision {
-  return { level, reasons, commandHash };
+function decision(
+  level: CommandRisk,
+  confidence: PolicyDecision['confidence'],
+  reasons: string[],
+  commandHash: string,
+): PolicyDecision {
+  return {
+    level,
+    risk: level,
+    confidence,
+    reasons,
+    requiresConfirmation: !['read_only', 'mutating'].includes(level),
+    commandHash,
+  };
 }
 
 function tokenize(segment: string): string[] {
@@ -177,4 +208,13 @@ function tokenize(segment: string): string[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function hasUnresolvedShellStructure(command: string): boolean {
+  return (
+    /(^|[\s;&|])(alias|source|\.)\b/.test(command) ||
+    /\b(?:eval|exec)\b/.test(command) ||
+    /\b(?:function|for|while|until|if|case)\b/.test(command) ||
+    /\$\{?\w+|\$\(/.test(command)
+  );
 }

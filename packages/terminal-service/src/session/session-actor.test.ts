@@ -184,10 +184,8 @@ describe('SessionActor', () => {
       terminalType: 'PowerShell',
       hideCompletionProbeEcho: false,
     });
-    const protocolOutput: string[] = [];
     const terminalOutput: string[] = [];
     actor.onEvent((event) => {
-      if (event.type === 'pty_output') protocolOutput.push(event.data);
       if (event.type === 'terminal_output') terminalOutput.push(event.data);
     });
     await actor.markPtyRunning();
@@ -209,6 +207,51 @@ describe('SessionActor', () => {
     probe.dispose();
     actor.dispose();
   });
+
+  it.each([true, false])(
+    'keeps the MCP history path independent from local Probe echo visibility (%s)',
+    async (hideCompletionProbeEcho) => {
+      const backend = createFakeTerminalBackend();
+      const actor = new SessionActor('s1', backend, {
+        title: '终端 1',
+        terminalType: 'PowerShell',
+        hideCompletionProbeEcho,
+      });
+      const protocolOutput: string[] = [];
+      const historyOutput: string[] = [];
+      const terminalOutput: string[] = [];
+      actor.onEvent((event) => {
+        if (event.type !== 'pty_output') return;
+        protocolOutput.push(event.data);
+        historyOutput.push(event.historyData ?? event.data);
+      });
+      actor.onEvent((event) => {
+        if (event.type === 'terminal_output') terminalOutput.push(event.data);
+      });
+      await actor.markPtyRunning();
+      const probe = new ShellProbe(actor, {
+        nonceFactory: () => `probe-history-${hideCompletionProbeEcho}`,
+        timeoutMs: 100,
+      });
+
+      const resultPromise = probe.run({ environmentEpoch: 0 });
+      await vi.waitFor(() => expect(backend.writes.join('')).toContain('probe-history-'));
+      backend.emitData(
+        `echo __SYNAPSE_DIALECT_probe-history-${hideCompletionProbeEcho}__:$?\r\n` +
+          `__SYNAPSE_DIALECT_probe-history-${hideCompletionProbeEcho}__:0\r\n` +
+          'ordinary output\r\n',
+      );
+      await expect(resultPromise).resolves.toMatchObject({ mode: 'structured' });
+
+      expect(protocolOutput.join('')).toContain('SYNAPSE_DIALECT_probe-history-');
+      expect(historyOutput.join('')).not.toContain('SYNAPSE_DIALECT_probe-history-');
+      expect(historyOutput.join('')).toContain('ordinary output');
+      expect(terminalOutput.join('')).toContain('ordinary output');
+      expect(terminalOutput.join('').includes('probe-history-')).toBe(!hideCompletionProbeEcho);
+      probe.dispose();
+      actor.dispose();
+    },
+  );
 
   it('applies a visibility change only to future Probe UI output', async () => {
     const backend = createFakeTerminalBackend();
@@ -497,6 +540,59 @@ describe('SessionActor', () => {
     actor.dispose();
   });
 
+  it('rotates the execution context for user input but not for an external Probe', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+
+    const before = actor.snapshot.executionContextId;
+    const epoch = actor.snapshot.environment.capabilityEpoch;
+    await actor.writeProbe('echo probe\r');
+    expect(actor.snapshot.executionContextId).toBe(before);
+
+    await actor.writeUser('ls\r');
+    expect(actor.snapshot.executionContextId).not.toBe(before);
+    expect(actor.snapshot.environment.capabilityEpoch).toBe(epoch + 1);
+    actor.dispose();
+  });
+
+  it('keeps the execution context stable while passive PTY output arrives', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    const before = actor.snapshot.executionContextId;
+
+    backend.emitData('prompt> ');
+    await vi.waitFor(() => expect(actor.snapshot.executionContextId).toBe(before));
+
+    actor.dispose();
+  });
+
+  it('atomically validates execution context and environment before external write', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const snapshot = actor.snapshot;
+
+    await expect(
+      actor.writeExternal('printf ok\r', snapshot.environment.capabilityEpoch, 'stale-context'),
+    ).resolves.toMatchObject({ ok: false, error: 'stale-execution-context' });
+    expect(backend.writes).toEqual([]);
+
+    await expect(
+      actor.writeExternal(
+        'printf ok\r',
+        snapshot.environment.capabilityEpoch,
+        snapshot.executionContextId,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(actor.snapshot.executionContextId).not.toBe(snapshot.executionContextId);
+    expect(backend.writes).toEqual(['printf ok\r']);
+    actor.dispose();
+  });
+
   it('rejects user input after exit', async () => {
     const backend = createFakeTerminalBackend();
     const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
@@ -520,7 +616,10 @@ describe('SessionActor', () => {
     });
 
     const epoch = actor.snapshot.environment.capabilityEpoch;
-    await expect(actor.writeExternal('Write-Output ok\r', epoch)).resolves.toEqual({ ok: true });
+    const contextId = actor.snapshot.executionContextId;
+    await expect(actor.writeExternal('Write-Output ok\r', epoch, contextId)).resolves.toEqual({
+      ok: true,
+    });
     expect(actor.snapshot.environment).toMatchObject({
       dialect: 'powershell',
       platform: 'windows',
@@ -528,7 +627,9 @@ describe('SessionActor', () => {
       capabilityEpoch: epoch,
     });
 
-    await expect(actor.writeExternal('stale\r', epoch - 1)).resolves.toEqual({
+    await expect(
+      actor.writeExternal('stale\r', epoch - 1, actor.snapshot.executionContextId),
+    ).resolves.toEqual({
       ok: false,
       error: 'stale-environment-epoch',
     });
@@ -552,5 +653,35 @@ describe('SessionActor', () => {
     backend.emitExit(0);
     await expect(wait).resolves.toBeUndefined();
     actor.dispose();
+  });
+
+  it('does not write to the PTY after the SessionActor is disposed', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const snapshot = actor.snapshot;
+
+    actor.dispose();
+
+    await expect(actor.writeUser('user input\r')).resolves.toEqual({
+      ok: false,
+      error: 'session-not-running',
+    });
+    await expect(actor.writeProbe('probe\r')).resolves.toEqual({
+      ok: false,
+      error: 'session-not-running',
+    });
+    await expect(
+      actor.writeExternal(
+        'external\r',
+        snapshot.environment.capabilityEpoch,
+        snapshot.executionContextId,
+      ),
+    ).resolves.toEqual({ ok: false, error: 'session-not-running' });
+    await actor.interrupt();
+
+    expect(backend.writes).toEqual([]);
+    expect(backend.interrupted).toBe(0);
   });
 });

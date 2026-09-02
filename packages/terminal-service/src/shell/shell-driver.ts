@@ -20,6 +20,7 @@ export interface ShellDispatch {
 export interface ShellDriver {
   readonly dialect: 'posix' | 'powershell';
   buildEnvironmentProbe(nonce: string): string;
+  validateCommand(command: string): void;
   buildDispatch(command: string, nonce: string): ShellDispatch;
   parseCompletion(payload: string): CompletionFrame | null;
 }
@@ -42,8 +43,12 @@ abstract class BaseShellDriver implements ShellDriver {
     return `echo __SYNAPSE_DIALECT_${nonce}__:$?\r`;
   }
 
-  buildDispatch(command: string, nonce: string): ShellDispatch {
+  validateCommand(command: string): void {
     validateLiteralCommand(command);
+  }
+
+  buildDispatch(command: string, nonce: string): ShellDispatch {
+    this.validateCommand(command);
     validateNonce(nonce);
     const probe = this.buildCompletionProbe(nonce);
     const commandTerminator = command.endsWith('\r') || command.endsWith('\n') ? '' : '\r';
@@ -87,7 +92,7 @@ export class PowerShellDriver extends BaseShellDriver {
 
   protected buildCompletionProbe(nonce: string): string {
     const quotedNonce = powerShellSingleQuote(nonce);
-    return `[Console]::Write(([char]27+']777;TA;'+${quotedNonce}+';'+$(if($?){0}elseif($LASTEXITCODE){$LASTEXITCODE}else{1})+[char]7))`;
+    return `[Console]::Write(([char]27+']777;TA;'+${quotedNonce}+';'+$(if($?){0}elseif($null -ne $LASTEXITCODE){$LASTEXITCODE}else{1})+[char]7))`;
   }
 
   protected buildEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
@@ -144,7 +149,7 @@ function validateLiteralCommand(command: string): void {
     const codePoint = character.codePointAt(0);
     if (
       codePoint !== undefined &&
-      codePoint < 0x20 &&
+      (codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f)) &&
       codePoint !== 0x09 &&
       codePoint !== 0x0a &&
       codePoint !== 0x0d
@@ -152,7 +157,11 @@ function validateLiteralCommand(command: string): void {
       throw new ShellDriverError('COMMAND_NOT_AUDITABLE', '命令包含不能安全审计的低位控制字符。');
     }
   }
-  if (command.includes('\u001b]777')) {
+  if (
+    command.includes('\u001b]777') ||
+    command.includes('\u009d777') ||
+    /777\s*;\s*TA\s*;/i.test(command)
+  ) {
     throw new ShellDriverError(
       'COMMAND_NOT_AUDITABLE',
       '命令包含可能伪造事务完成帧的 OSC 777 控制序列。',
@@ -160,6 +169,18 @@ function validateLiteralCommand(command: string): void {
   }
   if (/__TA_(?:START__|DONE_)/.test(command)) {
     throw new ShellDriverError('COMMAND_NOT_AUDITABLE', '命令包含保留的事务边界标记。');
+  }
+  if (
+    /__(?:SYNAPSE|TA)_(?:TRANSACTION|TX|COMPLETION)_[A-Z0-9_-]+__/i.test(command) ||
+    /__TA_(?:START|DONE)(?:__|[_-])/i.test(command)
+  ) {
+    throw new ShellDriverError('COMMAND_NOT_AUDITABLE', '命令包含保留的事务边界标记。');
+  }
+  if (isKnownInteractiveCommand(command)) {
+    throw new ShellDriverError(
+      'INTERACTIVE_COMMAND_UNSUPPORTED',
+      '命令需要持续交互或不会返回当前 Shell 提示符，不能作为结构化外部事务提交。',
+    );
   }
 }
 
@@ -171,4 +192,43 @@ function validateNonce(nonce: string): void {
 
 function powerShellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+function isKnownInteractiveCommand(command: string): boolean {
+  const tokens = tokenizeCommand(command);
+  const executable = tokens[0]?.toLowerCase().replaceAll('\\', '/').split('/').pop();
+  if (executable === undefined) return false;
+  if (
+    ['ssh', 'telnet', 'top', 'htop', 'vim', 'vi', 'nvim', 'nano', 'less', 'more', 'watch'].includes(
+      executable,
+    )
+  ) {
+    return true;
+  }
+  if (['tmux', 'screen'].includes(executable)) return true;
+  if (['bash', 'zsh', 'sh', 'fish', 'pwsh', 'powershell'].includes(executable)) {
+    return (
+      tokens.length === 1 || tokens.some((token) => token === '-i' || token === '--interactive')
+    );
+  }
+  if (['python', 'python3', 'node', 'nodejs', 'irb', 'lua'].includes(executable)) {
+    return (
+      tokens.length === 1 || tokens.some((token) => token === '-i' || token === '--interactive')
+    );
+  }
+  if (
+    (executable === 'docker' || executable === 'podman') &&
+    tokens.some((token) => token.toLowerCase() === 'exec')
+  ) {
+    const execIndex = tokens.findIndex((token) => token.toLowerCase() === 'exec');
+    const execArguments = execIndex < 0 ? [] : tokens.slice(execIndex + 1);
+    const hasInteractive = execArguments.some((token) => /^(?:-[^-]*i|--interactive)/i.test(token));
+    const hasTty = execArguments.some((token) => /^(?:-[^-]*t|--tty)/i.test(token));
+    return hasInteractive && hasTty;
+  }
+  return false;
+}
+
+function tokenizeCommand(command: string): string[] {
+  return command.match(/'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|\S+/g) ?? [];
 }

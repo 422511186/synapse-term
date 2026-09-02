@@ -14,6 +14,10 @@ describe('Share Text', () => {
     expect(text).toContain('sessionId：session-1');
     expect(text).toContain('启动 Shell 提示：Git Bash（仅供参考）');
     expect(text).toContain('先调用 synapse_status');
+    expect(text).toContain('必须调用 synapse_observe');
+    expect(text).toContain('expectedContextId');
+    expect(text).toContain('tail: true');
+    expect(text).toContain('nextCursor');
     expect(text).toContain('not_ready 时不要重复调用 synapse_status');
     expect(text).toContain('远端 Shell 提示符就绪后直接调用 synapse_execute');
     expect(text).toContain('Probe 失败');
@@ -45,13 +49,16 @@ describe('Share Text', () => {
   it('keeps user-editable Share Text fields on one safe line', () => {
     const text = buildShareText({
       sessionId: 'session-3',
-      terminalType: 'Power\nShell\u0007',
-      title: '系统\n监控',
+      terminalType: 'Power\nShell\u0007\u0085\u2028',
+      title: '系统\n监控\u2029',
     });
 
     expect(text).toContain('Session Alias：系统 监控');
     expect(text).toContain('启动 Shell 提示：Power Shell（仅供参考）');
     expect(text).not.toContain('\u0007');
+    expect(text).not.toContain('\u0085');
+    expect(text).not.toContain('\u2028');
+    expect(text).not.toContain('\u2029');
     expect(text).not.toContain('super-secret');
   });
 });

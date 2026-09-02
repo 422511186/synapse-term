@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   createSessionState,
   invalidateSessionEnvironment,
+  replaceSessionExecutionContext,
   resizeSession,
   transitionSessionPty,
   verifySessionEnvironment,
@@ -22,8 +25,12 @@ export interface SessionActorOptions {
   hideCompletionProbeEcho?: boolean;
 }
 
+export interface ExternalWriteGuard {
+  isCancelled(): boolean;
+}
+
 export type SessionActorEvent =
-  | { type: 'pty_output'; sequence: number; data: string }
+  | { type: 'pty_output'; sequence: number; data: string; historyData?: string }
   | { type: 'terminal_output'; sequence: number; data: string }
   | { type: 'environment_invalidated'; capabilityEpoch: number }
   | { type: 'osc_777'; payload: string }
@@ -51,6 +58,7 @@ export class SessionActor {
       id,
       title: options.title,
       terminalType: options.terminalType,
+      executionContextId: randomUUID(),
       ...(options.columns === undefined ? {} : { columns: options.columns }),
       ...(options.rows === undefined ? {} : { rows: options.rows }),
     });
@@ -81,7 +89,11 @@ export class SessionActor {
               const terminalData = this.#hideCompletionProbeEcho
                 ? environmentProbeData.hiddenData
                 : event.data;
-              this.#emitOutput(inputEcho.protocolData, terminalData);
+              this.#emitOutput(
+                inputEcho.protocolData,
+                terminalData,
+                environmentProbeData.protocolData,
+              );
             }
           }
         });
@@ -104,13 +116,40 @@ export class SessionActor {
     return structuredClone(this.#state);
   }
 
+  /** 已发出的公共 PTY 输出事件序号，用于建立当前 Sharing 输出边界。 */
+  get outputSequence(): number {
+    return this.#outputSequence;
+  }
+
   onEvent(listener: (event: SessionActorEvent) => void): () => void {
+    if (this.#disposed) return () => undefined;
     this.#eventListeners.add(listener);
     return () => this.#eventListeners.delete(listener);
   }
 
+  /**
+   * 在当前串行队列排空后订阅后续 PTY 输出。
+   *
+   * Sharing 需要一个不会把已经排队的输出误判为边界之后输出的原子切点；
+   * 订阅本身也必须在这个切点内完成，不能由调用方先读 outputSequence 再稍后注册监听器。
+   */
+  onPtyOutputAfterBoundary(
+    listener: (event: Extract<SessionActorEvent, { type: 'pty_output' }>) => void,
+  ): Promise<() => void> {
+    return this.#enqueue(() => {
+      if (this.#disposed) return () => undefined;
+      const boundary = this.#outputSequence;
+      const onEvent = (event: SessionActorEvent): void => {
+        if (event.type === 'pty_output' && event.sequence > boundary) listener(event);
+      };
+      this.#eventListeners.add(onEvent);
+      return () => this.#eventListeners.delete(onEvent);
+    });
+  }
+
   markPtyRunning(): Promise<void> {
     return this.#enqueue(() => {
+      if (this.#disposed) return;
       const transition = transitionSessionPty(this.#state, 'running');
       if (!transition.ok) throw new Error(transition.error);
       this.#state = transition.value;
@@ -119,22 +158,25 @@ export class SessionActor {
 
   rename(title: string): Promise<void> {
     return this.#enqueue(() => {
+      if (this.#disposed) return;
       this.#state = { ...this.#state, title: title.trim() };
     });
   }
 
   writeUser(data: string): Promise<{ ok: true } | { ok: false; error: 'session-not-running' }> {
     return this.#enqueue(() => {
-      if (this.#state.pty !== 'running') {
+      if (this.#disposed || this.#state.pty !== 'running') {
         return { ok: false as const, error: 'session-not-running' as const };
       }
-      this.#state = invalidateSessionEnvironment(this.#state);
-      this.#emit({
-        type: 'environment_invalidated',
-        capabilityEpoch: this.#state.environment.capabilityEpoch,
-      });
+      this.#invalidateEnvironment();
       this.#backend.write(data);
       return { ok: true as const };
+    });
+  }
+
+  invalidateEnvironment(): Promise<void> {
+    return this.#enqueue(() => {
+      if (!this.#disposed && this.#state.pty === 'running') this.#invalidateEnvironment();
     });
   }
 
@@ -144,6 +186,7 @@ export class SessionActor {
     verifiedAt = new Date().toISOString(),
   ): Promise<void> {
     return this.#enqueue(() => {
+      if (this.#disposed) return;
       this.#state = verifySessionEnvironment(this.#state, {
         dialect,
         platform,
@@ -153,9 +196,33 @@ export class SessionActor {
     });
   }
 
+  verifyEnvironmentIfCurrent(
+    dialect: Exclude<ExecutionDialect, 'unknown'>,
+    platform: Exclude<EnvironmentPlatform, 'unknown'>,
+    expectedCapabilityEpoch: number,
+    verifiedAt = new Date().toISOString(),
+  ): Promise<boolean> {
+    return this.#enqueue(() => {
+      if (
+        this.#disposed ||
+        this.#state.pty !== 'running' ||
+        this.#state.environment.capabilityEpoch !== expectedCapabilityEpoch
+      ) {
+        return false;
+      }
+      this.#state = verifySessionEnvironment(this.#state, {
+        dialect,
+        platform,
+        source: 'probe',
+        verifiedAt,
+      });
+      return true;
+    });
+  }
+
   writeProbe(data: string): Promise<{ ok: true } | { ok: false; error: 'session-not-running' }> {
     return this.#enqueue(() => {
-      if (this.#state.pty !== 'running') {
+      if (this.#disposed || this.#state.pty !== 'running') {
         return { ok: false as const, error: 'session-not-running' as const };
       }
       this.#backend.write(data);
@@ -165,6 +232,7 @@ export class SessionActor {
 
   setProbeEchoVisibility(hide: boolean): Promise<void> {
     return this.#enqueue(() => {
+      if (this.#disposed) return;
       this.#hideCompletionProbeEcho = hide;
     });
   }
@@ -172,15 +240,25 @@ export class SessionActor {
   writeExternal(
     data: string,
     expectedEnvironmentEpoch: number,
+    expectedContextId: string,
+    guard?: ExternalWriteGuard,
   ): Promise<
     | { ok: true }
     | {
         ok: false;
-        error: 'stale-environment-epoch' | 'environment-unverified' | 'session-not-running';
+        error:
+          | 'stale-environment-epoch'
+          | 'stale-execution-context'
+          | 'environment-unverified'
+          | 'session-not-running'
+          | 'external-write-cancelled';
       }
   > {
     return this.#enqueue(() => {
-      if (this.#state.pty !== 'running') {
+      if (guard?.isCancelled() === true) {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      if (this.#disposed || this.#state.pty !== 'running') {
         return { ok: false as const, error: 'session-not-running' as const };
       }
       if (this.#state.environment.verificationStatus !== 'verified') {
@@ -189,13 +267,18 @@ export class SessionActor {
       if (this.#state.environment.capabilityEpoch !== expectedEnvironmentEpoch) {
         return { ok: false as const, error: 'stale-environment-epoch' as const };
       }
+      if (this.#state.executionContextId !== expectedContextId) {
+        return { ok: false as const, error: 'stale-execution-context' as const };
+      }
       this.#backend.write(data);
+      this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
       return { ok: true as const };
     });
   }
 
   resize(columns: number, rows: number): Promise<void> {
     return this.#enqueue(() => {
+      if (this.#disposed) return;
       this.#state = resizeSession(this.#state, columns, rows);
       if (this.#state.pty === 'running') this.#backend.resize(columns, rows);
     });
@@ -203,13 +286,13 @@ export class SessionActor {
 
   interrupt(): Promise<void> {
     return this.#enqueue(() => {
-      if (this.#state.pty === 'running') this.#backend.interrupt();
+      if (!this.#disposed && this.#state.pty === 'running') this.#backend.interrupt();
     });
   }
 
   terminate(): Promise<void> {
     return this.#enqueue(() => {
-      this.#backend.terminate();
+      if (!this.#disposed) this.#backend.terminate();
     });
   }
 
@@ -330,29 +413,33 @@ export class SessionActor {
   #scanOsc777(
     data: string,
   ): Array<{ type: 'output'; data: string } | { type: 'control'; payload: string }> {
-    const prefix = '\u001b]777;';
+    const prefixes = ['\u001b]777;', '\u009d777;'] as const;
     const input = this.#osc777Carry + data;
     this.#osc777Carry = '';
     const events: Array<{ type: 'output'; data: string } | { type: 'control'; payload: string }> =
       [];
     let index = 0;
     while (index < input.length) {
-      const start = input.indexOf(prefix, index);
-      if (start < 0) {
-        const suffixStart = possiblePrefixStart(input, prefix, index);
+      const match = findNextOsc777Prefix(input, prefixes, index);
+      if (match === undefined) {
+        const suffixStart = possibleOsc777PrefixStart(input, prefixes, index);
         if (suffixStart > index)
           events.push({ type: 'output', data: input.slice(index, suffixStart) });
         if (suffixStart < input.length) this.#osc777Carry = input.slice(suffixStart);
         break;
       }
-      if (start > index) events.push({ type: 'output', data: input.slice(index, start) });
-      const end = input.indexOf('\u0007', start + prefix.length);
-      if (end < 0) {
-        this.#osc777Carry = input.slice(start);
+      if (match.start > index)
+        events.push({ type: 'output', data: input.slice(index, match.start) });
+      const terminator = findOscTerminator(input, match.end);
+      if (terminator === undefined) {
+        this.#osc777Carry = limitOsc777Carry(input.slice(match.start), match.end - match.start);
         break;
       }
-      events.push({ type: 'control', payload: input.slice(start + prefix.length, end) });
-      index = end + 1;
+      events.push({
+        type: 'control',
+        payload: input.slice(match.end, terminator.payloadEnd),
+      });
+      index = terminator.end;
     }
     return events;
   }
@@ -421,7 +508,7 @@ export class SessionActor {
       const terminalData = joinPendingInputEcho(
         state.pending.filter((segment) => !segment.terminalDelivered),
       );
-      this.#emitOutput(protocolData, terminalData);
+      this.#emitOutput(protocolData, terminalData, '');
     }
     if (state.promptCarry.length > 0) this.#emitOutput('', state.promptCarry);
     for (const resolve of state.releaseWaiters) resolve();
@@ -434,11 +521,16 @@ export class SessionActor {
     state.releaseWaiters.clear();
   }
 
-  #emitOutput(protocolData: string, terminalData = protocolData): void {
+  #emitOutput(protocolData: string, terminalData = protocolData, historyData = protocolData): void {
     if (protocolData.length === 0 && terminalData.length === 0) return;
     this.#outputSequence += 1;
     if (protocolData.length > 0) {
-      this.#emit({ type: 'pty_output', sequence: this.#outputSequence, data: protocolData });
+      this.#emit({
+        type: 'pty_output',
+        sequence: this.#outputSequence,
+        data: protocolData,
+        ...(historyData.length === 0 ? { historyData: '' } : { historyData }),
+      });
     }
     if (terminalData.length > 0) this.#emitTerminalOutput(terminalData);
   }
@@ -451,6 +543,17 @@ export class SessionActor {
     for (const listener of this.#eventListeners) listener(event);
   }
 
+  #invalidateEnvironment(): void {
+    this.#state = replaceSessionExecutionContext(
+      invalidateSessionEnvironment(this.#state),
+      randomUUID(),
+    );
+    this.#emit({
+      type: 'environment_invalidated',
+      capabilityEpoch: this.#state.environment.capabilityEpoch,
+    });
+  }
+
   #enqueue<T>(task: () => T): Promise<T> {
     const next = this.#queue.then(task, task);
     this.#queue = next.then(
@@ -461,12 +564,61 @@ export class SessionActor {
   }
 }
 
+const MAX_OSC777_CARRY_BYTES = 16 * 1024;
+
+function limitOsc777Carry(value: string, prefixLength: number): string {
+  if (Buffer.byteLength(value, 'utf8') <= MAX_OSC777_CARRY_BYTES) return value;
+  const prefix = value.slice(0, prefixLength);
+  const prefixBytes = Buffer.byteLength(prefix, 'utf8');
+  return `${prefix}${takeStringFromEnd(value, MAX_OSC777_CARRY_BYTES - prefixBytes)}`;
+}
+
 function possiblePrefixStart(value: string, prefix: string, from: number): number {
   for (let length = Math.min(prefix.length - 1, value.length - from); length > 0; length -= 1) {
     const start = value.length - length;
     if (start >= from && value.slice(start) === prefix.slice(0, length)) return start;
   }
   return value.length;
+}
+
+function findNextOsc777Prefix(
+  value: string,
+  prefixes: readonly string[],
+  from: number,
+): { start: number; end: number } | undefined {
+  let match: { start: number; end: number } | undefined;
+  for (const prefix of prefixes) {
+    const start = value.indexOf(prefix, from);
+    if (start < 0 || (match !== undefined && start >= match.start)) continue;
+    match = { start, end: start + prefix.length };
+  }
+  return match;
+}
+
+function possibleOsc777PrefixStart(
+  value: string,
+  prefixes: readonly string[],
+  from: number,
+): number {
+  let suffixStart = value.length;
+  for (const prefix of prefixes) {
+    suffixStart = Math.min(suffixStart, possiblePrefixStart(value, prefix, from));
+  }
+  return suffixStart;
+}
+
+function findOscTerminator(
+  value: string,
+  from: number,
+): { payloadEnd: number; end: number } | undefined {
+  const candidates = [
+    { index: value.indexOf('\u0007', from), length: 1 },
+    { index: value.indexOf('\u009c', from), length: 1 },
+    { index: value.indexOf('\u001b\\', from), length: 2 },
+  ].filter((candidate) => candidate.index >= 0);
+  if (candidates.length === 0) return undefined;
+  const first = candidates.reduce((left, right) => (right.index < left.index ? right : left));
+  return { payloadEnd: first.index, end: first.index + first.length };
 }
 
 export interface InputEchoPattern {

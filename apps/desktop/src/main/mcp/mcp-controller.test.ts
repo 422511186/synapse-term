@@ -60,6 +60,11 @@ async function createController(enabled = false) {
   return { controller, queue, serverOperations, sessions };
 }
 
+async function flushActorQueue(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('McpController', () => {
   it('starts only when enabled and reconciles the loopback endpoint', async () => {
     const { controller, serverOperations } = await createController();
@@ -130,6 +135,30 @@ describe('McpController', () => {
     ).resolves.toMatchObject({ status: 'expired' });
   });
 
+  it('cleans Sharing directly when the Session PTY exits', async () => {
+    const harness = await createController(true);
+    const session = await harness.sessions.add('session-direct-exit');
+    await session.actor.verifyEnvironment('posix', 'unix');
+    await harness.controller.share('session-direct-exit');
+
+    const pending = harness.controller.callTool('synapse_execute', {
+      sessionId: 'session-direct-exit',
+      command: 'npm test',
+      expectedContextId: session.actor.snapshot.executionContextId,
+    });
+    await vi.waitFor(() => expect(session.backend.writes.join('')).toContain('npm test'));
+
+    session.backend.emitExit(1);
+    await flushActorQueue();
+
+    expect(harness.controller.listShared()).toEqual([]);
+    await expect(pending).resolves.toMatchObject({
+      status: 'unknown',
+      retryable: false,
+      safeToResubmit: false,
+    });
+  });
+
   it('invalidates an approval when Sharing is cancelled before the decision', async () => {
     const harness = await createController();
     const session = await harness.sessions.add('session-approval');
@@ -139,6 +168,7 @@ describe('McpController', () => {
     const pending = harness.controller.callTool('synapse_execute', {
       sessionId: 'session-approval',
       command: 'deploy-production.sh',
+      expectedContextId: session.actor.snapshot.executionContextId,
     });
     await vi.waitFor(() => expect(harness.queue.current?.sessionId).toBe('session-approval'));
     const approvalId = harness.queue.current?.id ?? '';
@@ -158,11 +188,16 @@ describe('McpController', () => {
     const pending = harness.controller.callTool('synapse_execute', {
       sessionId: 'session-running',
       command: 'npm test',
+      expectedContextId: session.actor.snapshot.executionContextId,
     });
     await vi.waitFor(() => expect(session.backend.writes.join('')).toContain('npm test'));
     await expect(harness.controller.unshare('session-running')).resolves.toEqual([]);
 
-    await expect(pending).resolves.toMatchObject({ status: 'interrupted' });
+    await expect(pending).resolves.toMatchObject({
+      status: 'unknown',
+      retryable: false,
+      safeToResubmit: false,
+    });
     expect(session.backend.interrupted).toBe(1);
   });
 
@@ -198,5 +233,121 @@ describe('McpController', () => {
     await harness.controller.updateSettings({ enabled: false });
 
     expect(harness.controller.listShared()).toEqual([]);
+  });
+
+  it('clears Sharing when the embedded endpoint is replaced', async () => {
+    const harness = await createController(true);
+    await harness.sessions.add('session-endpoint-replaced');
+    await harness.controller.share('session-endpoint-replaced');
+    const replacementOperations: string[] = [];
+
+    harness.controller.setEndpoint({
+      start: async () => {
+        replacementOperations.push('start');
+      },
+      stop: async () => {
+        replacementOperations.push('stop');
+      },
+    });
+
+    expect(harness.controller.listShared()).toEqual([]);
+    await expect(
+      harness.controller.callTool('synapse_status', { sessionId: 'session-endpoint-replaced' }),
+    ).resolves.toMatchObject({ status: 'expired' });
+    await Promise.resolve();
+    expect(replacementOperations).toEqual([]);
+    expect(harness.serverOperations).toContain('stop');
+  });
+
+  it('clears Sharing before restarting the endpoint after a port change', async () => {
+    const harness = await createController(true);
+    await harness.sessions.add('session-endpoint-restart');
+    await harness.controller.share('session-endpoint-restart');
+
+    await harness.controller.updateSettings({ port: 5_124 });
+
+    expect(harness.controller.listShared()).toEqual([]);
+  });
+
+  it('starts the output history at the Sharing boundary', async () => {
+    const harness = await createController(true);
+    const session = await harness.sessions.add('session-boundary');
+    await session.actor.verifyEnvironment('posix', 'unix');
+    session.backend.emitData('before-share\r\n');
+    await flushActorQueue();
+
+    await harness.controller.share('session-boundary');
+    session.backend.emitData('after-share\r\n');
+    await flushActorQueue();
+
+    await expect(
+      harness.controller.callTool('synapse_observe', { sessionId: 'session-boundary' }),
+    ).resolves.toMatchObject({ output: 'after-share\r\n' });
+    session.actor.dispose();
+  });
+
+  it('does not capture PTY output queued before the Sharing boundary', async () => {
+    const harness = await createController(true);
+    const session = await harness.sessions.add('session-boundary-race');
+    session.backend.emitData('before-share-queued\r\n');
+
+    await harness.controller.share('session-boundary-race');
+    await flushActorQueue();
+    session.backend.emitData('after-share\r\n');
+    await flushActorQueue();
+
+    await expect(
+      harness.controller.callTool('synapse_observe', { sessionId: 'session-boundary-race' }),
+    ).resolves.toMatchObject({ output: 'after-share\r\n' });
+    session.actor.dispose();
+  });
+
+  it('invalidates old output cursors when Sharing is recreated', async () => {
+    const harness = await createController(true);
+    const session = await harness.sessions.add('session-reshare');
+    await harness.controller.share('session-reshare');
+    session.backend.emitData('first-sharing\r\n');
+    await flushActorQueue();
+    const first = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-reshare',
+    })) as { nextCursor: string };
+
+    await harness.controller.unshare('session-reshare');
+    await harness.controller.share('session-reshare');
+    session.backend.emitData('second-sharing\r\n');
+    await flushActorQueue();
+
+    await expect(
+      harness.controller.callTool('synapse_observe', {
+        sessionId: 'session-reshare',
+        afterCursor: first.nextCursor,
+      }),
+    ).rejects.toThrow(/^OUTPUT_CURSOR_STALE:/);
+    await expect(
+      harness.controller.callTool('synapse_observe', { sessionId: 'session-reshare' }),
+    ).resolves.toMatchObject({ output: 'second-sharing\r\n' });
+    session.actor.dispose();
+  });
+
+  it('does not accept a cursor from another Session', async () => {
+    const harness = await createController(true);
+    const first = await harness.sessions.add('session-one');
+    const second = await harness.sessions.add('session-two');
+    await harness.controller.share('session-one');
+    await harness.controller.share('session-two');
+    second.backend.emitData('session-two-output\r\n');
+    await flushActorQueue();
+    const page = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-two',
+    })) as { nextCursor: string };
+
+    await expect(
+      harness.controller.callTool('synapse_observe', {
+        sessionId: 'session-one',
+        afterCursor: page.nextCursor,
+      }),
+    ).rejects.toThrow(/^OUTPUT_CURSOR_STALE:/);
+    first.actor.dispose();
+    second.actor.dispose();
   });
 });
