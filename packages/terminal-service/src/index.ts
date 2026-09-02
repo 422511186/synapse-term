@@ -16,5 +16,6 @@ export * from './shell/shell-probe.js';
 export * from './session/session-actor.js';
 export * from './session/session-manager.js';
 export * from './session/output-buffer.js';
+export * from './session/terminal-text-sanitizer.js';
 export * from './session/external-lease.js';
 export * from './session/command-executor.js';

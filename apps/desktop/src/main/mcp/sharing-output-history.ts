@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import type { OutputCursor } from '@synapse-term/domain';
+import { TerminalTextSanitizer } from '@synapse-term/terminal-service';
 
 import { SecretRedactor, type RedactionStream } from './secret-redactor.js';
 
@@ -41,7 +42,6 @@ export const MAX_SHARING_OUTPUT_HISTORY_BYTES = 256 * 1024;
 export const MAX_SHARING_OUTPUT_PAGE_BYTES = 64 * 1024;
 const DEFAULT_MAX_BYTES = MAX_SHARING_OUTPUT_HISTORY_BYTES;
 const DEFAULT_MAX_PAGE_BYTES = MAX_SHARING_OUTPUT_PAGE_BYTES;
-const MAX_TERMINAL_CONTROL_CARRY_BYTES = 16 * 1024;
 
 /**
  * 当前 Sharing 的短期 PTY 输出历史。
@@ -99,9 +99,12 @@ export class SharingOutputHistory {
 
   append(data: string): void {
     if (this.#disposed || data.length === 0) return;
-    const clean = this.#sanitizer.push(data);
-    if (clean.length === 0) return;
-    const redacted = this.#redactor.push(clean);
+    const clean = this.#sanitizer.pushWithEdits(data);
+    for (let index = 0; index < clean.backspaces; index += 1) {
+      if (!this.#redactor.backspace()) this.#removePreviousVisibleCharacters(1);
+    }
+    if (clean.text.length === 0) return;
+    const redacted = this.#redactor.push(clean.text);
     this.#redacted ||= redacted.redacted;
     this.#appendRedacted(redacted.text);
   }
@@ -162,6 +165,14 @@ export class SharingOutputHistory {
     this.#text += data;
     if (Buffer.byteLength(this.#text, 'utf8') > this.#maxBytes) {
       this.#text = takeFromEnd(this.#text, this.#maxBytes);
+    }
+  }
+
+  #removePreviousVisibleCharacters(count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const previous = lastCharacter(this.#text);
+      if (previous === undefined || previous === '\r' || previous === '\n') return;
+      this.#text = this.#text.slice(0, -previous.length);
     }
   }
 
@@ -246,130 +257,6 @@ export class SharingOutputHistory {
   }
 }
 
-export class TerminalTextSanitizer {
-  #escapeCarry = '';
-  #unicodeCarry = '';
-
-  push(data: string): string {
-    const input = this.#escapeCarry + this.#unicodeCarry + data;
-    this.#escapeCarry = '';
-    this.#unicodeCarry = '';
-    let output = '';
-    let index = 0;
-    while (index < input.length) {
-      const character = input[index]!;
-      const code = input.charCodeAt(index);
-      if (character === '\x1b' || isC1SequenceIntroducer(code)) {
-        const end = escapeSequenceEnd(input, index);
-        if (end === undefined) {
-          this.#escapeCarry = limitControlCarry(input.slice(index));
-          break;
-        }
-        index = end;
-        continue;
-      }
-      if (isHighSurrogate(code)) {
-        const nextCode = input.charCodeAt(index + 1);
-        if (isLowSurrogate(nextCode)) {
-          output += input.slice(index, index + 2);
-          index += 2;
-          continue;
-        }
-        if (index + 1 === input.length) {
-          this.#unicodeCarry = character;
-          break;
-        }
-        index += 1;
-        continue;
-      }
-      if (isLowSurrogate(code)) {
-        index += 1;
-        continue;
-      }
-      if (code === 9 || code === 10 || code === 13 || (code >= 0x20 && !isC1Control(code))) {
-        output += character;
-      }
-      index += 1;
-    }
-    return output;
-  }
-
-  flush(): string {
-    this.#escapeCarry = '';
-    this.#unicodeCarry = '';
-    return '';
-  }
-}
-
-function escapeSequenceEnd(value: string, start: number): number | undefined {
-  const first = value[start];
-  const second = value[start + 1];
-  if (first === '\x9b' || (first === '\x1b' && second === '[')) {
-    const from = first === '\x9b' ? start + 1 : start + 2;
-    for (let index = from; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
-      if (code >= 0x40 && code <= 0x7e) return index + 1;
-    }
-    return undefined;
-  }
-  if (
-    (first === '\x1b' && (second === ']' || second === 'P' || second === '^' || second === '_')) ||
-    first === '\x90' ||
-    first === '\x98' ||
-    first === '\x9d' ||
-    first === '\x9e' ||
-    first === '\x9f'
-  ) {
-    const from = first === '\x1b' ? start + 2 : start + 1;
-    for (let index = from; index < value.length; index += 1) {
-      if (value[index] === '\x07') return index + 1;
-      if (value[index] === '\x1b' && value[index + 1] === '\\') return index + 2;
-      if (value[index] === '\x9c') return index + 1;
-    }
-    return undefined;
-  }
-  return Math.min(start + 2, value.length);
-}
-
-function limitControlCarry(value: string): string {
-  if (Buffer.byteLength(value, 'utf8') <= MAX_TERMINAL_CONTROL_CARRY_BYTES) return value;
-
-  const prefixLength = controlSequencePrefixLength(value);
-  const prefix = value.slice(0, prefixLength);
-  const prefixBytes = Buffer.byteLength(prefix, 'utf8');
-  return `${prefix}${takeFromEnd(value, MAX_TERMINAL_CONTROL_CARRY_BYTES - prefixBytes)}`;
-}
-
-function controlSequencePrefixLength(value: string): number {
-  if (value.startsWith('\x1b') && ['[', ']', 'P', '^', '_'].includes(value[1] ?? '')) return 2;
-  if (value.startsWith('\x1b')) return 1;
-  if (isC1SequenceIntroducer(value.charCodeAt(0))) return 1;
-  return Math.min(1, value.length);
-}
-
-function isC1Control(code: number): boolean {
-  return code >= 0x80 && code <= 0x9f;
-}
-
-function isC1SequenceIntroducer(code: number): boolean {
-  return (
-    code === 0x90 ||
-    code === 0x98 ||
-    code === 0x9b ||
-    code === 0x9d ||
-    code === 0x9e ||
-    code === 0x9f
-  );
-}
-
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff;
-}
-
 function positiveSafeInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be positive`);
   return value;
@@ -378,6 +265,10 @@ function positiveSafeInteger(value: number, name: string): number {
 function requireNonEmpty(value: string, name: string): string {
   if (value.length === 0) throw new RangeError(`${name} must not be empty`);
   return value;
+}
+
+function lastCharacter(value: string): string | undefined {
+  return [...value].at(-1);
 }
 
 function takeFromStart(value: string, maxBytes: number): string {

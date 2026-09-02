@@ -1,3 +1,5 @@
+import { TerminalTextSanitizer } from './terminal-text-sanitizer.js';
+
 export interface OutputBufferOptions {
   maxBytes?: number;
 }
@@ -21,7 +23,7 @@ export class OutputBuffer {
   #head = '';
   #tail = '';
   #truncated = false;
-  #escapeCarry = '';
+  readonly #sanitizer = new TerminalTextSanitizer();
 
   constructor(options: OutputBufferOptions = {}) {
     this.#maxBytes = options.maxBytes ?? 64 * 1024;
@@ -35,21 +37,7 @@ export class OutputBuffer {
       throw new RangeError('cursor must be a non-decreasing safe integer');
     }
     this.#cursor = cursor;
-    const visible = this.#stripEscapeSequences(data);
-    if (visible.length === 0) return;
-
-    this.#totalBytes += Buffer.byteLength(visible, 'utf8');
-    if (!this.#truncated) {
-      this.#rendered += visible;
-      if (Buffer.byteLength(this.#rendered, 'utf8') <= this.#maxBytes) return;
-      const half = Math.floor(this.#maxBytes / 2);
-      this.#head = takeFromStart(this.#rendered, half);
-      this.#tail = takeFromEnd(this.#rendered, half);
-      this.#rendered = '';
-      this.#truncated = true;
-      return;
-    }
-    this.#tail = takeFromEnd(this.#tail + visible, Math.floor(this.#maxBytes / 2));
+    this.#consume(data);
   }
 
   snapshot(): OutputSnapshot {
@@ -73,43 +61,49 @@ export class OutputBuffer {
     };
   }
 
-  #stripEscapeSequences(value: string): string {
-    const input = this.#escapeCarry + value;
-    let visible = '';
-    let index = 0;
-    while (index < input.length) {
-      if (input[index] !== '\x1b') {
-        const code = input.charCodeAt(index);
-        if (code === 9 || code === 10 || code === 13 || code >= 32) visible += input[index];
-        index += 1;
-        continue;
-      }
-      const end = escapeSequenceEnd(input, index);
-      if (end < 0) break;
-      index = end;
+  #consume(value: string): void {
+    const clean = this.#sanitizer.pushWithEdits(value);
+    for (let index = 0; index < clean.backspaces; index += 1) {
+      this.#erasePreviousCharacter();
     }
-    this.#escapeCarry = index < input.length && input[index] === '\x1b' ? input.slice(index) : '';
-    return visible;
+    this.#appendVisible(clean.text);
+  }
+
+  #appendVisible(visible: string): void {
+    if (visible.length === 0) return;
+
+    this.#totalBytes += Buffer.byteLength(visible, 'utf8');
+    if (!this.#truncated) {
+      this.#rendered += visible;
+      if (Buffer.byteLength(this.#rendered, 'utf8') <= this.#maxBytes) return;
+      const half = Math.floor(this.#maxBytes / 2);
+      this.#head = takeFromStart(this.#rendered, half);
+      this.#tail = takeFromEnd(this.#rendered, half);
+      this.#rendered = '';
+      this.#truncated = true;
+      return;
+    }
+    this.#tail = takeFromEnd(this.#tail + visible, Math.floor(this.#maxBytes / 2));
+  }
+
+  #erasePreviousCharacter(): void {
+    if (!this.#truncated) {
+      const character = lastCharacter(this.#rendered);
+      if (character === undefined || character === '\r' || character === '\n') return;
+      this.#rendered = this.#rendered.slice(0, -character.length);
+      this.#totalBytes -= Buffer.byteLength(character, 'utf8');
+      return;
+    }
+
+    const character = lastCharacter(this.#tail);
+    if (character === undefined || character === '\r' || character === '\n') return;
+    this.#tail = this.#tail.slice(0, -character.length);
+    this.#totalBytes -= Buffer.byteLength(character, 'utf8');
   }
 }
 
-function escapeSequenceEnd(value: string, start: number): number {
-  const kind = value[start + 1];
-  if (kind === '[') {
-    for (let index = start + 2; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
-      if (code >= 0x40 && code <= 0x7e) return index + 1;
-    }
-    return -1;
-  }
-  if (kind === ']' || kind === 'P' || kind === '^' || kind === '_') {
-    for (let index = start + 2; index < value.length; index += 1) {
-      if (value[index] === '\x07') return index + 1;
-      if (value[index] === '\x1b' && value[index + 1] === '\\') return index + 2;
-    }
-    return -1;
-  }
-  return start + Math.min(2, value.length - start);
+function lastCharacter(value: string): string | undefined {
+  return [...value].at(-1);
 }
 
 function takeFromStart(value: string, maxBytes: number): string {

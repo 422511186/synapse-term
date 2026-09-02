@@ -12,6 +12,111 @@ describe('PolicyEngine', () => {
     expect(decision.reasons.join(' ')).toMatch(/read-only/i);
   });
 
+  it('classifies standard read-only filters and shell builtins as lowest risk', async () => {
+    const engine = new PolicyEngine();
+
+    await expect(engine.classify('printf "b\\na\\n" | sort')).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('true')).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('false')).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      requiresConfirmation: false,
+    });
+  });
+
+  it('classifies simple if blocks from known read-only commands without hiding uncertainty', async () => {
+    const engine = new PolicyEngine();
+
+    await expect(engine.classify("if true; then printf 'MCP_OK'; fi")).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      confidence: 'medium',
+      requiresConfirmation: false,
+    });
+    await expect(
+      engine.classify('if [ -f input.txt ]; then cat input.txt; fi'),
+    ).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      confidence: 'medium',
+      requiresConfirmation: false,
+    });
+    await expect(
+      engine.classify('if true\nthen\nprintf "MCP_OK"\nelse\necho fallback\nfi'),
+    ).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      confidence: 'medium',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('if true; then rm -f output.txt; fi')).resolves.toMatchObject({
+      level: 'mutating',
+      risk: 'mutating',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('if true; then curl example.com; fi')).resolves.toMatchObject({
+      level: 'unknown',
+      risk: 'unknown',
+      confidence: 'low',
+      requiresConfirmation: true,
+    });
+  });
+
+  it('classifies macOS memory diagnostics as read-only', async () => {
+    const engine = new PolicyEngine();
+
+    await expect(engine.classify('vm_stat')).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      confidence: 'high',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('sysctl -n hw.memsize')).resolves.toMatchObject({
+      level: 'read_only',
+      risk: 'read_only',
+      confidence: 'high',
+      requiresConfirmation: false,
+    });
+  });
+
+  it('keeps sysctl writes outside the read-only classification', async () => {
+    await expect(
+      new PolicyEngine().classify('sysctl -w kern.maxfiles=100000'),
+    ).resolves.toMatchObject({
+      level: 'privileged',
+      risk: 'privileged',
+      requiresConfirmation: true,
+    });
+  });
+
+  it('keeps sort output options conservative because they write files', async () => {
+    const engine = new PolicyEngine();
+
+    await expect(engine.classify('sort -o sorted.txt input.txt')).resolves.toMatchObject({
+      level: 'mutating',
+      risk: 'mutating',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify('sort --output=sorted.txt input.txt')).resolves.toMatchObject({
+      level: 'mutating',
+      risk: 'mutating',
+      requiresConfirmation: false,
+    });
+    await expect(engine.classify("sort '--output=sorted.txt' input.txt")).resolves.toMatchObject({
+      level: 'mutating',
+      risk: 'mutating',
+      requiresConfirmation: false,
+    });
+  });
+
   it('classifies package commands as low-risk writes', async () => {
     const decision = await new PolicyEngine().classify('npm test');
     expect(decision.level).toBe('mutating');

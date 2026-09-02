@@ -125,6 +125,29 @@ describe('SharingOutputHistory', () => {
     expect(history.read().output).toBe('saferedvisible\r\n');
   });
 
+  it('applies terminal backspace redraws before retaining readable history', () => {
+    const history = new SharingOutputHistory({ sessionId: 'session-1' });
+    history.append('e\becho MCP_OK\r\n');
+
+    expect(history.read().output).toBe('echo MCP_OK\r\n');
+  });
+
+  it('applies terminal backspace redraws across output history appends', () => {
+    const history = new SharingOutputHistory({ sessionId: 'session-1' });
+    history.append('e');
+    history.append('\becho MCP_OK\r\n');
+
+    expect(history.read().output).toBe('echo MCP_OK\r\n');
+  });
+
+  it('normalizes carriage-return prompt redraws before retaining output history', () => {
+    const history = new SharingOutputHistory({ sessionId: 'session-1' });
+    history.append(`%${' '.repeat(40)}`);
+    history.append('\r \r\ruser@host ~ % \r\r\n');
+
+    expect(history.read().output).toBe('user@host ~ % \r\n');
+  });
+
   it('removes split DCS controls and C1 control characters before retention', () => {
     const history = new SharingOutputHistory({ sessionId: 'session-1' });
     history.append('before\x1b_777;hidden');

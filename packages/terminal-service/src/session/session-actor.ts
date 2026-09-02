@@ -16,6 +16,7 @@ import {
 } from '@synapse-term/domain';
 
 import { splitTerminalOutput, TERMINAL_OUTPUT_FRAME_BYTES } from './output-frame.js';
+import { TerminalTextSanitizer } from './terminal-text-sanitizer.js';
 
 export interface SessionActorOptions {
   title: string;
@@ -336,6 +337,7 @@ export class SessionActor {
         completionFrameSeen: false,
         completionPromptHandled: false,
         promptCarry: '',
+        promptContext: '',
         releaseWaiters: new Set(),
       });
     }
@@ -639,6 +641,7 @@ interface InputEchoSuppression extends InputEchoPattern {
   completionPromptHandled: boolean;
   promptCandidate?: string | undefined;
   promptCarry: string;
+  promptContext: string;
   releaseTimer?: NodeJS.Timeout | undefined;
   releaseWaiters: Set<() => void>;
 }
@@ -710,6 +713,10 @@ function stripSuppressedEcho(
   const start = findFlexibleMarker(data, state.start, 0);
   if (start !== undefined) {
     const candidate = slicePendingInputEcho(segments, start.start);
+    const promptContext = `${state.promptContext}${data}`;
+    const promptCandidate =
+      findPromptCandidate(promptContext, state.promptContext.length + start.start) ??
+      state.promptCandidate;
     const end = findFlexibleMarker(data, state.end, start.end);
     const matchingState: InputEchoSuppression = {
       ...state,
@@ -719,8 +726,9 @@ function stripSuppressedEcho(
       probeEchoCompleted: false,
       completionFrameSeen: false,
       completionPromptHandled: false,
-      promptCandidate: findPromptCandidate(data, start.start) ?? state.promptCandidate,
+      promptCandidate,
       promptCarry: '',
+      promptContext: '',
     };
     if (end === undefined) {
       return {
@@ -741,6 +749,7 @@ function stripSuppressedEcho(
   const suffixLength = trailingMarkerWindow(data, state.start, 0);
   const suffixStart = data.length - suffixLength;
   const pending = suffixLength > 0 ? slicePendingInputEcho(segments, suffixStart) : [];
+  const promptContext = limitPromptContext(`${state.promptContext}${data.slice(0, suffixStart)}`);
   return {
     output: data.slice(0, suffixStart),
     hiddenOutput: data.slice(0, suffixStart),
@@ -752,11 +761,9 @@ function stripSuppressedEcho(
       probeEchoCompleted: suffixLength > 0 ? false : state.probeEchoCompleted,
       completionFrameSeen: suffixLength > 0 ? false : state.completionFrameSeen,
       completionPromptHandled: suffixLength > 0 ? false : state.completionPromptHandled,
-      promptCandidate:
-        suffixLength > 0
-          ? (findPromptCandidate(data, suffixStart) ?? state.promptCandidate)
-          : state.promptCandidate,
+      promptCandidate: state.promptCandidate,
       promptCarry: suffixLength > 0 ? '' : state.promptCarry,
+      promptContext,
     },
   };
 }
@@ -784,7 +791,7 @@ function finishSuppressedInputEcho(
       probeEchoHidden,
     );
     return {
-      output: `${prefix}${afterEnd.slice(0, boundaryEnd)}${continued.output}`,
+      output: `${prefix}${afterEnd.slice(0, lineBoundary)}${continued.output}`,
       hiddenOutput: `${prefix}${afterEnd.slice(0, lineBoundary)}${continued.hiddenOutput}`,
       state: continued.state,
     };
@@ -808,7 +815,6 @@ function stripCompletionPrompt(
   probeEchoHidden: boolean,
 ): { output: string; hiddenOutput: string; state: InputEchoSuppression } {
   if (
-    !probeEchoHidden ||
     !state.completionFrameSeen ||
     state.completionPromptHandled ||
     state.promptCandidate === undefined
@@ -816,12 +822,14 @@ function stripCompletionPrompt(
     return { output: data, hiddenOutput: data, state };
   }
 
-  const combined = `${state.promptCarry}${data}`;
+  const promptCarry = state.promptCarry;
+  const combined = `${promptCarry}${data}`;
   const prompt = findPromptAtLineBoundary(combined, state.promptCandidate);
   if (prompt !== undefined) {
+    const output = `${combined.slice(0, prompt.start)}${combined.slice(prompt.end)}`;
     return {
-      output: data,
-      hiddenOutput: `${combined.slice(0, prompt.start)}${combined.slice(prompt.end)}`,
+      output,
+      hiddenOutput: probeEchoHidden ? output : data,
       state: {
         ...state,
         phase: 'searching',
@@ -834,8 +842,8 @@ function stripCompletionPrompt(
   const suffixLength = trailingPromptWindow(combined, state.promptCandidate);
   const suffixStart = combined.length - suffixLength;
   return {
-    output: data,
-    hiddenOutput: combined.slice(0, suffixStart),
+    output: combined.slice(0, suffixStart),
+    hiddenOutput: probeEchoHidden ? combined.slice(0, suffixStart) : data,
     state: { ...state, promptCarry: combined.slice(suffixStart) },
   };
 }
@@ -895,9 +903,13 @@ function findPromptCandidate(input: string, markerStart: number): string | undef
   const lastCarriageReturn = input.lastIndexOf('\r', markerStart - 1);
   const lastLineFeed = input.lastIndexOf('\n', markerStart - 1);
   const lineStart = Math.max(lastCarriageReturn, lastLineFeed) + 1;
-  const candidate = removeTerminalEchoControls(input.slice(lineStart, markerStart));
+  const candidate = new TerminalTextSanitizer().push(input.slice(lineStart, markerStart));
   if (candidate.length === 0 || candidate.length > 1_024) return undefined;
   return candidate;
+}
+
+function limitPromptContext(value: string): string {
+  return takeStringFromEnd(value, 4 * 1024);
 }
 
 function findPromptAtLineBoundary(input: string, marker: string): FlexibleMarkerMatch | undefined {
@@ -924,7 +936,7 @@ function trailingPromptWindow(input: string, marker: string): number {
 
 function isLineStart(input: string, position: number): boolean {
   if (position === 0) return true;
-  const before = removeTerminalEchoControls(input.slice(0, position));
+  const before = new TerminalTextSanitizer().push(input.slice(0, position));
   return before.length === 0 || before.endsWith('\n');
 }
 
@@ -994,8 +1006,27 @@ function stripEnvironmentProbeEcho(
     if (nextState.phase === 'result') {
       const resultPrefix = `${nextState.marker}:`;
       const result = findFlexibleMarker(data, resultPrefix, cursor);
+      const command = findFlexibleMarker(data, nextState.command, cursor);
+      if (command !== undefined && (result === undefined || command.start < result.start)) {
+        output += data.slice(cursor, command.start);
+        const lineEnd = findFlexibleMarker(data, '\n', command.end);
+        if (lineEnd === undefined) {
+          return {
+            output,
+            state: {
+              ...nextState,
+              pending: limitPendingInputEcho(slicePendingInputEcho(segments, command.start)),
+            },
+          };
+        }
+        cursor = lineEnd.end;
+        continue;
+      }
       if (result === undefined) {
-        const suffixLength = trailingMarkerWindow(data, resultPrefix, cursor);
+        const suffixLength = Math.max(
+          trailingMarkerWindow(data, nextState.command, cursor),
+          trailingMarkerWindow(data, resultPrefix, cursor),
+        );
         const suffixStart = data.length - suffixLength;
         return {
           output: `${output}${data.slice(cursor, suffixStart)}`,
@@ -1041,10 +1072,23 @@ function findFlexibleMarker(
   marker: string,
   from: number,
 ): FlexibleMarkerMatch | undefined {
+  const characters = [...marker];
+  const firstCharacter = characters[0];
+  const redrawPrefix =
+    firstCharacter === undefined || firstCharacter === '\r' || firstCharacter === '\n'
+      ? ''
+      : `(?:${escapeRegExp(firstCharacter)}\\x08)?`;
+  const interCharacterLayout = `(?:${terminalEchoControlSequence}| )*`;
   const expression = new RegExp(
-    [...marker]
-      .map((character) => `${escapeRegExp(character)}${terminalEchoControlSequence}*`)
-      .join(''),
+    firstCharacter === undefined
+      ? ''
+      : `${redrawPrefix}${escapeRegExp(firstCharacter)}${characters
+          .slice(1)
+          .map(
+            (character, index) =>
+              `${interCharacterLayout}(?:${escapeRegExp(characters[index]!)}${interCharacterLayout})?${escapeRegExp(character)}`,
+          )
+          .join('')}${terminalEchoTrailingControlSequence}*`,
     'g',
   );
   expression.lastIndex = from;
@@ -1054,9 +1098,22 @@ function findFlexibleMarker(
 
 function trailingMarkerWindow(input: string, marker: string, from: number): number {
   const maxWindow = Math.min(input.length - from, Math.max(64, marker.length * 16));
+  const firstCharacter = marker[0];
   for (let start = input.length - 1; start >= input.length - maxWindow; start -= 1) {
-    const normalized = removeTerminalEchoControls(input.slice(start));
-    if (normalized.length > 0 && marker.startsWith(normalized)) return input.length - start;
+    const hasLeadingRedraw =
+      firstCharacter !== undefined && input.slice(start, start + 2) === `${firstCharacter}\x08`;
+    const normalized = removeTerminalEchoControls(input.slice(hasLeadingRedraw ? start + 1 : start))
+      .replaceAll('\n', '')
+      .trimEnd();
+    if (normalized.length > 0 && marker.startsWith(normalized)) {
+      const redrawStart =
+        firstCharacter !== undefined &&
+        start >= from + 2 &&
+        input.slice(start - 2, start) === `${firstCharacter}\x08`
+          ? start - 2
+          : start;
+      return input.length - redrawStart;
+    }
   }
   return 0;
 }
@@ -1066,6 +1123,8 @@ function escapeRegExp(value: string): string {
 }
 
 const terminalEchoControlSequence =
+  '(?:\\x1b\\[[0-?]*[ -/]*[@-~]|\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)|\\x1b[@-_]|\\x08|\\r\\n|\\r|\\n)';
+const terminalEchoTrailingControlSequence =
   '(?:\\x1b\\[[0-?]*[ -/]*[@-~]|\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)|\\x1b[@-_]|\\x08|\\r)';
 
 function removeTerminalEchoControls(value: string): string {

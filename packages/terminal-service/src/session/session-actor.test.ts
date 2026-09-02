@@ -5,6 +5,11 @@ import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 import { PosixShellDriver } from '../shell/shell-driver.js';
 import { ShellProbe } from '../shell/shell-probe.js';
 import { SessionActor } from './session-actor.js';
+import { TerminalTextSanitizer } from './terminal-text-sanitizer.js';
+
+function completion(nonce: string, exitCode = 0): string {
+  return `\x1b]777;TA;${nonce};${exitCode}\x07`;
+}
 
 describe('SessionActor', () => {
   it('serializes pty output into ordered events', async () => {
@@ -128,6 +133,35 @@ describe('SessionActor', () => {
     expect(protocolOutput.join('')).toContain('__SYNAPSE_DIALECT_probe-ui-hidden__');
     expect(protocolOutput.join('')).toContain('__SYNAPSE_DIALECT_probe-ui-hidden__:0');
     expect(terminalOutput.join('')).not.toContain('SYNAPSE_DIALECT_probe-ui-hidden');
+    probe.dispose();
+    actor.dispose();
+  });
+
+  it('hides a zsh redrawn environment Probe split across PTY chunks', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const historyOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') historyOutput.push(event.historyData ?? event.data);
+    });
+    await actor.markPtyRunning();
+    const probe = new ShellProbe(actor, { nonceFactory: () => 'zsh-redrawn', timeoutMs: 100 });
+    const resultPromise = probe.run({ environmentEpoch: 0 });
+    await vi.waitFor(() => expect(backend.writes.join('')).toContain('zsh-redrawn'));
+
+    backend.emitData('echo __SYNAPSE_DIALECT_zsh-redrawn__:$?\r\n');
+    backend.emitData('\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m     \r \r');
+    backend.emitData('\r\x1b[0m\x1b[27m\x1b[24m\x1b[Jremote% \x1b[K');
+    backend.emitData('\x1b[?2004he\becho ');
+    backend.emitData('__SYNAPSE_DIALECT_zsh-redrawn__:$?\x1b[?2004l\r\r\n');
+    backend.emitData('__SYNAPSE_DIALECT_zsh-redrawn__:0\r\n');
+
+    await expect(resultPromise).resolves.toMatchObject({ mode: 'structured' });
+    expect(historyOutput.join('')).not.toContain('__SYNAPSE_DIALECT_zsh-redrawn__');
     probe.dispose();
     actor.dispose();
   });
@@ -366,6 +400,37 @@ describe('SessionActor', () => {
     actor.dispose();
   });
 
+  it('hides a command completion Probe whose marker is split by terminal auto-wrap', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const dispatch = new PosixShellDriver().buildDispatch('true', 'completion-ui-wrap');
+    actor.suppressInputEcho(dispatch.echoPattern);
+
+    backend.emitData(`prompt$ true\r\n${dispatch.echoPattern.start}${dispatch.echoPattern.end[0]}`);
+    backend.emitData(`\r\n${dispatch.echoPattern.end.slice(1)}\r\n`);
+    backend.emitData(completion('completion-ui-wrap'));
+    await actor.releaseInputEcho(dispatch.echoPattern);
+
+    expect(protocolOutput.join('')).toContain('prompt$ true');
+    expect(protocolOutput.join('')).not.toContain('completion-ui-wrap');
+    expect(terminalOutput.join('')).toContain('prompt$ true');
+    expect(terminalOutput.join('')).not.toContain('completion-ui-wrap');
+    expect(terminalOutput.join('')).not.toContain('printf');
+    expect(terminalOutput.join('')).not.toContain('"');
+    actor.dispose();
+  });
+
   it('does not duplicate the prompt around a hidden command completion Probe', async () => {
     const backend = createFakeTerminalBackend();
     const actor = new SessionActor('s1', backend, {
@@ -395,7 +460,44 @@ describe('SessionActor', () => {
 
     await vi.waitFor(() => expect(terminalOutput.join('')).toContain('prompt$ '));
     expect(terminalOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
-    expect(protocolOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ \nprompt$ ');
+    expect(protocolOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
+    actor.dispose();
+  });
+
+  it('removes the completion prompt after a zsh redraw without duplicating the visible prompt', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.historyData ?? event.data);
+    });
+    await actor.markPtyRunning();
+
+    const dispatch = new PosixShellDriver().buildDispatch('ls', 'completion-ui-redraw');
+    actor.suppressInputEcho(dispatch.echoPattern);
+    const prompt = 'HUAWEI-MateBook-X-Pro% ';
+    const redraw =
+      `\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m${' '.repeat(80)}\r \r\r` +
+      `\x1b[0m\x1b[27m\x1b[24m\x1b[J${prompt}\x1b[K\x1b[?2004h`;
+
+    backend.emitData(`ls\r\noutput\r\n${redraw}`);
+    backend.emitData(`p\b${dispatch.echoPattern.start}`);
+    backend.emitData(dispatch.echoPattern.end);
+    backend.emitData('\r\n');
+    backend.emitData(`${completion('completion-ui-redraw')}${redraw}`);
+
+    await actor.releaseInputEcho(dispatch.echoPattern);
+
+    const readable = new TerminalTextSanitizer().push(protocolOutput.join(''));
+    expect(
+      readable.match(new RegExp(prompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')),
+    ).toHaveLength(1);
+    expect(readable).not.toContain('completion-ui-redraw');
+    expect(readable).not.toContain('printf');
     actor.dispose();
   });
 

@@ -6,6 +6,7 @@ export interface RedactionResult {
 export interface RedactionStream {
   push(value: string): RedactionResult;
   flush(): RedactionResult;
+  backspace(): boolean;
 }
 
 const PATTERNS: readonly RegExp[] = [
@@ -61,6 +62,13 @@ class StreamingRedactor implements RedactionStream {
     const pending = this.#pending;
     this.#pending = '';
     return this.#redactor.redact(pending);
+  }
+
+  backspace(): boolean {
+    const previous = [...this.#pending].at(-1);
+    if (previous === undefined) return false;
+    this.#pending = this.#pending.slice(0, -previous.length);
+    return true;
   }
 }
 

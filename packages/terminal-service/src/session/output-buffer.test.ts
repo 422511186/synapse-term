@@ -23,6 +23,21 @@ describe('OutputBuffer', () => {
     expect(buffer.snapshot().text).toBe('ready');
   });
 
+  it('applies backspace redraws without duplicating visible text', () => {
+    const buffer = new OutputBuffer();
+    buffer.append(1, 'e\becho MCP_OK\r\n');
+
+    expect(buffer.snapshot().text).toBe('echo MCP_OK\r\n');
+  });
+
+  it('normalizes carriage-return prompt redraws before exposing output', () => {
+    const buffer = new OutputBuffer();
+    buffer.append(1, `%${' '.repeat(40)}`);
+    buffer.append(2, '\r \r\ruser@host ~ % \r\r\n');
+
+    expect(buffer.snapshot().text).toBe('user@host ~ % \r\n');
+  });
+
   it('bounds long output with head and tail windows', () => {
     const buffer = new OutputBuffer({ maxBytes: 20 });
     buffer.append(1, 'a'.repeat(30));

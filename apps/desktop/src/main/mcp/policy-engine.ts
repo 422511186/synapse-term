@@ -16,6 +16,7 @@ export interface PolicyHints {
 }
 
 const POSIX_READ_ONLY = new Set([
+  '[',
   'cat',
   'cut',
   'date',
@@ -24,6 +25,7 @@ const POSIX_READ_ONLY = new Set([
   'du',
   'echo',
   'env',
+  'false',
   'find',
   'free',
   'grep',
@@ -36,9 +38,13 @@ const POSIX_READ_ONLY = new Set([
   'pwd',
   'rg',
   'sed',
+  'sort',
   'stat',
   'tail',
+  'test',
+  'true',
   'uname',
+  'vm_stat',
   'whoami',
 ]);
 
@@ -79,6 +85,8 @@ const POWERSHELL_MUTATING = new Set([
   'start-process',
 ]);
 
+const POSIX_CONTROL_KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi']);
+
 function hash(value: string): string {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
@@ -112,13 +120,19 @@ export class PolicyEngine {
     let level: CommandRisk = 'read_only';
     let confidence: PolicyDecision['confidence'] = 'high';
     let hasUnknownSegment = false;
-    for (const segment of command.split(/\s*(?:&&|\|\||[|;])\s*/).filter(Boolean)) {
+    for (const segment of splitCommandSegments(command)) {
       const classified = this.#classifySegment(segment, hints.terminalType, reasons);
       level = higherRisk(level, classified);
       if (classified === 'unknown') {
         hasUnknownSegment = true;
         confidence = 'low';
-      } else if (command.includes('|') || command.includes('&&') || command.includes('||')) {
+      } else if (
+        confidence === 'high' &&
+        (command.includes('|') ||
+          command.includes('&&') ||
+          command.includes('||') ||
+          /\b(?:if|then|elif|else|fi)\b/.test(command))
+      ) {
         confidence = 'medium';
       }
     }
@@ -143,7 +157,11 @@ export class PolicyEngine {
     reasons: string[],
   ): CommandRisk {
     const tokens = tokenize(segment);
-    const name = tokens[0]?.toLowerCase();
+    const commandToken = tokens.find((token) => !POSIX_CONTROL_KEYWORDS.has(token.toLowerCase()));
+    const name = commandToken?.toLowerCase();
+    if (name === undefined && POSIX_CONTROL_KEYWORDS.has(tokens[0]?.toLowerCase() ?? '')) {
+      return 'read_only';
+    }
     if (name === undefined) return 'unknown';
     if (/powershell|pwsh/i.test(terminalType ?? '')) {
       if (name.startsWith('remove-')) {
@@ -164,6 +182,17 @@ export class PolicyEngine {
     }
     if (name === 'systemctl' && ['status', 'is-active', 'show'].includes(tokens[1] ?? '')) {
       return 'read_only';
+    }
+    if (name === 'sysctl') {
+      if (hasSysctlWriteOption(tokens)) {
+        reasons.push('sysctl write options can change kernel state');
+        return 'privileged';
+      }
+      return 'read_only';
+    }
+    if (name === 'sort' && hasSortOutputOption(tokens)) {
+      reasons.push('sort can change filesystem state with -o/--output');
+      return 'mutating';
     }
     if (
       name === 'rm' &&
@@ -186,6 +215,46 @@ export class PolicyEngine {
   }
 }
 
+function hasSortOutputOption(tokens: string[]): boolean {
+  return tokens.slice(1).some((token) => {
+    const normalized = stripSimpleShellQuotes(token).toLowerCase();
+    return (
+      normalized === '-o' ||
+      normalized.startsWith('-o') ||
+      normalized === '--output' ||
+      normalized.startsWith('--output=')
+    );
+  });
+}
+
+function hasSysctlWriteOption(tokens: string[]): boolean {
+  return tokens.slice(1).some((token) => {
+    const normalized = stripSimpleShellQuotes(token).toLowerCase();
+    return (
+      normalized === '-w' ||
+      normalized.startsWith('-w') ||
+      normalized === '--write' ||
+      normalized.startsWith('--write=') ||
+      normalized === '-p' ||
+      normalized.startsWith('-p') ||
+      normalized === '--system' ||
+      normalized.startsWith('--system=') ||
+      normalized.includes('=')
+    );
+  });
+}
+
+function stripSimpleShellQuotes(token: string): string {
+  if (token.length >= 2) {
+    const first = token[0];
+    const last = token[token.length - 1];
+    if ((first === "'" || first === '"') && first === last) {
+      return token.slice(1, -1);
+    }
+  }
+  return token;
+}
+
 function decision(
   level: CommandRisk,
   confidence: PolicyDecision['confidence'],
@@ -206,6 +275,56 @@ function tokenize(segment: string): string[] {
   return segment.match(/'(?:[^']|'\\'')*'|"(?:[^"\\]|\\.)*"|\S+/g) ?? [];
 }
 
+function splitCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let segment = '';
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+
+  const pushSegment = (): void => {
+    const value = segment.trim();
+    if (value.length > 0) segments.push(value);
+    segment = '';
+  };
+
+  for (const character of command) {
+    if (escaped) {
+      segment += character;
+      escaped = false;
+      continue;
+    }
+    if (quote !== undefined) {
+      segment += character;
+      if (character === quote) quote = undefined;
+      else if (quote === '"' && character === '\\') escaped = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      segment += character;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      segment += character;
+      continue;
+    }
+    if (
+      character === ';' ||
+      character === '|' ||
+      character === '&' ||
+      character === '\n' ||
+      character === '\r'
+    ) {
+      pushSegment();
+      continue;
+    }
+    segment += character;
+  }
+  pushSegment();
+  return segments;
+}
+
 function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -214,7 +333,7 @@ function hasUnresolvedShellStructure(command: string): boolean {
   return (
     /(^|[\s;&|])(alias|source|\.)\b/.test(command) ||
     /\b(?:eval|exec)\b/.test(command) ||
-    /\b(?:function|for|while|until|if|case)\b/.test(command) ||
+    /\b(?:function|for|while|until|case)\b/.test(command) ||
     /\$\{?\w+|\$\(/.test(command)
   );
 }

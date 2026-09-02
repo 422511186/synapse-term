@@ -271,7 +271,9 @@ describe('CommandExecutor', () => {
       await flushActorQueue();
       await vi.advanceTimersByTimeAsync(25);
       backend.emitData(
-        `${dispatch.echoPattern.start}${dispatch.echoPattern.end}\r\nlate stdout\r\n`,
+        `${dispatch.echoPattern.start}${dispatch.echoPattern.end[0]}\r\n${dispatch.echoPattern.end.slice(
+          1,
+        )}\r\nlate stdout\r\n`,
       );
       await flushActorQueue();
       await vi.advanceTimersByTimeAsync(100);
@@ -284,6 +286,7 @@ describe('CommandExecutor', () => {
       });
       expect(terminalOutput.join('')).toContain('late stdout');
       expect(terminalOutput.join('')).not.toContain('nonce-delayed-probe-echo');
+      expect(result.output.text).not.toContain('printf');
       actor.dispose();
     } finally {
       vi.useRealTimers();
