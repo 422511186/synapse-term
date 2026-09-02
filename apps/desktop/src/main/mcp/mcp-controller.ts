@@ -7,6 +7,7 @@ import {
 
 import { ApprovalQueue, type VisibleApprovalRequest } from './approval-queue.js';
 import { ExternalToolPipeline } from './external-tool-pipeline.js';
+import { SharingOutputHistory } from './sharing-output-history.js';
 import {
   createMcpSettingsStore,
   DEFAULT_MCP_PORT,
@@ -44,6 +45,9 @@ interface SharedSession {
   title: string;
   sharedAt: string;
   pipeline: ExternalToolPipeline;
+  history: SharingOutputHistory;
+  removeOutputListener: () => void;
+  removeLifecycleListener: () => void;
 }
 
 const CALLER: ExternalCaller = { kind: 'mcp', id: 'mcp-client', displayName: 'MCP 外部客户端' };
@@ -92,7 +96,10 @@ export class McpController {
   }
 
   setEndpoint(endpoint: EndpointLifecycle): void {
-    void this.#endpoint.stop().catch(() => undefined);
+    const previous = this.#endpoint;
+    this.#approvals.cancelAll();
+    void this.unshareAll();
+    void previous.stop().catch(() => undefined);
     this.#endpoint = endpoint;
     this.#endpointRunning = false;
   }
@@ -163,7 +170,7 @@ export class McpController {
     this.#settings = next;
     if (!next.enabled || previous.token !== next.token) {
       this.#approvals.cancelAll();
-      this.unshareAll();
+      await this.unshareAll();
     }
     await this.#store.save(next);
     await this.#reconcileEndpoint();
@@ -185,7 +192,38 @@ export class McpController {
   async share(sessionId: string): Promise<Array<{ id: string; title: string; sharedAt: string }>> {
     const actor = this.#requireLiveSession(sessionId);
     if (this.#shared.has(sessionId)) return this.listShared();
-    const executor = new CommandExecutor(actor, { completionDrainMs: 50 });
+    const sharedAt = new Date().toISOString();
+    const history = new SharingOutputHistory({
+      sessionId,
+      sharingId: `${sessionId}:${sharedAt}`,
+    });
+    const executor = new CommandExecutor(actor, {
+      completionDrainMs: 50,
+      outputCursor: () => history.cursor,
+    });
+    const removeOutputListener = await actor.onPtyOutputAfterBoundary((event) => {
+      history.append(event.historyData ?? event.data);
+    });
+    const pipeline = new ExternalToolPipeline({
+      actor,
+      executor,
+      history,
+      leases: new ExternalLeaseRegistry(),
+      requestApproval: (request) => this.#requestApproval(request),
+    });
+    const shared: SharedSession = {
+      id: sessionId,
+      title: this.#sessions.titleOf(sessionId),
+      sharedAt,
+      history,
+      removeOutputListener,
+      removeLifecycleListener: () => undefined,
+      pipeline,
+    };
+    this.#shared.set(sessionId, shared);
+    shared.removeLifecycleListener = actor.onEvent((event) => {
+      if (event.type === 'pty_exit') void this.unshare(sessionId);
+    });
     executor.onEvent((event) => {
       this.#executionListener?.({
         sessionId,
@@ -195,26 +233,24 @@ export class McpController {
         phase: event.type,
       });
     });
-    this.#shared.set(sessionId, {
-      id: sessionId,
-      title: this.#sessions.titleOf(sessionId),
-      sharedAt: new Date().toISOString(),
-      pipeline: new ExternalToolPipeline({
-        actor,
-        executor,
-        leases: new ExternalLeaseRegistry(),
-        requestApproval: (request) => this.#requestApproval(request),
-      }),
-    });
+    if (actor.snapshot.pty !== 'running') {
+      await this.unshare(sessionId);
+      throw new Error('SESSION_EXPIRED: 会话已退出，无法共享。');
+    }
     return this.listShared();
   }
 
   async unshare(
     sessionId: string,
   ): Promise<Array<{ id: string; title: string; sharedAt: string }>> {
-    this.#shared.get(sessionId)?.pipeline.clear();
+    const shared = this.#shared.get(sessionId);
+    const clearPromise = shared?.pipeline.clear() ?? Promise.resolve();
+    shared?.removeLifecycleListener();
+    shared?.removeOutputListener();
+    shared?.history.dispose();
     this.#approvals.cancelSession(sessionId);
     this.#shared.delete(sessionId);
+    await clearPromise;
     return this.listShared();
   }
 
@@ -227,12 +263,12 @@ export class McpController {
   }
 
   async stop(): Promise<void> {
-    this.unshareAll();
+    await this.unshareAll();
     await this.updateSettings({ enabled: false }).catch(() => undefined);
   }
 
-  unshareAll(): void {
-    for (const id of [...this.#shared.keys()]) void this.unshare(id);
+  async unshareAll(): Promise<void> {
+    await Promise.all([...this.#shared.keys()].map((id) => this.unshare(id)));
   }
 
   async callTool(name: string, rawInput: Record<string, unknown>): Promise<unknown> {
@@ -259,7 +295,7 @@ export class McpController {
       case 'synapse_execute':
         return unwrap(
           await shared.pipeline.execute(
-            rawInput as Parameters<ExternalToolPipeline['execute']>[0],
+            rawInput as unknown as Parameters<ExternalToolPipeline['execute']>[0],
             this.#context(),
           ),
         );
@@ -301,12 +337,17 @@ export class McpController {
 
   async #reconcileEndpoint(): Promise<void> {
     if (this.#settings.enabled && this.#settings.token !== undefined) {
-      if (this.#endpointRunning) await this.#endpoint.stop().catch(() => undefined);
+      if (this.#shared.size > 0) await this.unshareAll();
+      if (this.#endpointRunning) {
+        this.#endpointRunning = false;
+        await this.#endpoint.stop().catch(() => undefined);
+      }
       await this.#endpoint.start(this.#settings.port);
       this.#endpointRunning = true;
       return;
     }
     this.#approvals.cancelAll();
+    await this.unshareAll();
     if (!this.#endpointRunning) return;
     this.#endpointRunning = false;
     await this.#endpoint.stop().catch(() => undefined);

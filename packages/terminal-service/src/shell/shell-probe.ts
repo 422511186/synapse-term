@@ -47,6 +47,9 @@ export class ShellProbe {
 
   run(input: ShellProbeInput): Promise<ShellProbeResult> {
     if (this.#disposed) throw new Error('shell probe is disposed');
+    if (this.#actor.snapshot.pty !== 'running') {
+      return Promise.resolve({ mode: 'observation_only', reason: 'pty_exit' });
+    }
     const current = this.#actor.snapshot.environment;
     if (current.capabilityEpoch !== input.environmentEpoch) {
       return Promise.resolve({ mode: 'observation_only', reason: 'invalidated' });
@@ -98,8 +101,12 @@ export class ShellProbe {
           return;
         }
         void this.#actor
-          .verifyEnvironment(identified.dialect, identified.platform)
-          .then(() => {
+          .verifyEnvironmentIfCurrent(identified.dialect, identified.platform, startEpoch)
+          .then((verified) => {
+            if (!verified) {
+              finish({ mode: 'observation_only', reason: 'invalidated' });
+              return;
+            }
             const environment = this.#actor.snapshot.environment;
             if (environment.capabilityEpoch <= startEpoch) {
               finish({ mode: 'observation_only', reason: 'invalidated' });

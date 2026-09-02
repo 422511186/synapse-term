@@ -6,6 +6,9 @@ describe('PolicyEngine', () => {
   it('classifies known read-only commands as lowest risk', async () => {
     const decision = await new PolicyEngine().classify('ls -la /tmp');
     expect(decision.level).toBe('read_only');
+    expect(decision.risk).toBe('read_only');
+    expect(decision.confidence).toBe('high');
+    expect(decision.requiresConfirmation).toBe(false);
     expect(decision.reasons.join(' ')).toMatch(/read-only/i);
   });
 
@@ -33,5 +36,23 @@ describe('PolicyEngine', () => {
       terminalType: 'PowerShell',
     });
     expect(decision.level).toBe('destructive');
+  });
+
+  it('lowers confidence for scripts and dynamic shell structure', async () => {
+    const decision = await new PolicyEngine().classify('./deploy.sh | tee deploy.log');
+
+    expect(decision.risk).toBe('unknown');
+    expect(decision.confidence).toBe('low');
+    expect(decision.requiresConfirmation).toBe(true);
+    expect(decision.reasons.join(' ')).toMatch(/cannot be fully|unknown executable/i);
+  });
+
+  it('keeps a known write conservative when another pipeline segment is unknown', async () => {
+    const decision = await new PolicyEngine().classify('npm test && curl example.com');
+
+    expect(decision.risk).toBe('unknown');
+    expect(decision.confidence).toBe('low');
+    expect(decision.requiresConfirmation).toBe(true);
+    expect(decision.reasons.join(' ')).toContain('unknown executable');
   });
 });

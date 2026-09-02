@@ -1,3 +1,5 @@
+import type { ExecutionContextId } from './command-protocol.js';
+
 export type PtyState = 'starting' | 'running' | 'exited' | 'failed' | 'interrupted';
 
 export type ExecutionDialect = 'posix' | 'powershell' | 'unknown';
@@ -16,6 +18,7 @@ export interface CurrentPtyEnvironment {
 
 export interface SessionState {
   id: string;
+  executionContextId: ExecutionContextId;
   title: string;
   terminalType: string;
   pty: PtyState;
@@ -38,6 +41,7 @@ export interface CreateSessionStateInput {
   id: string;
   title: string;
   terminalType: string;
+  executionContextId?: ExecutionContextId;
   columns?: number;
   rows?: number;
 }
@@ -47,6 +51,7 @@ export type TransitionResult<T> = { ok: true; value: T } | { ok: false; error: s
 export function createSessionState(input: CreateSessionStateInput): SessionState {
   return {
     id: input.id,
+    executionContextId: input.executionContextId ?? `initial:${input.id}`,
     title: input.title,
     terminalType: input.terminalType,
     pty: 'starting',
@@ -61,6 +66,14 @@ export function createSessionState(input: CreateSessionStateInput): SessionState
       verifiedAt: undefined,
     },
   };
+}
+
+export function replaceSessionExecutionContext(
+  state: SessionState,
+  executionContextId: ExecutionContextId,
+): SessionState {
+  if (executionContextId.length === 0) throw new RangeError('executionContextId must not be empty');
+  return { ...state, executionContextId };
 }
 
 export function verifySessionEnvironment(

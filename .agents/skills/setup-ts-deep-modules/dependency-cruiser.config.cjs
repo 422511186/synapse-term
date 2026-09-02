@@ -1,4 +1,5 @@
 // @ts-check
+/* global module */
 // Deep-module enforcement for dependency-cruiser.
 //
 // Each package under the packages root is a DEEP MODULE: a lot of behaviour

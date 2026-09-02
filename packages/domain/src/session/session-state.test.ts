@@ -4,6 +4,7 @@ import {
   createSessionState,
   invalidateSessionEnvironment,
   resizeSession,
+  replaceSessionExecutionContext,
   transitionSessionPty,
   verifySessionEnvironment,
 } from './session-state.js';
@@ -51,6 +52,7 @@ describe('SessionState', () => {
     const state = createSessionState({ id: 's1', title: 't', terminalType: 'PowerShell' });
 
     expect(state.terminalType).toBe('PowerShell');
+    expect(state.executionContextId).toBe('initial:s1');
     expect(state.environment).toEqual({
       dialect: 'unknown',
       platform: 'unknown',
@@ -59,6 +61,20 @@ describe('SessionState', () => {
       capabilityEpoch: 0,
       verifiedAt: undefined,
     });
+  });
+
+  it('allows an execution context to be replaced independently of the environment epoch', () => {
+    const state = createSessionState({
+      id: 's1',
+      title: 't',
+      terminalType: 'PowerShell',
+      executionContextId: 'context-a',
+    });
+
+    const next = replaceSessionExecutionContext(state, 'context-b');
+
+    expect(next.executionContextId).toBe('context-b');
+    expect(next.environment.capabilityEpoch).toBe(state.environment.capabilityEpoch);
   });
 
   it('increments the environment epoch when the current PTY environment is verified and invalidated', () => {

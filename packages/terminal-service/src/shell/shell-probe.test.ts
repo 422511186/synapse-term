@@ -12,6 +12,11 @@ async function createActor(terminalType: string) {
   return { actor, backend };
 }
 
+async function flushActorQueue(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('ShellProbe', () => {
   it('detects the current POSIX PTY after a PowerShell launch hint', async () => {
     const { actor, backend } = await createActor('PowerShell');
@@ -101,6 +106,32 @@ describe('ShellProbe', () => {
     actor.dispose();
   });
 
+  it('does not resurrect a verified environment after queued user input invalidates the Probe', async () => {
+    const { actor, backend } = await createActor('PowerShell');
+    const probe = new ShellProbe(actor, {
+      nonceFactory: () => 'probe-queued-user',
+      timeoutMs: 100,
+    });
+    const resultPromise = probe.run({ environmentEpoch: 0 });
+    await vi.waitFor(() => expect(backend.writes.join('')).toContain('probe-queued-user'));
+
+    backend.emitData(
+      'echo __SYNAPSE_DIALECT_probe-queued-user__:$?\r\n' +
+        '__SYNAPSE_DIALECT_probe-queued-user__:0\r\n',
+    );
+    const userWrite = actor.writeUser('ssh host\r');
+
+    await expect(resultPromise).resolves.toMatchObject({
+      mode: 'observation_only',
+      reason: 'invalidated',
+    });
+    await userWrite;
+    await flushActorQueue();
+    expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
+    probe.dispose();
+    actor.dispose();
+  });
+
   it('does not reuse a verified environment for a stale capability epoch', async () => {
     const { actor, backend } = await createActor('PowerShell');
     await actor.verifyEnvironment('powershell', 'windows');
@@ -109,6 +140,22 @@ describe('ShellProbe', () => {
     await expect(probe.run({ environmentEpoch: 0 })).resolves.toEqual({
       mode: 'observation_only',
       reason: 'invalidated',
+    });
+    expect(backend.writes).toEqual([]);
+    probe.dispose();
+    actor.dispose();
+  });
+
+  it('does not write a Probe after the PTY has exited', async () => {
+    const { actor, backend } = await createActor('PowerShell');
+    backend.emitExit(0);
+    await Promise.resolve();
+    await Promise.resolve();
+    const probe = new ShellProbe(actor, { nonceFactory: () => 'probe-after-exit' });
+
+    await expect(probe.run({ environmentEpoch: 0 })).resolves.toEqual({
+      mode: 'observation_only',
+      reason: 'pty_exit',
     });
     expect(backend.writes).toEqual([]);
     probe.dispose();

@@ -38,6 +38,14 @@ function transactionIdOf(result: Awaited<ReturnType<typeof callTool>>): string {
   return transactionId;
 }
 
+function executionContextIdOf(result: Awaited<ReturnType<typeof callTool>>): string {
+  const json = result.json as { executionContextId?: unknown } | undefined;
+  if (typeof json?.executionContextId !== 'string') {
+    throw new Error(`missing execution context id: ${result.text}`);
+  }
+  return json.executionContextId;
+}
+
 test.beforeAll(async () => {
   userDataDirectory = await mkdtemp(join(tmpdir(), 'synapse-electron-e2e-'));
   electronApp = await _electron.launch({
@@ -126,7 +134,28 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
 
   const status = await callTool(client, 'synapse_status', { sessionId: runtime.sessionId });
   expect(status.isError).toBe(false);
-  expect(status.json).toMatchObject({ status: 'ready' });
+  expect(status.json).toMatchObject({ status: expect.stringMatching(/^(?:ready|not_ready)$/) });
+  expect(status.text).not.toContain('executionContextId');
+
+  const firstObservation = await callTool(client, 'synapse_observe', {
+    sessionId: runtime.sessionId,
+  });
+  expect(firstObservation.isError, firstObservation.text).toBe(false);
+  executionContextIdOf(firstObservation);
+
+  const staleObservation = await callTool(client, 'synapse_execute', {
+    sessionId: runtime.sessionId,
+    command: 'printf should-not-run',
+    expectedContextId: 'stale-before-first-execution',
+  });
+  expect(staleObservation.isError).toBe(true);
+  expect(staleObservation.text).toMatch(/^EXECUTION_CONTEXT_STALE:/);
+  const tailObservation = await callTool(client, 'synapse_observe', {
+    sessionId: runtime.sessionId,
+    tail: true,
+  });
+  expect(tailObservation.isError, tailObservation.text).toBe(false);
+  let executionContextId = executionContextIdOf(tailObservation);
 
   const appWindow = await electronApp.browserWindow(page);
   await appWindow.evaluate((desktopWindow) => desktopWindow.minimize());
@@ -137,6 +166,8 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   let executePromise = callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command,
+    expectedContextId: executionContextId,
+    observationWindowMs: 100,
   });
   let card = page.getByRole('dialog', { name: 'MCP 审批' });
   await expect(card).toBeVisible();
@@ -146,13 +177,22 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   await card.getByRole('button', { name: '允许一次' }).click();
   let executeResult = await executePromise;
   expect(executeResult.isError).toBe(false);
+  expect(executeResult.json).toMatchObject({ status: 'running' });
   await page.screenshot({ path: 'test-results/ui-audit/04-external-execution.png' });
+  const firstWaitTimeout = await callTool(client, 'synapse_wait', {
+    sessionId: runtime.sessionId,
+    transactionId: transactionIdOf(executeResult),
+    timeoutMs: 1,
+  });
+  expect(firstWaitTimeout.isError, firstWaitTimeout.text).toBe(false);
+  expect(firstWaitTimeout.json).toMatchObject({ status: 'running', waitTimedOut: true });
   const firstWait = await callTool(client, 'synapse_wait', {
     sessionId: runtime.sessionId,
     transactionId: transactionIdOf(executeResult),
   });
   expect(firstWait.isError, firstWait.text).toBe(false);
   expect(firstWait.json).toMatchObject({ status: 'completed' });
+  executionContextId = executionContextIdOf(firstWait);
 
   const literalCommand = /powershell/i.test(runtime.terminalType ?? '')
     ? "Write-Output 'literal-mcp-audit-ok'"
@@ -160,6 +200,7 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   const literalExecute = await callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command: literalCommand,
+    expectedContextId: executionContextId,
   });
   expect(literalExecute.isError, literalExecute.text).toBe(false);
   expect(literalExecute.json).toMatchObject({
@@ -174,11 +215,13 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
     status: 'completed',
     output: expect.stringContaining('literal-mcp-audit-ok'),
   });
+  executionContextId = executionContextIdOf(literalWait);
   expect(`${literalExecute.text}\n${literalWait.text}`).not.toContain('\u001b]777;TA;');
 
   executePromise = callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command,
+    expectedContextId: executionContextId,
   });
   card = page.getByRole('dialog', { name: 'MCP 审批' });
   await expect(card).toContainText(command);
@@ -192,10 +235,12 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   });
   expect(secondWait.isError, secondWait.text).toBe(false);
   expect(secondWait.json).toMatchObject({ status: 'completed' });
+  executionContextId = executionContextIdOf(secondWait);
 
   executePromise = callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command,
+    expectedContextId: executionContextId,
   });
   executeResult = await executePromise;
   expect(executeResult.isError).toBe(false);
@@ -205,11 +250,13 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   });
   expect(thirdWait.isError, thirdWait.text).toBe(false);
   expect(thirdWait.json).toMatchObject({ status: 'completed' });
+  executionContextId = executionContextIdOf(thirdWait);
   await expect(card).toHaveCount(0);
 
   const denied = callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command: '__synapse_denied_command__',
+    expectedContextId: executionContextId,
   });
   card = page.getByRole('dialog', { name: 'MCP 审批' });
   await expect(card).toContainText('__synapse_denied_command__');
@@ -221,6 +268,7 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   const timedOut = callTool(client, 'synapse_execute', {
     sessionId: runtime.sessionId,
     command: '__synapse_timeout_command__',
+    expectedContextId: executionContextId,
   });
   await expect(page.getByRole('dialog', { name: 'MCP 审批' })).toBeVisible();
   await page.screenshot({ path: 'test-results/ui-audit/07-timeout-card.png' });
@@ -229,6 +277,46 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   });
   const timeoutResult = await timedOut;
   expect(timeoutResult.text).toMatch(/^APPROVAL_TIMEOUT:/);
+
+  const unknownCommand = /powershell/i.test(runtime.terminalType ?? '')
+    ? 'Start-Sleep -Seconds 3'
+    : 'sleep 3';
+  const unknownExecute = callTool(client, 'synapse_execute', {
+    sessionId: runtime.sessionId,
+    command: unknownCommand,
+    expectedContextId: executionContextId,
+    observationWindowMs: 100,
+  });
+  const unknownCard = page.getByRole('dialog', { name: 'MCP 审批' });
+  await expect(unknownCard).toContainText(unknownCommand);
+  await unknownCard.getByRole('button', { name: '允许一次' }).click();
+  const unknownExecution = await unknownExecute;
+  expect(unknownExecution.isError, unknownExecution.text).toBe(false);
+  expect(unknownExecution.json).toMatchObject({ status: 'running' });
+  const contextBeforeUserInterference = executionContextIdOf(unknownExecution);
+  await page.evaluate(async (sessionId) => {
+    if (typeof sessionId !== 'string' || window.synapseTerm === undefined) {
+      throw new Error('preload API unavailable');
+    }
+    await window.synapseTerm.terminal.write(sessionId, '\r');
+  }, runtime.sessionId);
+  const unknownWait = await callTool(client, 'synapse_wait', {
+    sessionId: runtime.sessionId,
+    transactionId: transactionIdOf(unknownExecution),
+  });
+  expect(unknownWait.isError, unknownWait.text).toBe(false);
+  expect(unknownWait.json).toMatchObject({
+    status: 'unknown',
+    retryable: false,
+    safeToResubmit: false,
+  });
+  const blindRetry = await callTool(client, 'synapse_execute', {
+    sessionId: runtime.sessionId,
+    command: unknownCommand,
+    expectedContextId: contextBeforeUserInterference,
+  });
+  expect(blindRetry.isError).toBe(true);
+  expect(blindRetry.text).toMatch(/^EXECUTION_CONTEXT_STALE:/);
 
   await client.close();
   await page.evaluate(

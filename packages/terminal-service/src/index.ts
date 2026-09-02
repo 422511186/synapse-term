@@ -1,3 +1,14 @@
+export type {
+  CompletionMetadata,
+  CommandRiskEvidence,
+  ExecutionContextId,
+  ExternalErrorCode,
+  ExternalTransactionStatus,
+  OutputCursor,
+  TransactionId,
+  TransactionOutputRange,
+} from '@synapse-term/domain';
+
 export * from './shell/pty-adapter.js';
 export * from './shell/shell-locator.js';
 export * from './shell/shell-driver.js';

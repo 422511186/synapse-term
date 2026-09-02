@@ -29,6 +29,14 @@ export function createExternalCaller(
 /** 命令风险分级：read_only 最低，destructive 最高 */
 export type CommandRisk = 'read_only' | 'unknown' | 'mutating' | 'privileged' | 'destructive';
 
+/** 外部命令风险证据：只描述本地静态分类，不代表远程主机事实。 */
+export interface CommandRiskEvidence {
+  risk: CommandRisk;
+  confidence: 'high' | 'medium' | 'low';
+  reasons: readonly string[];
+  requiresConfirmation: boolean;
+}
+
 const RISK_ORDER: readonly CommandRisk[] = [
   'read_only',
   'unknown',
@@ -57,5 +65,10 @@ export type ExternalErrorCode =
   | 'TRANSACTION_NOT_FOUND'
   | 'POLICY_DENIED'
   | 'SHELL_MISMATCH'
+  | 'COMMAND_NOT_AUDITABLE'
+  | 'INTERACTIVE_COMMAND_UNSUPPORTED'
+  | 'EXECUTION_CONTEXT_REQUIRED'
+  | 'EXECUTION_CONTEXT_STALE'
+  | 'OUTPUT_CURSOR_STALE'
   | 'APPROVAL_TIMEOUT'
   | 'APPROVAL_DENIED';
