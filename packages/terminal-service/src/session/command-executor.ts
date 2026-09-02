@@ -66,6 +66,7 @@ interface ActiveRun {
   completionExitCode?: number | undefined;
   resolveInitial: (result: CommandExecutionResult) => void;
   waiters: Set<(result: CommandExecutionResult) => void>;
+  finishing: boolean;
   settled: boolean;
 }
 
@@ -74,6 +75,7 @@ export interface CommandExecutorOptions {
   nonceFactory?: () => string;
   observationWindowMs?: number;
   completionDrainMs?: number;
+  completionEchoGraceMs?: number;
   outputMaxBytes?: number;
 }
 
@@ -91,10 +93,17 @@ export class CommandExecutor {
       nonceFactory: options.nonceFactory ?? randomUUID,
       observationWindowMs: options.observationWindowMs ?? 750,
       completionDrainMs: options.completionDrainMs ?? 50,
+      completionEchoGraceMs: options.completionEchoGraceMs ?? 250,
       outputMaxBytes: options.outputMaxBytes ?? 64 * 1024,
     };
     if (!Number.isFinite(this.#options.completionDrainMs) || this.#options.completionDrainMs < 0) {
       throw new RangeError('completionDrainMs must be a non-negative finite number');
+    }
+    if (
+      !Number.isFinite(this.#options.completionEchoGraceMs) ||
+      this.#options.completionEchoGraceMs < 0
+    ) {
+      throw new RangeError('completionEchoGraceMs must be a non-negative finite number');
     }
   }
 
@@ -195,6 +204,7 @@ export class CommandExecutor {
       }, input.observationWindowMs ?? this.#options.observationWindowMs),
       resolveInitial,
       waiters: new Set(),
+      finishing: false,
       settled: false,
     };
     this.#active = run;
@@ -279,6 +289,7 @@ export class CommandExecutor {
       run.buffer.append(event.sequence, event.data);
       return;
     }
+    if (run.finishing) return;
     if (event.type === 'terminal_output') return;
     if (event.type === 'environment_invalidated') {
       if (run.completionExitCode !== undefined) return;
@@ -319,10 +330,30 @@ export class CommandExecutor {
       | { status: 'completed'; exitCode: number }
       | { status: 'interrupted' | 'shell_lost' | 'protocol_error'; reason: string },
   ): void {
-    if (run.settled) return;
-    run.settled = true;
+    if (run.settled || run.finishing) return;
+    run.finishing = true;
+    const graceMs = outcome.status === 'completed' ? this.#options.completionEchoGraceMs : 0;
     clearTimeout(run.initialTimer);
     clearTimeout(run.completionDrainTimer);
+    void this.#actor
+      .releaseInputEcho(run.dispatch.echoPattern, { graceMs })
+      .then(() => this.#commitFinish(run, outcome))
+      .catch((error: unknown) => {
+        this.#commitFinish(run, {
+          status: 'protocol_error',
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  #commitFinish(
+    run: ActiveRun,
+    outcome:
+      | { status: 'completed'; exitCode: number }
+      | { status: 'interrupted' | 'shell_lost' | 'protocol_error'; reason: string },
+  ): void {
+    if (run.settled) return;
+    run.settled = true;
     run.listener();
     const finished: CommandTransaction = {
       ...run.transaction,
@@ -330,7 +361,6 @@ export class CommandExecutor {
     };
     run.transaction = finished;
     this.#active = undefined;
-    void this.#actor.releaseInputEcho(run.dispatch.echoPattern);
     const result = this.#snapshotResult(run, finished);
     this.#history.set(finished.id, result);
     this.#emit({ type: 'finished', transaction: structuredClone(finished) });

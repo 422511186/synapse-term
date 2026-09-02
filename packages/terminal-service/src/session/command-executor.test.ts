@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 
+import { PosixShellDriver } from '../shell/shell-driver.js';
 import { CommandExecutor, CommandExecutorError } from './command-executor.js';
 import { SessionActor } from './session-actor.js';
 
@@ -174,6 +175,93 @@ describe('CommandExecutor', () => {
     actor.dispose();
   });
 
+  it('keeps the completion Probe suppressed after the drain while retaining delayed stdout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { actor, backend } = await createActor();
+      const terminalOutput: string[] = [];
+      actor.onEvent((event) => {
+        if (event.type === 'terminal_output') terminalOutput.push(event.data);
+      });
+      const executor = new CommandExecutor(actor, {
+        idFactory: () => 'transaction-delayed-probe-echo',
+        nonceFactory: () => 'nonce-delayed-probe-echo',
+        observationWindowMs: 1_000,
+        completionDrainMs: 10,
+        completionEchoGraceMs: 100,
+      });
+      const dispatch = new PosixShellDriver().buildDispatch('uname -s', 'nonce-delayed-probe-echo');
+      const resultPromise = executor.execute('uname -s');
+
+      await flushActorQueue();
+      expect(backend.writes.join('')).toContain('uname -s');
+      backend.emitData(completion('nonce-delayed-probe-echo'));
+      await flushActorQueue();
+      await vi.advanceTimersByTimeAsync(10);
+      await flushActorQueue();
+      await vi.advanceTimersByTimeAsync(25);
+      backend.emitData(
+        `${dispatch.echoPattern.start}${dispatch.echoPattern.end}\r\nlate stdout\r\n`,
+      );
+      await flushActorQueue();
+      await vi.advanceTimersByTimeAsync(100);
+
+      const result = await resultPromise;
+      expect(result).toMatchObject({
+        status: 'completed',
+        transaction: { exitCode: 0 },
+        output: { text: expect.stringContaining('late stdout') },
+      });
+      expect(terminalOutput.join('')).toContain('late stdout');
+      expect(terminalOutput.join('')).not.toContain('nonce-delayed-probe-echo');
+      actor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps PTY writes, protocol output, and completion results stable across a UI visibility change', async () => {
+    const { actor, backend } = await createActor();
+    const terminalOutput: string[] = [];
+    const protocolOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+    });
+    const executor = new CommandExecutor(actor, {
+      idFactory: () => 'transaction-visibility-switch',
+      nonceFactory: () => 'nonce-visibility-switch',
+      observationWindowMs: 1_000,
+      completionDrainMs: 0,
+      completionEchoGraceMs: 0,
+    });
+    const dispatch = new PosixShellDriver().buildDispatch('printf ok', 'nonce-visibility-switch');
+    const resultPromise = executor.execute('printf ok');
+
+    await vi.waitFor(() => expect(backend.writes.join('')).toContain('printf ok'));
+    backend.emitData(`printf ok\r\n${dispatch.echoPattern.start.slice(0, 12)}`);
+    await flushActorQueue();
+    await actor.setProbeEchoVisibility(false);
+    backend.emitData(
+      `${dispatch.echoPattern.start.slice(12)}${dispatch.echoPattern.end}\r\n${completion(
+        'nonce-visibility-switch',
+      )}`,
+    );
+
+    const result = await resultPromise;
+    expect(result).toMatchObject({
+      status: 'completed',
+      transaction: { command: 'printf ok', exitCode: 0 },
+    });
+    expect(backend.writes).toEqual([dispatch.payload]);
+    expect(protocolOutput.join('')).toContain('printf ok');
+    expect(protocolOutput.join('')).not.toContain('nonce-visibility-switch');
+    expect(terminalOutput.join('')).toContain('printf ok');
+    expect(terminalOutput.join('')).toContain(dispatch.echoPattern.start.slice(12));
+    expect(terminalOutput.join('')).toContain('nonce-visibility-switch');
+    actor.dispose();
+  });
+
   it('uses the verified POSIX environment and preserves macOS stdout after a remote SSH hop', async () => {
     const { actor, backend } = await createActor('PowerShell', false);
     await actor.verifyEnvironment('posix', 'unix');
@@ -244,6 +332,7 @@ describe('CommandExecutor', () => {
         nonceFactory: () => 'nonce-running',
         observationWindowMs: 10,
         completionDrainMs: 0,
+        completionEchoGraceMs: 0,
       });
       const initialPromise = executor.execute('sleep 100');
       await vi.advanceTimersByTimeAsync(10);

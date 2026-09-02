@@ -68,16 +68,20 @@ export class SessionActor {
           for (const chunk of chunks) {
             for (const event of this.#scanOsc777(chunk)) {
               if (event.type === 'control') {
+                this.#markCompletionProbeFrame(event.payload);
                 this.#emit({ type: 'osc_777', payload: event.payload });
                 continue;
               }
               if (event.data.length === 0) continue;
-              const protocolData = this.#suppressInputEcho(event.data);
-              const environmentProbeData = this.#suppressEnvironmentProbeEchoes(protocolData);
+              const inputEcho = this.#suppressInputEcho(event.data);
+              const environmentProbeData = this.#suppressEnvironmentProbeEchoes(
+                inputEcho.protocolData,
+                inputEcho.hiddenData,
+              );
               const terminalData = this.#hideCompletionProbeEcho
-                ? environmentProbeData
+                ? environmentProbeData.hiddenData
                 : event.data;
-              this.#emitOutput(protocolData, terminalData);
+              this.#emitOutput(inputEcho.protocolData, terminalData);
             }
           }
         });
@@ -231,40 +235,95 @@ export class SessionActor {
     this.#eventListeners.clear();
     this.#exitWaiters.clear();
     this.#osc777Carry = '';
+    for (const state of this.#suppressedInputEchoes.values()) this.#discardInputEcho(state);
     this.#suppressedInputEchoes.clear();
     this.#environmentProbeEchoes.clear();
   }
 
   suppressInputEcho(pattern: InputEchoPattern): void {
     if (pattern.start.length > 0 && pattern.end.length > 0) {
-      this.#suppressedInputEchoes.set(pattern.start, { ...pattern, active: false, carry: '' });
+      const previous = this.#suppressedInputEchoes.get(pattern.start);
+      if (previous !== undefined) this.#completeInputEcho(pattern.start, previous);
+      this.#suppressedInputEchoes.set(pattern.start, {
+        ...pattern,
+        phase: 'searching',
+        pending: [],
+        endSearchOffset: 0,
+        probeEchoCompleted: false,
+        completionFrameSeen: false,
+        completionPromptHandled: false,
+        promptCarry: '',
+        releaseWaiters: new Set(),
+      });
     }
   }
 
-  releaseInputEcho(pattern: InputEchoPattern): Promise<void> {
-    return this.#enqueue(() => {
-      const state = this.#suppressedInputEchoes.get(pattern.start);
-      this.#suppressedInputEchoes.delete(pattern.start);
-      if (state !== undefined && !state.active && state.carry.length > 0) {
-        if (!this.#hideCompletionProbeEcho) this.#emitTerminalOutput(state.carry);
-      }
+  releaseInputEcho(
+    pattern: InputEchoPattern,
+    options: InputEchoReleaseOptions = {},
+  ): Promise<void> {
+    const graceMs = options.graceMs ?? 0;
+    if (!Number.isFinite(graceMs) || graceMs < 0) {
+      return Promise.reject(new RangeError('graceMs must be a non-negative finite number'));
+    }
+
+    let resolveRelease!: () => void;
+    const released = new Promise<void>((resolve) => {
+      resolveRelease = resolve;
     });
+    const scheduled = this.#enqueue(() => {
+      const state = this.#suppressedInputEchoes.get(pattern.start);
+      if (state === undefined) {
+        resolveRelease();
+        return;
+      }
+      state.releaseWaiters.add(resolveRelease);
+      if (graceMs === 0) {
+        this.#completeInputEcho(pattern.start, state);
+        return;
+      }
+      if (state.releaseTimer !== undefined) return;
+      const timer = setTimeout(() => {
+        void this.#enqueue(() => {
+          const current = this.#suppressedInputEchoes.get(pattern.start);
+          if (current?.releaseTimer === timer) {
+            this.#completeInputEcho(pattern.start, current);
+          }
+        });
+      }, graceMs);
+      state.releaseTimer = timer;
+    });
+    void scheduled.catch(() => resolveRelease());
+    return released;
   }
 
   suppressEnvironmentProbeEcho(nonce: string): void {
     if (nonce.length === 0) return;
     const marker = `__SYNAPSE_DIALECT_${nonce}__`;
+    const previous = this.#environmentProbeEchoes.get(nonce);
+    if (previous !== undefined) {
+      const terminalData = joinPendingInputEcho(
+        previous.pending.filter((segment) => !segment.terminalDelivered),
+      );
+      if (terminalData.length > 0) this.#emitTerminalOutput(terminalData);
+    }
     this.#environmentProbeEchoes.set(nonce, {
       command: `echo ${marker}:$?`,
       marker,
       phase: 'command',
-      carry: '',
+      pending: [],
     });
   }
 
   releaseEnvironmentProbeEcho(nonce: string): Promise<void> {
     return this.#enqueue(() => {
+      const state = this.#environmentProbeEchoes.get(nonce);
       this.#environmentProbeEchoes.delete(nonce);
+      if (state === undefined || state.pending.length === 0) return;
+      const terminalData = joinPendingInputEcho(
+        state.pending.filter((segment) => !segment.terminalDelivered),
+      );
+      if (terminalData.length > 0) this.#emitTerminalOutput(terminalData);
     });
   }
 
@@ -298,24 +357,81 @@ export class SessionActor {
     return events;
   }
 
-  #suppressInputEcho(data: string): string {
-    let visible = data;
+  #suppressInputEcho(data: string): { protocolData: string; hiddenData: string } {
+    let protocolData = data;
+    let hiddenData = data;
     for (const [start, state] of this.#suppressedInputEchoes) {
-      const stripped = stripSuppressedEcho(`${state.carry}${visible}`, state);
+      const stripped = stripSuppressedEcho(protocolData, state, this.#hideCompletionProbeEcho);
       this.#suppressedInputEchoes.set(start, stripped.state);
-      visible = stripped.output;
+      protocolData = stripped.output;
+      hiddenData = stripped.hiddenOutput;
     }
-    return visible;
+    return { protocolData, hiddenData };
   }
 
-  #suppressEnvironmentProbeEchoes(data: string): string {
-    let visible = data;
-    for (const [nonce, state] of this.#environmentProbeEchoes) {
-      const stripped = stripEnvironmentProbeEcho(visible, state);
-      this.#environmentProbeEchoes.set(nonce, stripped.state);
-      visible = stripped.output;
+  #markCompletionProbeFrame(payload: string): void {
+    if (!payload.startsWith('TA;')) return;
+    for (const [start, state] of this.#suppressedInputEchoes) {
+      if (
+        state.phase === 'matching' ||
+        state.phase === 'awaiting_line' ||
+        state.phase === 'awaiting_prompt' ||
+        state.probeEchoCompleted
+      ) {
+        this.#suppressedInputEchoes.set(start, { ...state, completionFrameSeen: true });
+      }
     }
-    return visible;
+  }
+
+  #suppressEnvironmentProbeEchoes(
+    protocolData: string,
+    hiddenData: string,
+  ): { protocolData: string; hiddenData: string } {
+    let protocolVisible = protocolData;
+    let hiddenVisible = hiddenData;
+    for (const [nonce, state] of this.#environmentProbeEchoes) {
+      if (state.phase === 'done') {
+        this.#environmentProbeEchoes.delete(nonce);
+        continue;
+      }
+      const strippedProtocol = stripEnvironmentProbeEcho(
+        protocolVisible,
+        state,
+        this.#hideCompletionProbeEcho,
+      );
+      const strippedHidden = stripEnvironmentProbeEcho(
+        hiddenVisible,
+        state,
+        this.#hideCompletionProbeEcho,
+      );
+      if (strippedProtocol.state.phase === 'done') this.#environmentProbeEchoes.delete(nonce);
+      else this.#environmentProbeEchoes.set(nonce, strippedProtocol.state);
+      protocolVisible = strippedProtocol.output;
+      hiddenVisible = strippedHidden.output;
+    }
+    return { protocolData: protocolVisible, hiddenData: hiddenVisible };
+  }
+
+  #completeInputEcho(start: string, state: InputEchoSuppression): void {
+    if (this.#suppressedInputEchoes.get(start) !== state) return;
+    if (state.releaseTimer !== undefined) clearTimeout(state.releaseTimer);
+    this.#suppressedInputEchoes.delete(start);
+    if (state.pending.length > 0) {
+      const protocolData = joinPendingInputEcho(state.pending);
+      const terminalData = joinPendingInputEcho(
+        state.pending.filter((segment) => !segment.terminalDelivered),
+      );
+      this.#emitOutput(protocolData, terminalData);
+    }
+    if (state.promptCarry.length > 0) this.#emitOutput('', state.promptCarry);
+    for (const resolve of state.releaseWaiters) resolve();
+    state.releaseWaiters.clear();
+  }
+
+  #discardInputEcho(state: InputEchoSuppression): void {
+    if (state.releaseTimer !== undefined) clearTimeout(state.releaseTimer);
+    for (const resolve of state.releaseWaiters) resolve();
+    state.releaseWaiters.clear();
   }
 
   #emitOutput(protocolData: string, terminalData = protocolData): void {
@@ -358,9 +474,28 @@ export interface InputEchoPattern {
   readonly end: string;
 }
 
+export interface InputEchoReleaseOptions {
+  readonly graceMs?: number;
+}
+
 interface InputEchoSuppression extends InputEchoPattern {
-  active: boolean;
-  carry: string;
+  phase: InputEchoPhase;
+  pending: PendingInputEchoSegment[];
+  endSearchOffset: number;
+  probeEchoCompleted: boolean;
+  completionFrameSeen: boolean;
+  completionPromptHandled: boolean;
+  promptCandidate?: string | undefined;
+  promptCarry: string;
+  releaseTimer?: NodeJS.Timeout | undefined;
+  releaseWaiters: Set<() => void>;
+}
+
+type InputEchoPhase = 'searching' | 'matching' | 'awaiting_line' | 'awaiting_prompt';
+
+interface PendingInputEchoSegment {
+  data: string;
+  terminalDelivered: boolean;
 }
 
 type EnvironmentProbeEchoPhase = 'command' | 'command_line' | 'result' | 'done';
@@ -369,52 +504,306 @@ interface EnvironmentProbeEchoSuppression {
   command: string;
   marker: string;
   phase: EnvironmentProbeEchoPhase;
-  carry: string;
+  pending: PendingInputEchoSegment[];
 }
 
 function stripSuppressedEcho(
   input: string,
   state: InputEchoSuppression,
-): { output: string; state: InputEchoSuppression } {
-  let output = '';
-  let index = 0;
-  while (index < input.length) {
-    if (!state.active) {
-      const match = findFlexibleMarker(input, state.start, index);
-      if (match !== undefined) {
-        output += input.slice(index, match.start);
-        index = match.end;
-        state.active = true;
-        continue;
-      }
-
-      const suffixLength = trailingMarkerWindow(input, state.start, index);
-      const suffixStart = input.length - suffixLength;
-      output += input.slice(index, suffixStart);
-      return { output, state: { ...state, carry: input.slice(suffixStart) } };
-    }
-
-    const end = findFlexibleMarker(input, state.end, index);
-    if (end === undefined) {
-      const suffixLength = trailingMarkerWindow(input, state.end, index);
-      const suffixStart = input.length - suffixLength;
-      return { output, state: { ...state, carry: input.slice(suffixStart) } };
-    }
-    index = end.end;
-    state.active = false;
-    state.carry = '';
+  probeEchoHidden: boolean,
+): { output: string; hiddenOutput: string; state: InputEchoSuppression } {
+  const incoming: PendingInputEchoSegment = {
+    data: input,
+    terminalDelivered: !probeEchoHidden,
+  };
+  const segments = [...state.pending, ...(input.length > 0 ? [incoming] : [])];
+  const data = joinPendingInputEcho(segments);
+  if (state.probeEchoCompleted && state.completionFrameSeen) {
+    return stripCompletionPrompt(data, state, probeEchoHidden);
   }
-  return { output, state: { ...state, carry: '' } };
+
+  if (state.phase === 'matching') {
+    const end = findFlexibleMarker(data, state.end, state.endSearchOffset);
+    if (end === undefined) {
+      return {
+        output: '',
+        hiddenOutput: '',
+        state: { ...state, pending: limitPendingInputEcho(segments) },
+      };
+    }
+    return finishSuppressedInputEcho(data, end.end, state, probeEchoHidden);
+  }
+
+  if (state.phase === 'awaiting_line') {
+    const lineBoundary = findLineBoundary(data);
+    if (lineBoundary === undefined) return { output: data, hiddenOutput: data, state };
+    const boundaryEnd = lineBoundaryEnd(data, lineBoundary);
+    const continued = stripSuppressedEcho(
+      data.slice(boundaryEnd),
+      {
+        ...state,
+        phase: state.completionFrameSeen ? 'awaiting_prompt' : 'searching',
+        pending: [],
+        endSearchOffset: 0,
+      },
+      probeEchoHidden,
+    );
+    return {
+      output: `${data.slice(0, boundaryEnd)}${continued.output}`,
+      hiddenOutput: `${data.slice(0, lineBoundary)}${continued.hiddenOutput}`,
+      state: continued.state,
+    };
+  }
+
+  const start = findFlexibleMarker(data, state.start, 0);
+  if (start !== undefined) {
+    const candidate = slicePendingInputEcho(segments, start.start);
+    const end = findFlexibleMarker(data, state.end, start.end);
+    const matchingState: InputEchoSuppression = {
+      ...state,
+      phase: 'matching',
+      pending: limitPendingInputEcho(candidate),
+      endSearchOffset: start.end - start.start,
+      probeEchoCompleted: false,
+      completionFrameSeen: false,
+      completionPromptHandled: false,
+      promptCandidate: findPromptCandidate(data, start.start) ?? state.promptCandidate,
+      promptCarry: '',
+    };
+    if (end === undefined) {
+      return {
+        output: data.slice(0, start.start),
+        hiddenOutput: data.slice(0, start.start),
+        state: matchingState,
+      };
+    }
+    return finishSuppressedInputEcho(
+      data,
+      end.end,
+      matchingState,
+      probeEchoHidden,
+      data.slice(0, start.start),
+    );
+  }
+
+  const suffixLength = trailingMarkerWindow(data, state.start, 0);
+  const suffixStart = data.length - suffixLength;
+  const pending = suffixLength > 0 ? slicePendingInputEcho(segments, suffixStart) : [];
+  return {
+    output: data.slice(0, suffixStart),
+    hiddenOutput: data.slice(0, suffixStart),
+    state: {
+      ...state,
+      pending: limitPendingInputEcho(pending),
+      phase: 'searching',
+      endSearchOffset: 0,
+      probeEchoCompleted: suffixLength > 0 ? false : state.probeEchoCompleted,
+      completionFrameSeen: suffixLength > 0 ? false : state.completionFrameSeen,
+      completionPromptHandled: suffixLength > 0 ? false : state.completionPromptHandled,
+      promptCandidate:
+        suffixLength > 0
+          ? (findPromptCandidate(data, suffixStart) ?? state.promptCandidate)
+          : state.promptCandidate,
+      promptCarry: suffixLength > 0 ? '' : state.promptCarry,
+    },
+  };
+}
+
+function finishSuppressedInputEcho(
+  data: string,
+  end: number,
+  state: InputEchoSuppression,
+  probeEchoHidden: boolean,
+  prefix = '',
+): { output: string; hiddenOutput: string; state: InputEchoSuppression } {
+  const afterEnd = data.slice(end);
+  const lineBoundary = findLineBoundary(afterEnd);
+  if (lineBoundary !== undefined) {
+    const boundaryEnd = lineBoundaryEnd(afterEnd, lineBoundary);
+    const continued = stripSuppressedEcho(
+      afterEnd.slice(boundaryEnd),
+      {
+        ...state,
+        phase: state.completionFrameSeen ? 'awaiting_prompt' : 'searching',
+        pending: [],
+        endSearchOffset: 0,
+        probeEchoCompleted: true,
+      },
+      probeEchoHidden,
+    );
+    return {
+      output: `${prefix}${afterEnd.slice(0, boundaryEnd)}${continued.output}`,
+      hiddenOutput: `${prefix}${afterEnd.slice(0, lineBoundary)}${continued.hiddenOutput}`,
+      state: continued.state,
+    };
+  }
+  return {
+    output: `${prefix}${afterEnd}`,
+    hiddenOutput: `${prefix}${afterEnd}`,
+    state: {
+      ...state,
+      phase: 'awaiting_line',
+      pending: [],
+      endSearchOffset: 0,
+      probeEchoCompleted: true,
+    },
+  };
+}
+
+function stripCompletionPrompt(
+  data: string,
+  state: InputEchoSuppression,
+  probeEchoHidden: boolean,
+): { output: string; hiddenOutput: string; state: InputEchoSuppression } {
+  if (
+    !probeEchoHidden ||
+    !state.completionFrameSeen ||
+    state.completionPromptHandled ||
+    state.promptCandidate === undefined
+  ) {
+    return { output: data, hiddenOutput: data, state };
+  }
+
+  const combined = `${state.promptCarry}${data}`;
+  const prompt = findPromptAtLineBoundary(combined, state.promptCandidate);
+  if (prompt !== undefined) {
+    return {
+      output: data,
+      hiddenOutput: `${combined.slice(0, prompt.start)}${combined.slice(prompt.end)}`,
+      state: {
+        ...state,
+        phase: 'searching',
+        promptCarry: '',
+        completionPromptHandled: true,
+      },
+    };
+  }
+
+  const suffixLength = trailingPromptWindow(combined, state.promptCandidate);
+  const suffixStart = combined.length - suffixLength;
+  return {
+    output: data,
+    hiddenOutput: combined.slice(0, suffixStart),
+    state: { ...state, promptCarry: combined.slice(suffixStart) },
+  };
+}
+
+function limitPendingInputEcho(segments: PendingInputEchoSegment[]): PendingInputEchoSegment[] {
+  const maxBytes = 16 * 1024;
+  let remaining = maxBytes;
+  const limited: PendingInputEchoSegment[] = [];
+  for (let index = segments.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const segment = segments[index]!;
+    const data = takeStringFromEnd(segment.data, remaining);
+    if (data.length === 0) continue;
+    limited.unshift({ ...segment, data });
+    remaining -= Buffer.byteLength(data, 'utf8');
+  }
+  return limited;
+}
+
+function joinPendingInputEcho(segments: PendingInputEchoSegment[]): string {
+  return segments.map((segment) => segment.data).join('');
+}
+
+function slicePendingInputEcho(
+  segments: PendingInputEchoSegment[],
+  start: number,
+  end = Number.POSITIVE_INFINITY,
+): PendingInputEchoSegment[] {
+  const result: PendingInputEchoSegment[] = [];
+  let offset = 0;
+  for (const segment of segments) {
+    const segmentEnd = offset + segment.data.length;
+    const sliceStart = Math.max(start, offset) - offset;
+    const sliceEnd = Math.min(end, segmentEnd) - offset;
+    if (sliceEnd > sliceStart) {
+      result.push({ ...segment, data: segment.data.slice(sliceStart, sliceEnd) });
+    }
+    offset = segmentEnd;
+    if (offset >= end) break;
+  }
+  return result;
+}
+
+function findLineBoundary(input: string): number | undefined {
+  const carriageReturn = input.indexOf('\r');
+  const lineFeed = input.indexOf('\n');
+  if (carriageReturn < 0) return lineFeed < 0 ? undefined : lineFeed;
+  if (lineFeed < 0) return carriageReturn;
+  return Math.min(carriageReturn, lineFeed);
+}
+
+function lineBoundaryEnd(input: string, boundary: number): number {
+  if (input[boundary] === '\r' && input[boundary + 1] === '\n') return boundary + 2;
+  return boundary + 1;
+}
+
+function findPromptCandidate(input: string, markerStart: number): string | undefined {
+  const lastCarriageReturn = input.lastIndexOf('\r', markerStart - 1);
+  const lastLineFeed = input.lastIndexOf('\n', markerStart - 1);
+  const lineStart = Math.max(lastCarriageReturn, lastLineFeed) + 1;
+  const candidate = removeTerminalEchoControls(input.slice(lineStart, markerStart));
+  if (candidate.length === 0 || candidate.length > 1_024) return undefined;
+  return candidate;
+}
+
+function findPromptAtLineBoundary(input: string, marker: string): FlexibleMarkerMatch | undefined {
+  let from = 0;
+  while (from < input.length) {
+    const match = findFlexibleMarker(input, marker, from);
+    if (match === undefined) return undefined;
+    if (isLineStart(input, match.start)) return match;
+    from = match.start + 1;
+  }
+  return undefined;
+}
+
+function trailingPromptWindow(input: string, marker: string): number {
+  const maxWindow = Math.min(input.length, Math.max(64, marker.length * 16));
+  for (let start = input.length - 1; start >= input.length - maxWindow; start -= 1) {
+    const normalized = removeTerminalEchoControls(input.slice(start));
+    if (normalized.length > 0 && marker.startsWith(normalized) && isLineStart(input, start)) {
+      return input.length - start;
+    }
+  }
+  return 0;
+}
+
+function isLineStart(input: string, position: number): boolean {
+  if (position === 0) return true;
+  const before = removeTerminalEchoControls(input.slice(0, position));
+  return before.length === 0 || before.endsWith('\n');
+}
+
+function takeStringFromEnd(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let result = '';
+  const characters = [...value];
+  for (const character of characters.reverse()) {
+    const size = Buffer.byteLength(character, 'utf8');
+    if (bytes + size > maxBytes) break;
+    result = character + result;
+    bytes += size;
+  }
+  return result;
 }
 
 function stripEnvironmentProbeEcho(
   input: string,
   state: EnvironmentProbeEchoSuppression,
+  probeEchoHidden: boolean,
 ): { output: string; state: EnvironmentProbeEchoSuppression } {
-  const data = `${state.carry}${input}`;
+  if (state.phase === 'done') return { output: input, state };
+  const incoming: PendingInputEchoSegment = {
+    data: input,
+    terminalDelivered: !probeEchoHidden,
+  };
+  const segments = [...state.pending, ...(input.length > 0 ? [incoming] : [])];
+  const data = joinPendingInputEcho(segments);
   let cursor = 0;
   let output = '';
-  let nextState: EnvironmentProbeEchoSuppression = { ...state, carry: '' };
+  let nextState: EnvironmentProbeEchoSuppression = { ...state, pending: [] };
 
   while (nextState.phase !== 'done') {
     if (nextState.phase === 'command') {
@@ -424,7 +813,10 @@ function stripEnvironmentProbeEcho(
         const suffixStart = data.length - suffixLength;
         return {
           output: `${output}${data.slice(cursor, suffixStart)}`,
-          state: { ...nextState, carry: data.slice(suffixStart) },
+          state: {
+            ...nextState,
+            pending: limitPendingInputEcho(slicePendingInputEcho(segments, suffixStart)),
+          },
         };
       }
       output += data.slice(cursor, command.start);
@@ -435,7 +827,13 @@ function stripEnvironmentProbeEcho(
     if (nextState.phase === 'command_line') {
       const lineEnd = findFlexibleMarker(data, '\n', cursor);
       if (lineEnd === undefined) {
-        return { output, state: { ...nextState, carry: data.slice(cursor) } };
+        return {
+          output,
+          state: {
+            ...nextState,
+            pending: limitPendingInputEcho(slicePendingInputEcho(segments, cursor)),
+          },
+        };
       }
       cursor = lineEnd.end;
       nextState = { ...nextState, phase: 'result' };
@@ -449,13 +847,22 @@ function stripEnvironmentProbeEcho(
         const suffixStart = data.length - suffixLength;
         return {
           output: `${output}${data.slice(cursor, suffixStart)}`,
-          state: { ...nextState, carry: data.slice(suffixStart) },
+          state: {
+            ...nextState,
+            pending: limitPendingInputEcho(slicePendingInputEcho(segments, suffixStart)),
+          },
         };
       }
       output += data.slice(cursor, result.start);
       const lineEnd = findFlexibleMarker(data, '\n', result.end);
       if (lineEnd === undefined) {
-        return { output, state: { ...nextState, carry: data.slice(result.start) } };
+        return {
+          output,
+          state: {
+            ...nextState,
+            pending: limitPendingInputEcho(slicePendingInputEcho(segments, result.start)),
+          },
+        };
       }
       const value = removeTerminalEchoControls(data.slice(result.end, lineEnd.start)).trim();
       if (/^\d+$/.test(value) || /^(?:true|false)$/i.test(value)) {

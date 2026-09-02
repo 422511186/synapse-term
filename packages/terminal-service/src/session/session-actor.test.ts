@@ -132,6 +132,51 @@ describe('SessionActor', () => {
     actor.dispose();
   });
 
+  it('hides a wrapped and redrawn environment Probe across PTY chunks while retaining nearby output', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'PowerShell',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const probe = new ShellProbe(actor, {
+      nonceFactory: () => 'probe-ui-wrapped',
+      timeoutMs: 100,
+    });
+
+    const resultPromise = probe.run({ environmentEpoch: 0 });
+    await vi.waitFor(() => expect(backend.writes.join('')).toContain('probe-ui-wrapped'));
+    backend.emitData('prompt> ');
+    backend.emitData('echo __SYNAPSE_DIALECT_probe-ui-wrapped');
+    backend.emitData('\u001b[');
+    backend.emitData('2K__:$?\r');
+    backend.emitData('\n');
+    backend.emitData('__SYNAPSE_DIALECT_probe-ui-wr');
+    backend.emitData('\u001b[');
+    backend.emitData('1Gapped__:');
+    backend.emitData('0\r\n');
+    backend.emitData('prompt> ordinary-after\r\n');
+
+    await expect(resultPromise).resolves.toMatchObject({
+      mode: 'structured',
+      dialect: 'posix',
+      platform: 'unix',
+    });
+    expect(protocolOutput.join('')).toContain('__SYNAPSE_DIALECT_probe-ui-wrapped');
+    expect(terminalOutput.join('')).toContain('prompt> ');
+    expect(terminalOutput.join('')).toContain('ordinary-after');
+    expect(terminalOutput.join('')).not.toContain('probe-ui-wrapped');
+    probe.dispose();
+    actor.dispose();
+  });
+
   it('shows the environment Probe for diagnostics when automatic Probe hiding is disabled', async () => {
     const backend = createFakeTerminalBackend();
     const actor = new SessionActor('s1', backend, {
@@ -139,8 +184,10 @@ describe('SessionActor', () => {
       terminalType: 'PowerShell',
       hideCompletionProbeEcho: false,
     });
+    const protocolOutput: string[] = [];
     const terminalOutput: string[] = [];
     actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
       if (event.type === 'terminal_output') terminalOutput.push(event.data);
     });
     await actor.markPtyRunning();
@@ -160,6 +207,62 @@ describe('SessionActor', () => {
     expect(terminalOutput.join('')).toContain('echo __SYNAPSE_DIALECT_probe-ui-visible__:$?');
     expect(terminalOutput.join('')).toContain('__SYNAPSE_DIALECT_probe-ui-visible__:0');
     probe.dispose();
+    actor.dispose();
+  });
+
+  it('applies a visibility change only to future Probe UI output', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const pattern = { start: '[probe:', end: ':end]' };
+    actor.suppressInputEcho(pattern);
+
+    backend.emitData('before [pro');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toBe('before '));
+    await actor.setProbeEchoVisibility(false);
+    backend.emitData('be:diagnostic:end] after');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain('be:diagnostic:end] after'));
+
+    expect(terminalOutput.join('')).toBe('before be:diagnostic:end] after');
+    expect(protocolOutput.join('')).toBe('before  after');
+    actor.dispose();
+  });
+
+  it('applies a visibility change from diagnostic mode without rewriting delivered UI output', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: false,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const pattern = { start: '[probe:', end: ':end]' };
+    actor.suppressInputEcho(pattern);
+
+    backend.emitData('before [pro');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toBe('before [pro'));
+    await actor.setProbeEchoVisibility(true);
+    backend.emitData('be:diagnostic:end] after');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain('after'));
+
+    expect(terminalOutput.join('')).toBe('before [pro after');
+    expect(protocolOutput.join('')).toBe('before  after');
     actor.dispose();
   });
 
@@ -185,6 +288,196 @@ describe('SessionActor', () => {
     expect(terminalOutput.join('')).not.toContain('printf');
     expect(terminalOutput.join('')).not.toContain('completion-ui-hidden');
     actor.dispose();
+  });
+
+  it('hides a wrapped and redrawn command completion Probe while retaining the user command and prompt', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const dispatch = new PosixShellDriver().buildDispatch('uname -s', 'completion-ui-wrapped');
+    actor.suppressInputEcho(dispatch.echoPattern);
+
+    const midpoint = Math.floor(dispatch.echoPattern.start.length / 2);
+    backend.emitData(`prompt$ uname -s\r\n${dispatch.echoPattern.start.slice(0, midpoint)}`);
+    backend.emitData('\u001b[');
+    backend.emitData(`2K${dispatch.echoPattern.start.slice(midpoint)}\r\n`);
+    backend.emitData(dispatch.echoPattern.end.slice(0, 2));
+    backend.emitData('\u001b[');
+    backend.emitData(`1G${dispatch.echoPattern.end.slice(2)}\r\n`);
+    backend.emitData('prompt$ ');
+    backend.emitData('\u001b]777;TA;completion-ui-wrapped;0');
+    backend.emitData('\u0007');
+
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain('prompt$ uname -s'));
+    expect(terminalOutput.join('')).toContain('prompt$ ');
+    expect(terminalOutput.join('')).not.toContain('printf');
+    expect(terminalOutput.join('')).not.toContain('completion-ui-wrapped');
+    actor.dispose();
+  });
+
+  it('does not duplicate the prompt around a hidden command completion Probe', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const dispatch = new PosixShellDriver().buildDispatch('ls', 'completion-ui-prompt');
+    actor.suppressInputEcho(dispatch.echoPattern);
+    const startMidpoint = Math.floor(dispatch.echoPattern.start.length / 2);
+
+    backend.emitData(
+      `prompt$ ls\r\noutput\r\nprompt$ ${dispatch.echoPattern.start.slice(0, startMidpoint)}`,
+    );
+    backend.emitData(
+      `${dispatch.echoPattern.start.slice(startMidpoint)}${dispatch.echoPattern.end}\r\n`,
+    );
+    backend.emitData('\u001b]777;TA;completion-ui-prompt;0\u0007prompt$');
+    backend.emitData(' ');
+
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain('prompt$ '));
+    expect(terminalOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
+    expect(protocolOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ \nprompt$ ');
+    actor.dispose();
+  });
+
+  it('restores an unfinished completion Probe when the bounded echo window expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = createFakeTerminalBackend();
+      const actor = new SessionActor('s1', backend, {
+        title: '终端 1',
+        terminalType: 'zsh',
+        hideCompletionProbeEcho: true,
+      });
+      const protocolOutput: string[] = [];
+      const terminalOutput: string[] = [];
+      actor.onEvent((event) => {
+        if (event.type === 'pty_output') protocolOutput.push(event.data);
+        if (event.type === 'terminal_output') terminalOutput.push(event.data);
+      });
+      await actor.markPtyRunning();
+      const pattern = { start: '[probe:', end: ':end]' };
+      actor.suppressInputEcho(pattern);
+      backend.emitData('before [probe:unfinished');
+
+      const release = actor.releaseInputEcho(pattern, { graceMs: 10 });
+      await vi.advanceTimersByTimeAsync(10);
+      await expect(release).resolves.toBeUndefined();
+      expect(protocolOutput.join('')).toBe('before [probe:unfinished');
+      expect(terminalOutput.join('')).toBe('before [probe:unfinished');
+
+      backend.emitData(' after');
+      await vi.waitFor(() => expect(terminalOutput.join('')).toContain(' after'));
+      actor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('restores a pending Probe before replacing it with a new Probe matcher', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const protocolOutput: string[] = [];
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'pty_output') protocolOutput.push(event.data);
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const pattern = { start: '[probe:', end: ':end]' };
+    actor.suppressInputEcho(pattern);
+    backend.emitData('old [probe:pending');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toBe('old '));
+
+    actor.suppressInputEcho(pattern);
+    backend.emitData('[probe:new:end] after');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain(' after'));
+
+    expect(protocolOutput.join('')).toBe('old [probe:pending after');
+    expect(terminalOutput.join('')).toBe('old [probe:pending after');
+    actor.dispose();
+  });
+
+  it('resolves Probe release waiters when the Session is disposed', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    await actor.markPtyRunning();
+    const pattern = { start: '[probe:', end: ':end]' };
+    actor.suppressInputEcho(pattern);
+    backend.emitData('[probe:pending');
+    const release = actor.releaseInputEcho(pattern, { graceMs: 100 });
+    await Promise.resolve();
+    await Promise.resolve();
+    actor.dispose();
+
+    await expect(release).resolves.toBeUndefined();
+  });
+
+  it('restores an unfinished environment Probe when the Probe times out', async () => {
+    vi.useFakeTimers();
+    try {
+      const backend = createFakeTerminalBackend();
+      const actor = new SessionActor('s1', backend, {
+        title: '终端 1',
+        terminalType: 'PowerShell',
+        hideCompletionProbeEcho: true,
+      });
+      const protocolOutput: string[] = [];
+      const terminalOutput: string[] = [];
+      actor.onEvent((event) => {
+        if (event.type === 'pty_output') protocolOutput.push(event.data);
+        if (event.type === 'terminal_output') terminalOutput.push(event.data);
+      });
+      await actor.markPtyRunning();
+      const probe = new ShellProbe(actor, {
+        nonceFactory: () => 'probe-timeout-partial',
+        timeoutMs: 10,
+      });
+      const resultPromise = probe.run({ environmentEpoch: 0 });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(backend.writes.join('')).toContain('probe-timeout-partial');
+
+      backend.emitData('before echo __SYNAPSE_DIALECT_probe-timeout-partial');
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        mode: 'observation_only',
+        reason: 'timeout',
+      });
+      expect(protocolOutput.join('')).toBe('before echo __SYNAPSE_DIALECT_probe-timeout-partial');
+      expect(terminalOutput.join('')).toBe('before echo __SYNAPSE_DIALECT_probe-timeout-partial');
+      probe.dispose();
+      actor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('forwards user input and resize to the backend', async () => {
