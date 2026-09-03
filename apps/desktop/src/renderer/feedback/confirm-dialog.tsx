@@ -37,8 +37,8 @@ export function ConfirmDialog({
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       role="alertdialog"
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-[#18181b] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border/50 bg-[#09090b] px-4 py-3 rounded-t-xl">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/50 bg-background px-4 py-3 rounded-t-xl">
           <h2 className="text-sm font-semibold">{title}</h2>
           <button
             aria-label="关闭确认对话框"
@@ -53,7 +53,7 @@ export function ConfirmDialog({
         <div className="px-4 py-4 text-[13px] leading-relaxed text-foreground/90">
           {description}
         </div>
-        <div className="flex justify-end gap-2 rounded-b-xl border-t border-border bg-[#09090b] px-4 py-3">
+        <div className="flex justify-end gap-2 rounded-b-xl border-t border-border bg-background px-4 py-3">
           <button
             className="px-3 py-1.5 text-xs font-medium hover:bg-secondary rounded-lg transition-colors disabled:opacity-40"
             disabled={pending}

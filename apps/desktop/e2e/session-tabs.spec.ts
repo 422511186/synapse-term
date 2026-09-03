@@ -1,4 +1,173 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+interface ConfirmDialogColors {
+  panelBackground: RgbColor;
+  headerBackground: RgbColor;
+  footerBackground: RgbColor;
+  titleColor: RgbColor;
+  bodyColor: RgbColor;
+  cancelColor: RgbColor;
+}
+
+function parseCssColor(value: string): RgbColor {
+  const rgbMatch = value.match(
+    /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)$/i,
+  );
+  if (rgbMatch !== null) {
+    return {
+      r: Number.parseFloat(rgbMatch[1]),
+      g: Number.parseFloat(rgbMatch[2]),
+      b: Number.parseFloat(rgbMatch[3]),
+      a: rgbMatch[4] === undefined ? 1 : Number.parseFloat(rgbMatch[4]),
+    };
+  }
+  const srgbMatch = value.match(
+    /^color\(\s*srgb\s+([-\d.]+%?)\s+([-\d.]+%?)\s+([-\d.]+%?)(?:\s*\/\s*([-\d.]+%?))?\s*\)$/i,
+  );
+  if (srgbMatch !== null) {
+    const channel = (part: string): number => {
+      const parsed = Number.parseFloat(part);
+      return part.endsWith('%') ? (parsed / 100) * 255 : parsed * 255;
+    };
+    return {
+      r: channel(srgbMatch[1]),
+      g: channel(srgbMatch[2]),
+      b: channel(srgbMatch[3]),
+      a: srgbMatch[4] === undefined ? 1 : Number.parseFloat(srgbMatch[4]),
+    };
+  }
+  const oklabMatch = value.match(
+    /^oklab\(\s*([-\d.]+%?)\s+([-\d.]+%?)\s+([-\d.]+%?)(?:\s*\/\s*([-\d.]+%?))?\s*\)$/i,
+  );
+  if (oklabMatch !== null) {
+    const lightness = Number.parseFloat(oklabMatch[1]);
+    const oklabA = Number.parseFloat(oklabMatch[2]);
+    const oklabB = Number.parseFloat(oklabMatch[3]);
+    const lPrime = lightness + 0.3963377774 * oklabA + 0.2158037573 * oklabB;
+    const mPrime = lightness - 0.1055613458 * oklabA - 0.0638541728 * oklabB;
+    const sPrime = lightness - 0.0894841775 * oklabA - 1.291485548 * oklabB;
+    const l = lPrime ** 3;
+    const m = mPrime ** 3;
+    const s = sPrime ** 3;
+    const clamp = (channel: number): number => Math.min(1, Math.max(0, channel));
+    return {
+      r: clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s) * 255,
+      g: clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s) * 255,
+      b: clamp(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s) * 255,
+      a: oklabMatch[4] === undefined ? 1 : Number.parseFloat(oklabMatch[4]),
+    };
+  }
+  throw new Error(`Unsupported computed color: ${value}`);
+}
+
+function compositeOverBackground(foreground: RgbColor, background: RgbColor): RgbColor {
+  if (foreground.a >= 1) return foreground;
+  return {
+    r: foreground.r * foreground.a + background.r * (1 - foreground.a),
+    g: foreground.g * foreground.a + background.g * (1 - foreground.a),
+    b: foreground.b * foreground.a + background.b * (1 - foreground.a),
+    a: 1,
+  };
+}
+
+function contrastRatio(first: RgbColor, second: RgbColor): number {
+  const firstComposite = compositeOverBackground(first, second);
+  const luminance = (color: RgbColor): number => {
+    const linearize = (channel: number): number => {
+      const normalized = channel / 255;
+      return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    };
+    return linearize(color.r) * 0.2126 + linearize(color.g) * 0.7152 + linearize(color.b) * 0.0722;
+  };
+  const firstLuminance = luminance(firstComposite);
+  const secondLuminance = luminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+async function openCloseConfirmation(page: Page): Promise<Locator> {
+  await page.getByRole('tab').first().click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: '会话操作菜单' });
+  await menu.getByRole('menuitem', { name: '关闭当前' }).click();
+  const confirmation = page.getByRole('alertdialog', { name: '操作确认' });
+  await expect(confirmation).toBeVisible();
+  return confirmation;
+}
+
+async function setThemeMode(page: Page, mode: 'light' | 'dark'): Promise<void> {
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: /外观/ })
+    .click();
+  await page.getByLabel(mode === 'light' ? '浅色' : '深色').check();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(mode);
+  await page.getByRole('button', { name: '返回工作区' }).click();
+}
+
+async function readConfirmDialogColors(confirmation: Locator): Promise<ConfirmDialogColors> {
+  const colors = await confirmation.evaluate((root) => {
+    const panel = root.firstElementChild;
+    const header = panel?.firstElementChild;
+    const body = panel?.children[1];
+    const footer = panel?.children[2];
+    const heading = header?.querySelector('h2');
+    const cancel = footer
+      ? Array.from(footer.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('取消'),
+        )
+      : undefined;
+    const readColor = (element: Element | undefined | null, property: string): string =>
+      element === undefined || element === null
+        ? ''
+        : getComputedStyle(element)[property as keyof CSSStyleDeclaration].toString();
+    return {
+      panelBackground: readColor(panel, 'backgroundColor'),
+      headerBackground: readColor(header, 'backgroundColor'),
+      footerBackground: readColor(footer, 'backgroundColor'),
+      titleColor: readColor(heading, 'color'),
+      bodyColor: readColor(body, 'color'),
+      cancelColor: readColor(cancel, 'color'),
+    };
+  });
+  const parse = (value: string): RgbColor => parseCssColor(value);
+  return {
+    panelBackground: parse(colors.panelBackground),
+    headerBackground: parse(colors.headerBackground),
+    footerBackground: parse(colors.footerBackground),
+    titleColor: parse(colors.titleColor),
+    bodyColor: parse(colors.bodyColor),
+    cancelColor: parse(colors.cancelColor),
+  };
+}
+
+function expectReadable(colors: ConfirmDialogColors): void {
+  expect(contrastRatio(colors.titleColor, colors.headerBackground)).toBeGreaterThanOrEqual(4.5);
+  expect(contrastRatio(colors.bodyColor, colors.panelBackground)).toBeGreaterThanOrEqual(4.5);
+  expect(contrastRatio(colors.cancelColor, colors.footerBackground)).toBeGreaterThanOrEqual(4.5);
+}
+
+test('keeps the close confirmation readable in dark and light themes', async ({ page }) => {
+  await page.goto('/?sessions=2');
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+
+  const darkConfirmation = await openCloseConfirmation(page);
+  expectReadable(await readConfirmDialogColors(darkConfirmation));
+  await darkConfirmation.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(darkConfirmation).toHaveCount(0);
+
+  await setThemeMode(page, 'light');
+  const lightConfirmation = await openCloseConfirmation(page);
+  expectReadable(await readConfirmDialogColors(lightConfirmation));
+});
 
 test('keeps up to twenty Sessions reachable through tabs and search', async ({ page }) => {
   await page.setViewportSize({ width: 980, height: 640 });
