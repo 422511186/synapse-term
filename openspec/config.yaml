@@ -7,12 +7,14 @@ context: |
   - 尤其保留 `## Why`、`## What Changes`、`## Capabilities`、`## Impact`、`## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements`、`## Purpose`、`## Requirements`、`### Requirement:`、`#### Scenario:`、`MUST`、`SHALL`、`WHEN`、`THEN`、`AND`。
   - 目标是让文档便于中文团队阅读，同时继续兼容 `openspec status`、`openspec validate`、`openspec archive` 和 `/opsx:apply`。
 
-  本项目在显式 OpenSpec 流程中与 Superpowers 配合使用：
-  - 用户显式使用 `/opsx:explore`、`/opsx:propose`、`/opsx:apply`，或明确指定某个 OpenSpec change 时，OpenSpec 接管变更生命周期。
+  本项目在显式 OpenSpec 流程中优先使用仓库内 `.agents/skills/` 的技能：
+  - 用户显式使用仓库内 `.agents/skills/openspec-explore/SKILL.md`、`.agents/skills/openspec-propose/SKILL.md`、`.agents/skills/openspec-apply-change/SKILL.md`、`.agents/skills/openspec-archive-change/SKILL.md`（或对应的 `/opsx:*` 入口），或明确指定某个 OpenSpec change 时，OpenSpec 接管变更生命周期。
   - `openspec/changes/<change>/proposal.md`、`design.md`、`specs/`、`tasks.md` 是该变更的唯一事实源。
-  - 有活跃 OpenSpec change 时，不要为同一件事再生成独立的 `docs/superpowers/specs/...` 或 `docs/superpowers/plans/...`，避免 proposal/design/tasks 双轨分叉。
-  - 在 `/opsx:apply` 实现阶段，OpenSpec 只负责提供任务账本；工程纪律仍必须使用 Superpowers：写功能或修 bug 前使用 `superpowers:test-driven-development`，遇到失败、异常或根因不明的问题时使用 `superpowers:systematic-debugging`，声称完成、修复或通过前使用 `superpowers:verification-before-completion`，需要代码审查或处理审查意见时使用对应的 Superpowers review skill。
-  - 简单理解：OpenSpec 管变更生命周期和任务清单，Superpowers 管 TDD、调试、验证和审查纪律。
+  - 有活跃 OpenSpec change 时，不要为同一件事再生成第二套 proposal/design/specs/tasks 文档；该 change 内的 artifacts 保持单一事实源。
+  - 需要澄清方案或领域术语时，优先参考 `.agents/skills/grill-with-docs/SKILL.md`、`.agents/skills/grilling/SKILL.md` 和 `.agents/skills/domain-modeling/SKILL.md`；这些技能只用于形成决策和更新项目上下文，不替代 OpenSpec artifacts。
+  - 在 `/opsx:apply` 实现阶段，遵循 `.agents/skills/openspec-apply-change/SKILL.md`；涉及代码行为的功能或修复前优先使用 `.agents/skills/tdd/SKILL.md`，涉及术语或架构边界时同步核对 `CONTEXT.md` 与生效中的 ADR。
+  - 完成实现后，运行与变更范围匹配的 `openspec validate`、项目验证命令（通常为 `pnpm verify`）和 `git diff --check`，并逐项复核任务、规格与实际 diff；不要以未运行的检查结果作完成声明。
+  - 简单理解：OpenSpec 管变更生命周期和任务清单，`.agents/skills/` 提供仓库内的设计、实现与上下文工作流，项目命令负责验证结果。
 
 rules:
   proposal:
@@ -29,4 +31,4 @@ rules:
   tasks:
     - 保留可被 apply 阶段解析的 checkbox 格式 `- [ ] X.Y ...` 或 `- [x] X.Y ...`。
     - 任务分组标题和任务描述使用简体中文，但命令、路径、标识符和测试名保持原文。
-    - 不要要求为同一个 OpenSpec change 额外生成 `docs/superpowers/plans/...`；如需体现工程纪律，应在 OpenSpec tasks 中直接安排测试、实现和验证步骤。
+    - 不要要求为同一个 OpenSpec change 额外生成第二套计划或规格文档；如需体现工程纪律，应在 OpenSpec tasks 中直接安排测试、实现和验证步骤。
