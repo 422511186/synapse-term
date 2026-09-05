@@ -6,6 +6,8 @@ asarUnpack:
 npmRebuild: true
 electronVersion: 43.2.0
 electronDist: apps/desktop/node_modules/electron/dist
+afterPack: scripts/macos-updater.mjs
+afterSign: scripts/verify-macos-updater.mjs
 icon: icon.png
 directories:
   output: release
@@ -23,6 +25,10 @@ win:
   icon: icon.png
   target: nsis
   artifactName: Synapse-Term-${version}-${arch}-Setup.${ext}
+  publish:
+    provider: github
+    owner: '422511186'
+    repo: synapse-term
 nsis:
   oneClick: false
   perMachine: false
@@ -34,6 +40,10 @@ mac:
   icon: icon.icns
   target: dmg
   artifactName: Synapse-Term-${version}-${arch}.${ext}
+  identity: '-'
+  hardenedRuntime: false
+  notarize: false
+  minimumSystemVersion: '12.0'
 dmg:
   contents:
     - x: 130

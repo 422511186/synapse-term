@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - develop
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -102,8 +103,7 @@ jobs:
           retention-days: 7
 
   package-macos:
-    name: 构建 macOS arm64
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    name: 验证 macOS arm64 更新器（独立测试密钥）
     needs: verify
     runs-on: macos-14
     timeout-minutes: 45
@@ -128,15 +128,27 @@ jobs:
       - name: 安装 Electron 运行时二进制
         run: node apps/desktop/node_modules/electron/install.js
 
+      - name: 生成本次 CI 专用更新密钥
+        run: pnpm updates:keys --test-env
+
       - name: 构建 macOS DMG
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm package:mac
 
+      - name: 校验打包后的应用和真实 PTY
+        run: pnpm smoke:packaged-desktop 'release/mac-arm64/Synapse Term.app/Contents/MacOS/Synapse Term'
+
+      - name: 验证 Sparkle 工具与测试密钥的签名兼容性
+        run: pnpm updates:sign-mac
+
       - name: 上传 macOS 构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: synapse-term-macos-arm64
-          path: release/Synapse-Term-*.dmg
+          name: synapse-term-macos-arm64-test-${{ github.run_id }}
+          path: |
+            release/Synapse-Term-*-arm64.dmg
+            release/appcast.xml
+            release/mac-update-build.json
           if-no-files-found: error
           retention-days: 7

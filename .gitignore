@@ -8,6 +8,7 @@ dist/
 out/
 dev
 release/
+release-assets/
 coverage/
 playwright-report/
 test-results/

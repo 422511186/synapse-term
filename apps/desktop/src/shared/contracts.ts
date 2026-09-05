@@ -13,6 +13,7 @@ import type {
   SessionSummary,
   TerminalOutputEvent,
 } from '@synapse-term/session-runtime';
+import type { UpdateApi } from './update-contracts.js';
 
 export type {
   AppStatus,
@@ -83,6 +84,7 @@ export interface McpApprovalClosure {
 
 export interface DesktopApi {
   readonly platform?: string;
+  updates: UpdateApi;
   sessions: {
     list(): Promise<SessionSummary[]>;
     environment(): Promise<SessionEnvironment>;

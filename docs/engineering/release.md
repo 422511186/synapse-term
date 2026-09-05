@@ -10,17 +10,20 @@
 
 1. **准备（发布前）**
    - 确认 develop 及合并后的 master 上 CI（`持续集成`）通过；本地执行 `pnpm verify`。
+   - 首个可更新版本发布前，按 [应用更新手册](app-updates.md) 备份生产 Ed25519 密钥，并配置 `release` 环境的 `SPARKLE_PRIVATE_KEY` Secret 与 `SPARKLE_PUBLIC_KEY` Variable。没有 Apple Developer ID 与公证不影响配置这组更新密钥。
    - 同步版本号：根目录 `package.json` 与 `apps/desktop/package.json`（必要时含构建配置）改为同一新版本，提交如 `chore: 同步 vX.Y.Z 版本号`。
    - 用 `git log <上一tag>..HEAD`（排除 merge 提交）收集发布区间提交，并结合 `openspec/` 归档与 `docs/adr/` 判断破坏性变更。
 2. **起草发布说明**：按下方结构与模板整理，保存为本地临时文件（如 `.tmp-release-notes-vX.Y.Z.md`，由 `.gitignore` 排除，不提交入库）。
-3. **发布**：合并 develop 到 master 后，在 master 上打 tag 并推送。tag 推送触发 `release.yml`：先 `verify`，再构建 Windows/macOS 产物并创建 GitHub Release。
+3. **发布**：合并 develop 到 master 后，在 master 上打稳定版本 `vX.Y.Z` tag 并推送。tag 推送触发 `release.yml`：验证版本与生产密钥，构建 Windows/macOS，检查包内版本、公钥、清单、摘要和 DMG 签名；全部通过后创建 draft，上传完整资产，再发布为正式 Release。当前更新链不接受预发布 tag。
 4. **精修说明（发布后）**：工作流成功后，用精修稿覆盖自动生成的占位说明：
 
    ```bash
    gh release edit vX.Y.Z --notes-file .tmp-release-notes-vX.Y.Z.md
    ```
 
-5. **验收**：用 `gh release view vX.Y.Z` 核对正文、安装包资产（`Synapse-Term-*-Setup.exe` / `Synapse-Term-*.dmg`）与 `SHA256SUMS.txt` 均就位；预发布版本应带 `--prerelease` 标记（`release.yml` 对含 `-` 的 tag 自动处理）。
+5. **验收**：用 `gh release view vX.Y.Z` 核对正文、EXE、EXE.blockmap、`latest.yml`、DMG、`appcast.xml`、`mac-update-build.json` 与 `SHA256SUMS.txt` 均就位。0.5.1 用户需要手动安装一次引导版本，后续验证应用内更新；macOS 实机限制应明确写入说明。
+
+已发布安装包和更新清单不可覆盖上传。工作流遇到已有 Release 会失败；检查并删除从未公开的失败草稿后可以重跑，已公开版本的问题应发布更高版本修复。测试密钥构建只能作为 CI Artifact，不能用于正式 Release。
 
 ## 发布说明结构模板
 

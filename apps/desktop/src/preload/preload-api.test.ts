@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { createDesktopApi, type RendererIpc } from './preload-api.js';
 
 describe('preload desktop API', () => {
+  it('passes update confirmation through only the declared update channel', async () => {
+    const calls: unknown[] = [];
+    const api = createDesktopApi({
+      invoke: async (channel, ...args) => {
+        calls.push({ channel, args });
+      },
+      on: () => () => undefined,
+    });
+    await api.updates.install('candidate-id', 'confirmation-id');
+    expect(calls).toEqual([
+      { channel: 'updates:install', args: ['candidate-id', 'confirmation-id'] },
+    ]);
+  });
   it('exposes general settings only through the restricted IPC channels', async () => {
     const calls: Array<{ channel: string; args: unknown[] }> = [];
     const ipc: RendererIpc = {

@@ -15,6 +15,7 @@ export default defineConfig({
     rollupOptions: {
       external: (id) =>
         id === 'electron' ||
+        id === 'electron-updater' ||
         id === 'node-pty' ||
         id.startsWith('node:') ||
         // 原生二进制无法打进 JS bundle

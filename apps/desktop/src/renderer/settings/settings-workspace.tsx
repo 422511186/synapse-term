@@ -4,6 +4,7 @@ import { useEffect, useState, type JSX } from 'react';
 import synapseTermLogoUrl from '../assets/synapse-term-logo.svg';
 import { GeneralSettingsView, McpSettingsView } from '../mcp/mcp-settings-section.js';
 import { ThemeSettingsView } from '../theme/theme-settings-view.js';
+import { UpdateSettings } from './update-settings.js';
 import type {
   GeneralSettings,
   McpApprovalMode,
@@ -151,14 +152,19 @@ export function SettingsWorkspace({
             </nav>
             <div className="settings-panel" data-testid="settings-topic-content">
               {activeCategory === 'general' && (
-                <GeneralSettingsView
-                  busy={busy}
-                  onToggleHideProbeEcho={(hide) =>
-                    api &&
-                    void applyGeneral(api.general.updateSettings({ hideCompletionProbeEcho: hide }))
-                  }
-                  settings={generalSettings}
-                />
+                <>
+                  <GeneralSettingsView
+                    busy={busy}
+                    onToggleHideProbeEcho={(hide) =>
+                      api &&
+                      void applyGeneral(
+                        api.general.updateSettings({ hideCompletionProbeEcho: hide }),
+                      )
+                    }
+                    settings={generalSettings}
+                  />
+                  {api && <UpdateSettings api={api.updates} isMac={api.platform === 'darwin'} />}
+                </>
               )}
               {activeCategory === 'appearance' && (
                 <ThemeSettingsView

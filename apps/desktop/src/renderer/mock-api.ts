@@ -14,6 +14,7 @@ import type {
   ThemeState,
   SharedMcpSession,
 } from '../preload/preload-api.js';
+import { createMockUpdates } from './settings/mock-updates.js';
 
 const mockShells: SessionEnvironment['shells'] = [
   {
@@ -77,6 +78,7 @@ export function createMockDesktopApi(): DesktopApi {
   const inSessionGrants = new Set<string>();
   let approvalSequence = 0;
   let activeApproval: McpApprovalRequest | undefined;
+  let installingUpdate = false;
 
   const grantKey = (sessionId: string, command: string): string => `${sessionId}\n${command}`;
 
@@ -173,6 +175,21 @@ export function createMockDesktopApi(): DesktopApi {
 
   return {
     platform: 'browser-mock',
+    updates: createMockUpdates(
+      scenarioParams?.get('updates') ?? null,
+      () =>
+        [...sessions.values()]
+          .filter((session) => session.pty === 'running')
+          .map((session) => session.id),
+      () => {
+        installingUpdate = true;
+        for (const session of sessions.values()) {
+          session.pty = 'exited';
+          emitSession(session);
+        }
+        sharedSessions.clear();
+      },
+    ),
     sessions: {
       list: async () => [...sessions.values()],
       environment: async (): Promise<SessionEnvironment> => ({
@@ -180,6 +197,7 @@ export function createMockDesktopApi(): DesktopApi {
         shells: mockShells,
       }),
       create: async (input: SessionLaunchInput) => {
+        if (installingUpdate) throw new Error('应用正在更新');
         sessionSequence += 1;
         const session: SessionSummary = {
           id: `mock-session-${sessionSequence}`,

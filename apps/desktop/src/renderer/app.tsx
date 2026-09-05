@@ -24,6 +24,7 @@ import { chooseInitialSessionId } from './session-selection.js';
 import { getSessionAvailability } from './session-status.js';
 import { AllSessionsPopover, NewSessionModal } from './sessions/index.js';
 import { SettingsWorkspace } from './settings/settings-workspace.js';
+import { useUpdateState } from './settings/use-update-state.js';
 import { applyThemeToDocument } from './theme/theme-palette.js';
 import { TerminalView } from './terminal/terminal-view.js';
 import synapseTermLogoUrl from './assets/synapse-term-logo.svg';
@@ -72,6 +73,7 @@ type CloseRangeDirection = 'left' | 'right';
 
 export function App(): JSX.Element {
   const api = useMemo(getApi, []);
+  const { state: updateState } = useUpdateState(api.updates);
   const isMac =
     api.platform === 'darwin' ||
     (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform));
@@ -527,12 +529,15 @@ export function App(): JSX.Element {
             <div className="prototype-global-actions relative z-50 flex shrink-0 items-center gap-3">
               <button
                 aria-label="设置"
-                className="flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                className="relative flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 onClick={() => setView('settings')}
                 title="设置"
                 type="button"
               >
                 <Settings size={16} />
+                {updateState?.candidate && (
+                  <span role="img" aria-label="有可用更新" className="update-indicator" />
+                )}
               </button>
             </div>
           </header>

@@ -59,9 +59,16 @@ Renderer 与 Main 通过 Electron `ipcMain`/`ipcRenderer` 通信，通道与 `De
 
 - Session/终端：`sessions:list`、`sessions:environment`、`sessions:create`、`sessions:rename`、`sessions:close`、`terminal:write`、`terminal:resize`、`app:status`。
 - 通用设置与主题：`settings:get-general`、`settings:update-general`、`theme:get-state`。
+- 应用更新：`updates:get-state`、`updates:set-automatic-checks`、`updates:check`、`updates:download`、`updates:cancel`、`updates:install-impact`、`updates:install`。
 - MCP 设置与控制：`mcp:get-settings`、`mcp:update-settings`、`mcp:regenerate-token`、`mcp:revoke-token`、`mcp:get-status`、`mcp:list-shared`、`mcp:share-session`、`mcp:unshare-session`、`mcp:decide-approval`。
 
-事件通道包括 `terminal:output`、`session:changed`、`theme:changed`、`mcp:approval`、`mcp:approval-closed` 和 `mcp:execution`。
+事件通道包括 `terminal:output`、`session:changed`、`theme:changed`、`updates:changed`、`mcp:approval`、`mcp:approval-closed` 和 `mcp:execution`。
+
+## 应用更新
+
+Desktop Main 的更新控制器负责固定 GitHub Release 的发现、偏好、状态广播和一次性安装确认。Windows adapter 使用 NSIS 与 electron-updater；macOS adapter 在确认前暂存并验证 DMG，确认后通过受限标准输入/输出协议启动 Sparkle helper，由 Sparkle 验签、替换和重启。更新实现只属于 Desktop，不进入 Session、MCP runtime 或领域模型。
+
+下载与安装授权分离。安装确认绑定候选与活动 Session 集合；完成准备复核后，`DesktopLifecycle` 同步关闭新建 Session 和外部调用入口，停止 MCP、等待已有创建操作收敛并结束 Session，再提交安装。普通退出复用幂等清理，但不获得安装授权。详见 [ADR-0021](../adr/0021-explicit-github-application-updates.md) 与 [应用更新手册](../engineering/app-updates.md)。
 
 ## Terminal Session
 
@@ -88,6 +95,7 @@ Sharing 输出只在当前应用运行期间保留，从 Sharing 建立后开始
 - 窗口关闭（macOS 应用常驻）：Session 继续运行，重开窗口后继续订阅实时输出。
 - 应用退出：Main 调用 `SessionRuntime.shutdown()` 终止全部 PTY，MCP runtime 同时停止并清理共享句柄。
 - Session、PTY 和 Sharing 输出历史只存在于应用运行期；MCP 端口、审批模式和访问 Token 由本机设置存储管理。
+- 更新偏好、公钥与有限安装包缓存允许本地保存，不保存 Session 或可重放的安装确认。
 - 应用不建立产品账户、远程主机资产、SSH 拓扑或集中审计日志。
 
 ## 兼容标识
