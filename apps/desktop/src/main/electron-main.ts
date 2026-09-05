@@ -1,6 +1,8 @@
 import { join, resolve } from 'node:path';
 
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { ApprovalQueue, EmbeddedMcpServer, McpController } from '@synapse-term/mcp-runtime';
+import { SessionRuntime } from '@synapse-term/session-runtime';
 
 import type { GeneralSettings, ThemeState } from '../shared/contracts.js';
 import {
@@ -9,12 +11,9 @@ import {
 } from '../shared/desktop-ipc-channels.js';
 import { DesktopWindowRegistry, createBrowserWindowOptions } from './electron-window.js';
 import { resolveWindowBackgroundColor } from './electron-window.js';
-import { ApprovalQueue } from './mcp/approval-queue.js';
-import { EmbeddedMcpServer } from './mcp/embedded-mcp-server.js';
-import { McpController } from './mcp/mcp-controller.js';
 import { GeneralSettingsController } from './settings/general-settings-controller.js';
 import { sanitizeGeneralSettings } from './settings/general-settings.js';
-import { TerminalHost } from './terminal-host.js';
+import { SessionIpcAdapter } from './session-ipc-adapter.js';
 
 const windows = new DesktopWindowRegistry<BrowserWindow>();
 
@@ -71,7 +70,10 @@ function createWindow(): void {
   else void window.loadFile(join(directory, '../renderer/index.html'));
 }
 
-function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsController): void {
+function registerIpc(
+  sessionIpc: SessionIpcAdapter,
+  generalSettings: GeneralSettingsController,
+): void {
   for (const channel of DESKTOP_IPC_REQUEST_CHANNELS.filter(
     (channel) =>
       !channel.startsWith('mcp:') &&
@@ -82,7 +84,7 @@ function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsControl
       if (!isTrustedRendererEvent(event)) {
         throw new Error('Renderer IPC request is not trusted');
       }
-      return host.handle(channel, argumentsValue);
+      return sessionIpc.handle(channel, argumentsValue);
     });
   }
   ipcMain.handle('settings:get-general', async (event) => {
@@ -155,11 +157,12 @@ async function startDesktopMain(): Promise<void> {
   await app.whenReady();
   Menu.setApplicationMenu(null);
 
-  const host = new TerminalHost({ version: app.getVersion() });
+  const sessionRuntime = new SessionRuntime({ version: app.getVersion() });
+  const sessionIpc = new SessionIpcAdapter(sessionRuntime);
   const generalSettings = new GeneralSettingsController({
     settingsStoreDirectory: join(app.getPath('userData'), 'settings'),
     apply: async (settings) => {
-      host.setProbeEchoVisibility(settings.hideCompletionProbeEcho);
+      void sessionRuntime.setProbeEchoVisibility(settings.hideCompletionProbeEcho);
       applyTheme(settings);
     },
   });
@@ -179,7 +182,7 @@ async function startDesktopMain(): Promise<void> {
   });
   const mcpController = new McpController({
     settingsStoreDirectory: join(app.getPath('userData'), 'mcp'),
-    sessions: host.getMcpSessionSource(),
+    sessions: sessionRuntime.getSessionSource(),
     approvalQueue,
   });
   const mcpEndpoint = new EmbeddedMcpServer({
@@ -199,13 +202,13 @@ async function startDesktopMain(): Promise<void> {
   const removeExecutionListener = mcpController.onExecution((event) =>
     broadcast('mcp:execution', event),
   );
-  const removeSessionListener = host.onSessionChanged((session) =>
+  const removeSessionListener = sessionRuntime.onSessionChanged((session) =>
     broadcast('session:changed', session),
   );
-  const removeOutputListener = host.onTerminalOutput((event) =>
+  const removeOutputListener = sessionRuntime.onTerminalOutput((event) =>
     broadcast('terminal:output', event),
   );
-  registerIpc(host, generalSettings);
+  registerIpc(sessionIpc, generalSettings);
   registerMcpIpc(mcpController);
   createWindow();
 
@@ -218,7 +221,7 @@ async function startDesktopMain(): Promise<void> {
     if (quitting) return;
     event.preventDefault();
     quitting = true;
-    void host
+    void sessionRuntime
       .shutdown()
       .catch((error: unknown) => console.error('[desktop-main] shutdown failed', error))
       .finally(async () => {

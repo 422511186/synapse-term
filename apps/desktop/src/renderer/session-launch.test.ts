@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
-import type { SessionSummary } from '../preload/preload-api.js';
+import type { SessionEnvironment, SessionSummary } from '../preload/preload-api.js';
 import { buildSessionLaunch, getDefaultSessionAlias } from './session-launch.js';
+
+type LocalShellDescriptor = SessionEnvironment['shells'][number];
 
 describe('session launch profiles', () => {
   const shell: LocalShellDescriptor = {

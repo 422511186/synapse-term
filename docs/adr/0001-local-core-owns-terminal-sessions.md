@@ -8,7 +8,7 @@ PTY、Terminal Session 状态由 Electron Main 进程持有。Electron Renderer 
 
 ## 当前实现
 
-`apps/desktop/src/main/terminal-host.ts` 负责装配 `SessionManager`；`electron-main.ts` 负责窗口与应用退出清理。Renderer 通过 `window.synapseTerm` preload API 请求会话/终端操作。
+`@synapse-term/session-runtime` 负责 Session 生命周期和 `SessionManager` 的运行装配；`electron-main.ts` 负责创建 runtime、Desktop IPC adapter、窗口与应用退出清理。Renderer 通过 `window.synapseTerm` preload API 请求会话/终端操作。
 
 ## 影响
 

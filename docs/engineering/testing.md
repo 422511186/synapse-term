@@ -15,8 +15,10 @@
 | ------------------ | ------------------------------------------------------------------------------------ |
 | domain             | Session 状态转换、外部调用者、命令协议、事务与依赖方向                               |
 | terminal-service   | PTY 适配、SessionActor/Manager、Shell 发现、完成 Probe、结构化/交互事务和输出边界      |
+| session-runtime    | Session 生命周期、环境/启动默认值、输出事件映射、runtime 公共出口与依赖方向             |
+| mcp-runtime        | MCP 工具、Sharing、审批、输入授权、脱敏、输出历史、Controller 与 embedded endpoint      |
 | test-kit           | Fake TerminalBackend 和测试替身契约                                                   |
-| desktop            | TerminalHost 生命周期、实时输出、IPC 白名单、设置/主题、Mock API、MCP 控制器与端点管线 |
+| desktop            | Electron Composition Root、IPC adapter/preload、IPC 白名单、设置/主题和 Mock API       |
 
 ### 浏览器 E2E（`pnpm test:e2e`）
 

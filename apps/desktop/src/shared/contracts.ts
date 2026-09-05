@@ -1,40 +1,33 @@
-import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
-import type { InputGrantMode, InputKey } from '@synapse-term/domain';
+import type {
+  ApprovalDecision,
+  McpExecutionEvent,
+  McpRuntimeStatus,
+  McpSettings,
+  SharedMcpSession,
+  VisibleApprovalRequest,
+} from '@synapse-term/mcp-runtime';
+import type {
+  AppStatus,
+  SessionEnvironment,
+  SessionLaunchInput,
+  SessionSummary,
+  TerminalOutputEvent,
+} from '@synapse-term/session-runtime';
 
-export interface SessionSummary {
-  id: string;
-  title: string;
-  terminalType: string;
-  pty: 'starting' | 'running' | 'exited' | 'failed' | 'interrupted';
-}
-
-export interface SessionEnvironment {
-  home: string;
-  shells: LocalShellDescriptor[];
-}
-
-export interface SessionLaunchInput {
-  title: string;
-  terminalType: string;
-  executable: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-  columns?: number;
-  rows?: number;
-}
-
-export interface TerminalOutputEvent {
-  sessionId: string;
-  sequence: number;
-  data: string;
-}
-
-export interface AppStatus {
-  connected: boolean;
-  version: string;
-  sessions: number;
-}
+export type {
+  AppStatus,
+  SessionEnvironment,
+  SessionLaunchInput,
+  SessionSummary,
+  TerminalOutputEvent,
+} from '@synapse-term/session-runtime';
+export type {
+  McpApprovalMode,
+  McpExecutionEvent,
+  McpRuntimeStatus,
+  McpSettings,
+  SharedMcpSession,
+} from '@synapse-term/mcp-runtime';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -80,59 +73,12 @@ export interface ThemeState {
   customTheme: CustomThemePalette;
 }
 
-export type McpApprovalMode = 'read_only' | 'managed' | 'full';
+export type McpApprovalRequest = VisibleApprovalRequest;
 
-export interface McpSettings {
-  enabled: boolean;
-  approvalMode: McpApprovalMode;
-  port: number;
-  token?: string | undefined;
-}
-
-export interface McpRuntimeStatus {
-  running: boolean;
-  port?: number | undefined;
-  connectionString?: string | undefined;
-}
-
-export interface SharedMcpSession {
-  id: string;
-  title: string;
-  sharedAt: string;
-}
-
-export interface McpApprovalRequest {
-  id: string;
-  sessionId: string;
-  command: string;
-  risk: 'read_only' | 'unknown' | 'mutating' | 'privileged' | 'destructive';
-  reasons: readonly string[];
-  kind?: 'structured' | 'interactive' | 'free_input' | undefined;
-  inputGrantMode?: InputGrantMode | undefined;
-  inputLimits?:
-    | {
-        maxCalls: number;
-        maxBytes: number;
-        idleTimeoutMs: number;
-      }
-    | undefined;
-  text?: string | undefined;
-  keys?: readonly InputKey[] | undefined;
-}
-
-export type McpApprovalDecision = 'allow_once' | 'allow_session' | 'denied';
+export type McpApprovalDecision = ApprovalDecision;
 
 export interface McpApprovalClosure {
   id: string;
-}
-
-export interface McpExecutionEvent {
-  sessionId: string;
-  transactionId: string;
-  command: string;
-  source: string;
-  phase: 'started' | 'finished';
-  kind?: 'structured' | 'interactive' | undefined;
 }
 
 export interface DesktopApi {

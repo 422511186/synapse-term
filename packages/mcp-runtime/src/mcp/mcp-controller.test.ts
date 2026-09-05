@@ -17,7 +17,7 @@ function createSource() {
   const source: McpSessionSource = {
     get: (id) => actors.get(id),
     titleOf: (id) => actors.get(id)?.snapshot.title ?? id,
-    notifyRemoved: (listener) => {
+    onRemoved: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
@@ -267,7 +267,7 @@ describe('McpController', () => {
     await harness.controller.share('session-interactive-chain');
     const events: Array<{ phase: string; kind: string }> = [];
     harness.controller.onExecution((event) =>
-      events.push({ phase: event.phase, kind: event.kind }),
+      events.push({ phase: event.phase, kind: event.kind ?? 'unknown' }),
     );
 
     const observed = (await harness.controller.callTool('synapse_observe', {

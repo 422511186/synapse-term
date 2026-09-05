@@ -44,15 +44,12 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.30.0
-        version: 1.30.0(zod@4.4.3)
-      '@synapse-term/domain':
+      '@synapse-term/mcp-runtime':
         specifier: workspace:*
-        version: link:../../packages/domain
-      '@synapse-term/terminal-service':
+        version: link:../../packages/mcp-runtime
+      '@synapse-term/session-runtime':
         specifier: workspace:*
-        version: link:../../packages/terminal-service
+        version: link:../../packages/session-runtime
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -74,10 +71,10 @@ importers:
       react-dom:
         specifier: ^19.2.8
         version: 19.2.8(react@19.2.8)
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@4.4.3)
       '@synapse-term/test-kit':
         specifier: workspace:*
         version: link:../../packages/test-kit
@@ -98,6 +95,35 @@ importers:
         version: 8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)
 
   packages/domain: {}
+
+  packages/mcp-runtime:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@4.4.3)
+      '@synapse-term/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@synapse-term/terminal-service':
+        specifier: workspace:*
+        version: link:../terminal-service
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@synapse-term/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+
+  packages/session-runtime:
+    dependencies:
+      '@synapse-term/terminal-service':
+        specifier: workspace:*
+        version: link:../terminal-service
+    devDependencies:
+      '@synapse-term/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
 
   packages/terminal-service:
     dependencies:

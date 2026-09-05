@@ -19,17 +19,34 @@ import {
 export interface McpSessionSource {
   get(sessionId: string): SessionActor | undefined;
   titleOf(sessionId: string): string;
-  notifyRemoved(listener: (sessionId: string) => void): () => void;
+  onRemoved(listener: (sessionId: string) => void): () => void;
 }
 
 export interface EndpointLifecycle {
   start(port?: number): Promise<void>;
   stop(): Promise<void>;
-  status?: {
-    running: boolean;
-    port?: number | undefined;
-    connectionString?: string | undefined;
-  };
+  status?: McpRuntimeStatus;
+}
+
+export interface McpRuntimeStatus {
+  running: boolean;
+  port?: number | undefined;
+  connectionString?: string | undefined;
+}
+
+export interface SharedMcpSession {
+  id: string;
+  title: string;
+  sharedAt: string;
+}
+
+export interface McpExecutionEvent {
+  sessionId: string;
+  transactionId: string;
+  command: string;
+  source: string;
+  phase: 'started' | 'finished';
+  kind?: 'structured' | 'interactive' | undefined;
 }
 
 export interface McpControllerOptions {
@@ -64,16 +81,7 @@ export class McpController {
     approvalMode: 'read_only',
     port: DEFAULT_MCP_PORT,
   };
-  #executionListener:
-    | ((event: {
-        sessionId: string;
-        transactionId: string;
-        command: string;
-        source: string;
-        phase: 'started' | 'finished';
-        kind: 'structured' | 'interactive';
-      }) => void)
-    | undefined;
+  #executionListener: ((event: McpExecutionEvent) => void) | undefined;
 
   constructor(options: McpControllerOptions) {
     this.#store = createMcpSettingsStore(options.settingsStoreDirectory);
@@ -91,7 +99,7 @@ export class McpController {
         ...options.initialSettings,
       });
     }
-    this.#sessions.notifyRemoved((sessionId) => {
+    this.#sessions.onRemoved((sessionId) => {
       void this.unshare(sessionId);
     });
   }
@@ -126,11 +134,7 @@ export class McpController {
     return structuredClone(this.#settings);
   }
 
-  getStatus(): {
-    running: boolean;
-    port?: number | undefined;
-    connectionString?: string | undefined;
-  } {
+  getStatus(): McpRuntimeStatus {
     const endpointStatus = this.#endpoint.status;
     const running =
       this.#settings.enabled &&
@@ -139,16 +143,7 @@ export class McpController {
     return { running, ...(running ? endpointStatus : {}) };
   }
 
-  onExecution(
-    listener: (event: {
-      sessionId: string;
-      transactionId: string;
-      command: string;
-      source: string;
-      kind: 'structured' | 'interactive';
-      phase: 'started' | 'finished';
-    }) => void,
-  ): () => void {
+  onExecution(listener: (event: McpExecutionEvent) => void): () => void {
     this.#executionListener = listener;
     return () => {
       if (this.#executionListener === listener) this.#executionListener = undefined;
@@ -192,7 +187,7 @@ export class McpController {
     return this.updateSettings({ token: null });
   }
 
-  async share(sessionId: string): Promise<Array<{ id: string; title: string; sharedAt: string }>> {
+  async share(sessionId: string): Promise<SharedMcpSession[]> {
     const actor = this.#requireLiveSession(sessionId);
     if (this.#shared.has(sessionId)) return this.listShared();
     const sharedAt = new Date().toISOString();
@@ -244,9 +239,7 @@ export class McpController {
     return this.listShared();
   }
 
-  async unshare(
-    sessionId: string,
-  ): Promise<Array<{ id: string; title: string; sharedAt: string }>> {
+  async unshare(sessionId: string): Promise<SharedMcpSession[]> {
     const shared = this.#shared.get(sessionId);
     const clearPromise = shared?.pipeline.clear() ?? Promise.resolve();
     shared?.removeLifecycleListener();
@@ -258,7 +251,7 @@ export class McpController {
     return this.listShared();
   }
 
-  listShared(): Array<{ id: string; title: string; sharedAt: string }> {
+  listShared(): SharedMcpSession[] {
     return [...this.#shared.values()].map(({ id, title, sharedAt }) => ({ id, title, sharedAt }));
   }
 

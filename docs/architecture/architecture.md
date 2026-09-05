@@ -18,18 +18,20 @@ React Renderer + xterm
         | contextBridge / preload API
         v
 Electron Main
-   ├─ Terminal Host（PTY / Session / IPC）
-   └─ Embedded MCP Server（可选，仅监听 127.0.0.1）
-        ├─ Sharing 与输出历史
-        ├─ 审批队列与风险策略
-        └─ synapse_* 工具管线
+   ├─ Composition Root
+   │    ├─ @synapse-term/session-runtime（PTY / Session 行为）
+   │    ├─ Desktop Session IPC Adapter
+   │    └─ @synapse-term/mcp-runtime（可选，仅监听 127.0.0.1）
+   │         ├─ Sharing 与输出历史
+   │         ├─ 审批队列与风险策略
+   │         └─ synapse_* 工具管线
 ```
 
 | 组件         | 当前职责                                                               | 不应直接持有                         |
 | ------------ | ---------------------------------------------------------------------- | ------------------------------------ |
 | Renderer     | 工作区、会话标签、终端交互、设置、Sharing 对话框和审批卡片             | Node API、PTY、Session 内部状态      |
 | Preload      | 暴露经过白名单限制的 `window.synapseTerm` API                          | 任意 IPC 转发、文件系统和网络        |
-| Electron Main | BrowserWindow、Terminal Host、MCP Controller、IPC、Shell 发现与清理 | Renderer 业务状态、远程主机与凭据模型 |
+| Electron Main | Composition Root、BrowserWindow、IPC adapter、runtime 实例、Shell/Session 清理与 Renderer 事件广播 | Renderer 业务状态、远程主机与凭据模型 |
 
 ## Workspace Package
 
@@ -37,16 +39,18 @@ Electron Main
 | --------------------------------- | -------------------------------------------------------- |
 | `@synapse-term/domain`            | Session、PTY/终端抽象、外部调用和事务领域模型             |
 | `@synapse-term/terminal-service`  | PTY 适配、SessionActor/Manager、实时输出、Shell 发现与执行 |
+| `@synapse-term/session-runtime`   | Session 生命周期、环境发现、启动默认值、摘要与输出事件映射 |
+| `@synapse-term/mcp-runtime`       | Sharing、外部事务、风险/审批、输入授权、工具和内嵌 MCP Server |
 | `@synapse-term/test-kit`          | Fake PTY 和测试替身                                      |
 
-包通过各自 `src/index.ts` 公共出口互相引用；`domain` 的依赖方向测试约束领域层不反向依赖上层。
+包通过各自 `src/index.ts` 公共出口互相引用；依赖方向从上层指向下层：`session-runtime` 和 `mcp-runtime` 可以使用 `terminal-service`/`domain`，但不能反向依赖 `apps/desktop` 或另一个 runtime package。策略、输出历史、脱敏和输入编码是 `mcp-runtime` 的内部 implementation，不是 Desktop 或未来运行端的公共知识。
 
 ## 仓库布局
 
 本仓库是 pnpm workspace monorepo：
 
 - `apps/desktop/`：Electron Main、preload、React Renderer 和 E2E。
-- `packages/`：领域模型、PTY/Session 服务和测试替身。
+- `packages/`：领域模型、PTY/Session 服务、Session/MCP runtime 和测试替身。
 - `docs/`：架构、安全与工程文档；`openspec/`：规格变更提案与归档。
 
 ## IPC 与契约
@@ -82,7 +86,7 @@ Sharing 输出只在当前应用运行期间保留，从 Sharing 建立后开始
 ## 生命周期与本地数据
 
 - 窗口关闭（macOS 应用常驻）：Session 继续运行，重开窗口后继续订阅实时输出。
-- 应用退出：`TerminalHost.shutdown()` 终止全部 PTY，MCP Server 同时停止并清理共享句柄。
+- 应用退出：Main 调用 `SessionRuntime.shutdown()` 终止全部 PTY，MCP runtime 同时停止并清理共享句柄。
 - Session、PTY 和 Sharing 输出历史只存在于应用运行期；MCP 端口、审批模式和访问 Token 由本机设置存储管理。
 - 应用不建立产品账户、远程主机资产、SSH 拓扑或集中审计日志。
 

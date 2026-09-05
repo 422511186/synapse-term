@@ -1,0 +1,21 @@
+{
+  "name": "@synapse-term/mcp-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@synapse-term/domain": "workspace:*",
+    "@synapse-term/terminal-service": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@synapse-term/test-kit": "workspace:*"
+  }
+}

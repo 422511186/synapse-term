@@ -1,5 +1,3 @@
-import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
-
 import type {
   AppStatus,
   DesktopApi,
@@ -17,7 +15,7 @@ import type {
   SharedMcpSession,
 } from '../preload/preload-api.js';
 
-const mockShells: LocalShellDescriptor[] = [
+const mockShells: SessionEnvironment['shells'] = [
   {
     kind: 'zsh',
     label: 'Zsh',

@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-`TerminalHost.shutdown()` 在应用退出时终止全部 PTY。Session 仅存在于应用运行期内存。
+Main 在应用退出时调用 `SessionRuntime.shutdown()` 终止全部 PTY。Session 仅存在于应用运行期内存。
 
 ## 影响
 
