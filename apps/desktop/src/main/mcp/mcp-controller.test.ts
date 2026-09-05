@@ -259,6 +259,142 @@ describe('McpController', () => {
     expect(harness.serverOperations).toContain('stop');
   });
 
+  it('dispatches the complete interactive chain and exposes its transaction kind', async () => {
+    const harness = await createController(true);
+    await harness.controller.updateSettings({ approvalMode: 'full' });
+    const session = await harness.sessions.add('session-interactive-chain');
+    await session.actor.verifyEnvironment('posix', 'unix');
+    await harness.controller.share('session-interactive-chain');
+    const events: Array<{ phase: string; kind: string }> = [];
+    harness.controller.onExecution((event) =>
+      events.push({ phase: event.phase, kind: event.kind }),
+    );
+
+    const observed = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-interactive-chain',
+    })) as { executionContextId: string };
+    const started = (await harness.controller.callTool('synapse_start_interactive', {
+      sessionId: 'session-interactive-chain',
+      command: 'sudo su -',
+      expectedContextId: observed.executionContextId,
+      inputGrantMode: 'one_shot',
+    })) as {
+      transaction: { id: string; kind: string; status: string };
+      inputGrantId: string;
+    };
+    expect(started.transaction).toMatchObject({ kind: 'interactive', status: 'running' });
+    expect(started.inputGrantId).toEqual(expect.any(String));
+    expect(
+      (await harness.controller.callTool('synapse_status', {
+        sessionId: 'session-interactive-chain',
+      })) as unknown,
+    ).toMatchObject({
+      activeTransactionId: started.transaction.id,
+      activeTransactionKind: 'interactive',
+    });
+
+    const inputResult = (await harness.controller.callTool('synapse_input', {
+      sessionId: 'session-interactive-chain',
+      transactionId: started.transaction.id,
+      inputGrantId: started.inputGrantId,
+      inputRequestId: 'controller-input-1',
+      text: 'password\n',
+    })) as { sent: { textLength: number }; output?: string };
+    expect(inputResult.sent.textLength).toBe(9);
+    expect(JSON.stringify(inputResult)).not.toContain('password');
+
+    session.backend.emitData('shell$ ');
+    await flushActorQueue();
+    const afterInput = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-interactive-chain',
+    })) as { nextCursor: string };
+    const finishPromise = harness.controller.callTool('synapse_finish_interactive', {
+      sessionId: 'session-interactive-chain',
+      transactionId: started.transaction.id,
+      observedCursor: afterInput.nextCursor,
+    });
+    await vi.waitFor(() => expect(session.backend.writes).toHaveLength(3));
+    const finishWrite = session.backend.writes[2]!;
+    const nonce = /'([A-Za-z0-9-]+)'/.exec(finishWrite)?.[1];
+    expect(nonce).toBeDefined();
+    session.backend.emitData(`\x1b]777;TA;${nonce};0\x07`);
+    await expect(finishPromise).resolves.toMatchObject({
+      transaction: { kind: 'interactive', status: 'completed' },
+      completion: { confirmed: true, exitCode: 0 },
+    });
+    expect(events).toEqual([
+      { phase: 'started', kind: 'interactive' },
+      { phase: 'finished', kind: 'interactive' },
+    ]);
+    session.actor.dispose();
+  });
+
+  it('blocks structured and free writes while an interactive transaction owns the lease', async () => {
+    const harness = await createController(true);
+    await harness.controller.updateSettings({ approvalMode: 'full' });
+    const session = await harness.sessions.add('session-interactive-busy');
+    await session.actor.verifyEnvironment('posix', 'unix');
+    await harness.controller.share('session-interactive-busy');
+    const observed = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-interactive-busy',
+    })) as { executionContextId: string };
+    const started = (await harness.controller.callTool('synapse_start_interactive', {
+      sessionId: 'session-interactive-busy',
+      command: 'bash -i',
+      expectedContextId: observed.executionContextId,
+      inputGrantMode: 'bounded',
+    })) as { transaction: { id: string } };
+
+    await expect(
+      harness.controller.callTool('synapse_execute', {
+        sessionId: 'session-interactive-busy',
+        command: 'echo must-not-run',
+        expectedContextId: session.actor.snapshot.executionContextId,
+      }),
+    ).rejects.toThrow(/^SESSION_BUSY:/);
+    await expect(
+      harness.controller.callTool('synapse_input', {
+        sessionId: 'session-interactive-busy',
+        expectedContextId: session.actor.snapshot.executionContextId,
+        inputRequestId: 'free-while-busy',
+        keys: ['enter'],
+      }),
+    ).rejects.toThrow(/^SESSION_BUSY:/);
+    expect(session.backend.writes).toEqual(['bash -i\r']);
+    await harness.controller.unshare('session-interactive-busy');
+    session.actor.dispose();
+    void started;
+  });
+
+  it('clears interactive executors, grants, and pending handles when the token is revoked', async () => {
+    const harness = await createController(true);
+    await harness.controller.updateSettings({ approvalMode: 'full' });
+    const session = await harness.sessions.add('session-interactive-revoke');
+    await session.actor.verifyEnvironment('posix', 'unix');
+    await harness.controller.share('session-interactive-revoke');
+    const observed = (await harness.controller.callTool('synapse_observe', {
+      sessionId: 'session-interactive-revoke',
+    })) as { executionContextId: string };
+    const pending = harness.controller.callTool('synapse_start_interactive', {
+      sessionId: 'session-interactive-revoke',
+      command: 'bash -i',
+      expectedContextId: observed.executionContextId,
+      inputGrantMode: 'bounded',
+    });
+    await vi.waitFor(() => expect(session.backend.writes).toContain('bash -i\r'));
+
+    await harness.controller.revokeToken();
+    await expect(pending).resolves.toMatchObject({ status: 'running' });
+    expect(harness.controller.listShared()).toEqual([]);
+    expect(session.backend.interrupted).toBe(1);
+    await expect(
+      harness.controller.callTool('synapse_status', {
+        sessionId: 'session-interactive-revoke',
+      }),
+    ).resolves.toMatchObject({ status: 'expired' });
+    session.actor.dispose();
+  });
+
   it('clears Sharing before restarting the endpoint after a port change', async () => {
     const harness = await createController(true);
     await harness.sessions.add('session-endpoint-restart');

@@ -152,6 +152,16 @@ export class SharingOutputHistory {
     return this.#page(output, nextCursor, nextCursor < this.#cursor, historyTruncated);
   }
 
+  /** 验证 finish 使用的游标属于当前 Sharing，且不早于指定输入边界。 */
+  assertCursorAtOrAfter(cursor: OutputCursor, minimumCursor?: OutputCursor): void {
+    const position = this.#decodeCursor(cursor);
+    if (minimumCursor === undefined) return;
+    const minimumPosition = this.#decodeCursor(minimumCursor);
+    if (position < minimumPosition) {
+      throw new OutputCursorError('输出游标早于最近一次交互输入，请先重新观察当前 Session。');
+    }
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.flush();

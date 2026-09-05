@@ -27,6 +27,22 @@ describe('Share Text', () => {
     expect(text).toContain('完成探针');
     expect(text).toContain('启动 Shell 提示');
     expect(text).toContain('当前 PTY environment');
+    expect(text).toContain('synapse_start_interactive');
+    expect(text).toContain('synapse_input');
+    expect(text).toContain('synapse_finish_interactive');
+    expect(text).toContain('inputRequestId');
+    expect(text).toContain('inputGrantId');
+    expect(text).toContain('先 observe 看到程序回到 Shell');
+    expect(text).toContain('最近一次 observe 的 nextCursor 作为 observedCursor');
+    expect(text).toContain('只返回规范化长度、键名、输出和游标，不回显 text 原文');
+    expect(text).toContain('不保证密码不会出现在 PTY 回显、终端 UI、Sharing 输出历史或审批卡片');
+    expect(text).toContain(
+      '可用工具：synapse_execute、synapse_start_interactive、synapse_input、synapse_finish_interactive、synapse_observe、synapse_wait、synapse_interrupt、synapse_status',
+    );
+    expect(text.indexOf('必须调用 synapse_observe')).toBeLessThan(
+      text.indexOf('synapse_start_interactive -> synapse_input'),
+    );
+    expect(text).not.toContain('仅提供五个');
     expect(text).not.toContain('不要直接发送 PowerShell cmdlet');
     expect(text).not.toContain('先在 MCP 配置中填入');
     expect((text.match(/session-1/g) ?? []).length).toBe(1);

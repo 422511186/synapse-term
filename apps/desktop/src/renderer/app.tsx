@@ -572,9 +572,11 @@ export function App(): JSX.Element {
                 </div>
               ) : (
                 <>
-                  {activeExecution !== undefined && (
-                    <ExternalExecutionStatus execution={activeExecution} />
-                  )}
+                  <div className="external-execution-slot">
+                    {activeExecution !== undefined && (
+                      <ExternalExecutionStatus execution={activeExecution} />
+                    )}
+                  </div>
                   <div className="prototype-terminal-content">
                     {sessions.map((session) => (
                       <div

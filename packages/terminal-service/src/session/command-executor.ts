@@ -24,6 +24,7 @@ export type CommandExecutionStatus = ExternalTransactionStatus;
 export interface CommandTransaction {
   id: string;
   sessionId: string;
+  kind: 'structured';
   command: string;
   nonce: string;
   risk?: CommandRisk | undefined;
@@ -248,6 +249,7 @@ export class CommandExecutor {
     const transaction: CommandTransaction = {
       id: this.#options.idFactory(),
       sessionId: snapshot.id,
+      kind: 'structured',
       command: input.command,
       nonce: this.#options.nonceFactory(),
       ...(input.risk === undefined ? {} : { risk: input.risk }),

@@ -34,4 +34,19 @@ describe('ExternalLeaseRegistry', () => {
     expect(registry.owner('one')).toBeUndefined();
     expect(registry.owner('two')).toBeDefined();
   });
+
+  it('keeps an outer interactive lease while nested input handles are released', () => {
+    const registry = new ExternalLeaseRegistry();
+    const outer = registry.acquireHandle('session', 'caller');
+    const nested = registry.acquireHandle('session', 'caller');
+
+    nested.release();
+    expect(registry.owner('session')?.id).toBe('caller');
+    expect(outer.released).toBe(false);
+
+    outer.release();
+    expect(registry.owner('session')).toBeUndefined();
+    outer.release();
+    nested.release();
+  });
 });
