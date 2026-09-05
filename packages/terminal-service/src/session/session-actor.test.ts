@@ -137,6 +137,38 @@ describe('SessionActor', () => {
     actor.dispose();
   });
 
+  it('does not duplicate the existing prompt when an environment Probe returns a new prompt', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'Git Bash',
+      hideCompletionProbeEcho: true,
+    });
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    backend.emitData('prompt$ ');
+    await vi.waitFor(() => expect(terminalOutput.join('')).toBe('prompt$ '));
+
+    const probe = new ShellProbe(actor, {
+      nonceFactory: () => 'probe-prompt',
+      timeoutMs: 100,
+    });
+    const resultPromise = probe.run({ environmentEpoch: 0 });
+    await vi.waitFor(() => expect(backend.writes.join('')).toContain('probe-prompt'));
+    backend.emitData(
+      'echo __SYNAPSE_DIALECT_probe-prompt__:$?\r\n' +
+        '__SYNAPSE_DIALECT_probe-prompt__:0\r\nprompt$ ',
+    );
+
+    await expect(resultPromise).resolves.toMatchObject({ mode: 'structured' });
+    await vi.waitFor(() => expect(terminalOutput.join('')).toBe('prompt$ '));
+    probe.dispose();
+    actor.dispose();
+  });
+
   it('hides a zsh redrawn environment Probe split across PTY chunks', async () => {
     const backend = createFakeTerminalBackend();
     const actor = new SessionActor('s1', backend, {
@@ -461,6 +493,30 @@ describe('SessionActor', () => {
     await vi.waitFor(() => expect(terminalOutput.join('')).toContain('prompt$ '));
     expect(terminalOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
     expect(protocolOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
+    actor.dispose();
+  });
+
+  it('hides a completion Probe prompt when the completion frame arrives before the Probe echo', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, {
+      title: '终端 1',
+      terminalType: 'zsh',
+      hideCompletionProbeEcho: true,
+    });
+    const terminalOutput: string[] = [];
+    actor.onEvent((event) => {
+      if (event.type === 'terminal_output') terminalOutput.push(event.data);
+    });
+    await actor.markPtyRunning();
+    const dispatch = new PosixShellDriver().buildDispatch('ls', 'completion-ui-before-echo');
+    actor.suppressInputEcho(dispatch.echoPattern);
+
+    backend.emitData('prompt$ ls\r\noutput\r\nprompt$ ');
+    backend.emitData(completion('completion-ui-before-echo'));
+    backend.emitData(`${dispatch.echoPattern.start}${dispatch.echoPattern.end}\r\nprompt$ `);
+
+    await vi.waitFor(() => expect(terminalOutput.join('')).toContain('prompt$ ls'));
+    expect(terminalOutput.join('')).toBe('prompt$ ls\r\noutput\r\nprompt$ ');
     actor.dispose();
   });
 

@@ -60,6 +60,8 @@ export class SessionActor {
   #osc777Carry = '';
   #suppressedInputEchoes = new Map<string, InputEchoSuppression>();
   #environmentProbeEchoes = new Map<string, EnvironmentProbeEchoSuppression>();
+  #terminalOutputTail = '';
+  #terminalPromptCandidate: string | undefined;
   #hideCompletionProbeEcho: boolean;
   #queue: Promise<void> = Promise.resolve();
   #disposed = false;
@@ -440,6 +442,8 @@ export class SessionActor {
     this.#eventListeners.clear();
     this.#exitWaiters.clear();
     this.#osc777Carry = '';
+    this.#terminalOutputTail = '';
+    this.#terminalPromptCandidate = undefined;
     for (const state of this.#suppressedInputEchoes.values()) this.#discardInputEcho(state);
     this.#suppressedInputEchoes.clear();
     this.#environmentProbeEchoes.clear();
@@ -518,6 +522,8 @@ export class SessionActor {
       marker,
       phase: 'command',
       pending: [],
+      promptCandidate: this.#terminalPromptCandidate,
+      promptCarry: '',
     });
   }
 
@@ -525,10 +531,10 @@ export class SessionActor {
     return this.#enqueue(() => {
       const state = this.#environmentProbeEchoes.get(nonce);
       this.#environmentProbeEchoes.delete(nonce);
-      if (state === undefined || state.pending.length === 0) return;
-      const terminalData = joinPendingInputEcho(
+      if (state === undefined) return;
+      const terminalData = `${joinPendingInputEcho(
         state.pending.filter((segment) => !segment.terminalDelivered),
-      );
+      )}${this.#hideCompletionProbeEcho ? state.promptCarry : ''}`;
       if (terminalData.length > 0) this.#emitTerminalOutput(terminalData);
     });
   }
@@ -581,13 +587,11 @@ export class SessionActor {
 
   #markCompletionProbeFrame(payload: string): void {
     if (!payload.startsWith('TA;')) return;
+    const nonceEnd = payload.indexOf(';', 3);
+    if (nonceEnd <= 3) return;
+    const nonce = payload.slice(3, nonceEnd);
     for (const [start, state] of this.#suppressedInputEchoes) {
-      if (
-        state.phase === 'matching' ||
-        state.phase === 'awaiting_line' ||
-        state.phase === 'awaiting_prompt' ||
-        state.probeEchoCompleted
-      ) {
+      if (state.start.includes(nonce) || state.end.includes(nonce)) {
         this.#suppressedInputEchoes.set(start, { ...state, completionFrameSeen: true });
       }
     }
@@ -604,14 +608,18 @@ export class SessionActor {
         this.#environmentProbeEchoes.delete(nonce);
         continue;
       }
+      const current =
+        state.promptCandidate === undefined && this.#terminalPromptCandidate !== undefined
+          ? { ...state, promptCandidate: this.#terminalPromptCandidate }
+          : state;
       const strippedProtocol = stripEnvironmentProbeEcho(
         protocolVisible,
-        state,
+        current,
         this.#hideCompletionProbeEcho,
       );
       const strippedHidden = stripEnvironmentProbeEcho(
         hiddenVisible,
-        state,
+        current,
         this.#hideCompletionProbeEcho,
       );
       if (strippedProtocol.state.phase === 'done') this.#environmentProbeEchoes.delete(nonce);
@@ -659,6 +667,10 @@ export class SessionActor {
   }
 
   #emitTerminalOutput(data: string): void {
+    const combined = `${this.#terminalOutputTail}${data}`;
+    this.#terminalOutputTail = takeStringFromEnd(combined, MAX_TERMINAL_PROMPT_CONTEXT_BYTES);
+    const promptCandidate = findTrailingPromptCandidate(combined);
+    if (promptCandidate !== undefined) this.#terminalPromptCandidate = promptCandidate;
     this.#emit({ type: 'terminal_output', sequence: this.#outputSequence, data });
   }
 
@@ -793,13 +805,15 @@ interface PendingInputEchoSegment {
   terminalDelivered: boolean;
 }
 
-type EnvironmentProbeEchoPhase = 'command' | 'command_line' | 'result' | 'done';
+type EnvironmentProbeEchoPhase = 'command' | 'command_line' | 'result' | 'awaiting_prompt' | 'done';
 
 interface EnvironmentProbeEchoSuppression {
   command: string;
   marker: string;
   phase: EnvironmentProbeEchoPhase;
   pending: PendingInputEchoSegment[];
+  promptCandidate?: string | undefined;
+  promptCarry: string;
 }
 
 function stripSuppressedEcho(
@@ -864,7 +878,7 @@ function stripSuppressedEcho(
       pending: limitPendingInputEcho(candidate),
       endSearchOffset: start.end - start.start,
       probeEchoCompleted: false,
-      completionFrameSeen: false,
+      completionFrameSeen: state.completionFrameSeen,
       completionPromptHandled: false,
       promptCandidate,
       promptCarry: '',
@@ -899,7 +913,7 @@ function stripSuppressedEcho(
       phase: 'searching',
       endSearchOffset: 0,
       probeEchoCompleted: suffixLength > 0 ? false : state.probeEchoCompleted,
-      completionFrameSeen: suffixLength > 0 ? false : state.completionFrameSeen,
+      completionFrameSeen: state.completionFrameSeen,
       completionPromptHandled: suffixLength > 0 ? false : state.completionPromptHandled,
       promptCandidate: state.promptCandidate,
       promptCarry: suffixLength > 0 ? '' : state.promptCarry,
@@ -1052,6 +1066,15 @@ function limitPromptContext(value: string): string {
   return takeStringFromEnd(value, 4 * 1024);
 }
 
+const MAX_TERMINAL_PROMPT_CONTEXT_BYTES = 4 * 1024;
+
+function findTrailingPromptCandidate(input: string): string | undefined {
+  const lineStart = Math.max(input.lastIndexOf('\r'), input.lastIndexOf('\n')) + 1;
+  const candidate = new TerminalTextSanitizer().push(input.slice(lineStart));
+  if (candidate.length === 0 || candidate.length > 1_024) return undefined;
+  return /[$#%>]\s*$/.test(candidate) ? candidate : undefined;
+}
+
 function findPromptAtLineBoundary(input: string, marker: string): FlexibleMarkerMatch | undefined {
   let from = 0;
   while (from < input.length) {
@@ -1105,6 +1128,9 @@ function stripEnvironmentProbeEcho(
   };
   const segments = [...state.pending, ...(input.length > 0 ? [incoming] : [])];
   const data = joinPendingInputEcho(segments);
+  if (state.phase === 'awaiting_prompt') {
+    return stripEnvironmentProbePrompt(data, state);
+  }
   let cursor = 0;
   let output = '';
   let nextState: EnvironmentProbeEchoSuppression = { ...state, pending: [] };
@@ -1125,7 +1151,11 @@ function stripEnvironmentProbeEcho(
       }
       output += data.slice(cursor, command.start);
       cursor = command.end;
-      nextState = { ...nextState, phase: 'command_line' };
+      nextState = {
+        ...nextState,
+        phase: 'command_line',
+        promptCandidate: nextState.promptCandidate ?? findPromptCandidate(data, command.start),
+      };
     }
 
     if (nextState.phase === 'command_line') {
@@ -1190,9 +1220,11 @@ function stripEnvironmentProbeEcho(
       const value = removeTerminalEchoControls(data.slice(result.end, lineEnd.start)).trim();
       if (/^\d+$/.test(value) || /^(?:true|false)$/i.test(value)) {
         cursor = lineEnd.end;
-        nextState = { ...nextState, phase: 'done' };
-        output += data.slice(cursor);
-        continue;
+        const prompt = stripEnvironmentProbePrompt(data.slice(cursor), {
+          ...nextState,
+          phase: 'awaiting_prompt',
+        });
+        return { output: `${output}${prompt.output}`, state: prompt.state };
       }
       output += data.slice(result.start, lineEnd.end);
       cursor = lineEnd.end;
@@ -1200,6 +1232,37 @@ function stripEnvironmentProbeEcho(
   }
 
   return { output, state: nextState };
+}
+
+function stripEnvironmentProbePrompt(
+  data: string,
+  state: EnvironmentProbeEchoSuppression,
+): { output: string; state: EnvironmentProbeEchoSuppression } {
+  if (state.promptCandidate === undefined) {
+    return { output: data, state: { ...state, phase: 'done', promptCarry: '' } };
+  }
+  const combined = `${state.promptCarry}${data}`;
+  if (combined.length === 0) return { output: '', state };
+  const prompt = findPromptAtLineBoundary(combined, state.promptCandidate);
+  if (prompt !== undefined) {
+    return {
+      output: `${combined.slice(0, prompt.start)}${combined.slice(prompt.end)}`,
+      state: { ...state, phase: 'done', promptCarry: '' },
+    };
+  }
+  const suffixLength = trailingPromptWindow(combined, state.promptCandidate);
+  if (suffixLength === 0) {
+    return { output: combined, state: { ...state, phase: 'done', promptCarry: '' } };
+  }
+  const suffixStart = combined.length - suffixLength;
+  return {
+    output: combined.slice(0, suffixStart),
+    state: {
+      ...state,
+      phase: 'awaiting_prompt',
+      promptCarry: combined.slice(suffixStart),
+    },
+  };
 }
 
 interface FlexibleMarkerMatch {
