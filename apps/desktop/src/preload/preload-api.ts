@@ -13,6 +13,7 @@ import type {
   ThemeState,
   SharedMcpSession,
 } from '../shared/contracts.js';
+import type { UpdateState } from '../shared/update-contracts.js';
 
 export type {
   AppStatus,
@@ -43,6 +44,18 @@ export function createDesktopApi(ipc: RendererIpc, platform?: string): DesktopAp
     (await ipc.invoke(channel, ...argumentsValue)) as T;
   return {
     ...(platform === undefined ? {} : { platform }),
+    updates: {
+      getState: () => invoke('updates:get-state'),
+      setAutomaticChecks: (enabled) => invoke('updates:set-automatic-checks', enabled),
+      check: () => invoke('updates:check'),
+      download: (candidateId) => invoke('updates:download', candidateId),
+      cancel: () => invoke('updates:cancel'),
+      getInstallImpact: (candidateId) => invoke('updates:install-impact', candidateId),
+      install: (candidateId, confirmationId) =>
+        invoke('updates:install', candidateId, confirmationId),
+      onChanged: (listener) =>
+        ipc.on('updates:changed', (payload) => listener(payload as UpdateState)),
+    },
     sessions: {
       list: () => invoke('sessions:list'),
       environment: () => invoke('sessions:environment'),

@@ -25,6 +25,15 @@ try {
   const page = await application.firstWindow({ timeout: 30_000 });
   await page.waitForSelector('.prototype-shell', { timeout: 20_000 });
 
+  const updates = await page.evaluate(async () => {
+    if (window.synapseTerm?.updates === undefined)
+      throw new Error('update preload API is unavailable');
+    return window.synapseTerm.updates.setAutomaticChecks(false);
+  });
+  if (updates.phase === 'unsupported' || updates.automaticChecks !== false) {
+    throw new Error('packaged updater is unavailable or its preference was not saved');
+  }
+
   const environment = await page.evaluate(async () => {
     if (window.synapseTerm === undefined) throw new Error('preload API is unavailable');
     return window.synapseTerm.sessions.environment();
@@ -67,6 +76,8 @@ try {
       ok: true,
       sessionId: session.id,
       sessions: status.sessions,
+      version: updates.currentVersion,
+      updater: updates.phase,
     }),
   );
 } finally {

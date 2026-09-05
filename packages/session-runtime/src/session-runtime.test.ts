@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 import type { LocalShellDescriptor, PtySpawner } from '@synapse-term/terminal-service';
 
-import type { TerminalOutputEvent } from '../shared/contracts.js';
-import { TerminalHost } from './terminal-host.js';
+import type { TerminalOutputEvent } from './session-runtime.js';
+import { SessionRuntime } from './session-runtime.js';
 
 class FakePtySpawner implements PtySpawner {
   readonly spawned: ReturnType<typeof createFakeTerminalBackend>[] = [];
@@ -27,8 +27,8 @@ const shells: LocalShellDescriptor[] = [
   },
 ];
 
-function createHost(spawner: FakePtySpawner): TerminalHost {
-  return new TerminalHost({
+function createRuntime(spawner: FakePtySpawner): SessionRuntime {
+  return new SessionRuntime({
     spawner,
     home: '/home/test',
     shellLocator: { list: () => shells } as never,
@@ -36,10 +36,10 @@ function createHost(spawner: FakePtySpawner): TerminalHost {
   });
 }
 
-describe('TerminalHost', () => {
+describe('SessionRuntime', () => {
   it('creates, writes, renames and closes a session', async () => {
     const spawner = new FakePtySpawner();
-    const host = createHost(spawner);
+    const host = createRuntime(spawner);
     const created = await host.createSession({
       title: '终端 1',
       terminalType: 'Zsh',
@@ -63,7 +63,7 @@ describe('TerminalHost', () => {
 
   it('streams ordered output and reports status', async () => {
     const spawner = new FakePtySpawner();
-    const host = createHost(spawner);
+    const host = createRuntime(spawner);
     const received: TerminalOutputEvent[] = [];
     host.onTerminalOutput((event) => received.push(event));
     await host.createSession({
@@ -85,7 +85,7 @@ describe('TerminalHost', () => {
 
   it('applies probe echo visibility to the local UI output without changing the Session actor', async () => {
     const spawner = new FakePtySpawner();
-    const host = createHost(spawner);
+    const host = createRuntime(spawner);
     const received: TerminalOutputEvent[] = [];
     host.onTerminalOutput((event) => received.push(event));
     const created = await host.createSession({
@@ -96,7 +96,7 @@ describe('TerminalHost', () => {
       cwd: '/',
       env: {},
     });
-    const actor = host.getMcpSessionSource().get(created.id);
+    const actor = host.getSessionSource().get(created.id);
     expect(actor).toBeDefined();
     await actor?.setProbeEchoVisibility(false);
     actor?.suppressInputEcho({ start: '[probe:', end: ':end]' });
@@ -108,26 +108,5 @@ describe('TerminalHost', () => {
       ),
     );
     await host.shutdown();
-  });
-
-  it('throws for unknown channels', async () => {
-    const host = createHost(new FakePtySpawner());
-    await expect(host.handle('unknown:channel', [])).rejects.toThrow(/not available/);
-  });
-
-  it('rejects invalid or oversized launch input', async () => {
-    const host = createHost(new FakePtySpawner());
-    await expect(
-      host.handle('sessions:create', [
-        {
-          title: 't',
-          terminalType: 'Zsh',
-          executable: '/bin/zsh',
-          args: Array.from({ length: 300 }, () => 'a'),
-          cwd: '/',
-          env: {},
-        },
-      ]),
-    ).rejects.toThrow();
   });
 });

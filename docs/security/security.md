@@ -8,7 +8,15 @@ Electron Renderer 在 `sandbox` 与 `contextIsolation` 下运行，`nodeIntegrat
 
 ## 进程边界
 
-PTY、Session 和 MCP 控制器由 Electron Main 持有。即使 Renderer 崩溃或重载，PTY 仍继续运行；Main 只向 Renderer 暴露白名单中的会话、终端、设置、主题和 MCP 控制通道，未声明的 IPC 通道一律拒绝。
+PTY、Session、MCP 和应用更新控制器由 Electron Main 持有。即使 Renderer 崩溃或重载，PTY 仍继续运行；Main 只向 Renderer 暴露白名单中的会话、终端、设置、主题、应用更新和 MCP 控制通道，未声明的 IPC 通道一律拒绝。
+
+## 应用更新信任
+
+更新来源固定为 `422511186/synapse-term` 的 GitHub Releases。更新 IPC 校验主窗口主 frame 的来源、参数数量与类型，仅接受不透明候选 ID 和一次性确认，不接受 Renderer 提供 URL、feed、安装路径或命令。发布说明作为文本展示；外部 MCP 客户端没有应用更新能力。
+
+Windows 没有产品签名证书，使用固定 HTTPS 来源及 SHA-512 完整性校验，不能把摘要称为发布者签名。macOS 除固定来源外，以引导版本内置的 Ed25519 公钥验证 DMG；生产私钥只用于受保护 CI 签名，不进入应用。Sparkle 上游归档固定版本与 SHA-256，构建保留其许可。ad-hoc 签名与 Ed25519 更新签名都不代表 Apple Developer ID 或公证。
+
+下载完成、普通退出和应用重启不会授予安装权限。安装确认有效期 60 秒且绑定 Session 集合，准备复核失败不结束 Session；开始安装前关闭外部调用和新建 Session 入口，再清理 MCP 与 Session。macOS 直到确认后才进入 Sparkle 原生安装流程，不自动移除 quarantine。系统授权拒绝或安装器失败可能发生在 Session 已结束后，必须报告实际失败。详见 [应用更新手册](../engineering/app-updates.md)。
 
 ## MCP 服务
 
@@ -27,6 +35,8 @@ Sharing 输出从共享建立后开始记录，不回放共享前内容。对外
 ## 本地数据
 
 Session、PTY 和 Sharing 输出历史只在应用运行期间保留，应用退出时释放。MCP 端口、审批模式和访问 Token 由本机设置存储管理，不上传到服务端；应用不提供产品账户、远程凭据库、远程主机资产或集中审计日志。
+
+通用设置、更新偏好、公钥与有限更新缓存可以本地保存。缓存不能替代候选和签名复核，不包含 Session、终端输出、运行凭据或安装授权。
 
 ## 本地 Shell 与远程环境
 

@@ -91,11 +91,13 @@ React Renderer + xterm
         | 受限 preload API
         v
 Electron Main
-   ├─ Terminal Host：PTY / Session / IPC
-   └─ Embedded MCP Server（可选，仅监听 127.0.0.1）
-        ├─ Sharing 与输出边界
-        ├─ 审批策略与审批卡片
-        └─ synapse_* 工具管线
+   ├─ Composition Root
+   │    ├─ @synapse-term/session-runtime：PTY / Session 行为
+   │    ├─ Desktop IPC Adapter
+   │    └─ @synapse-term/mcp-runtime（可选，仅监听 127.0.0.1）
+   │         ├─ Sharing 与输出边界
+   │         ├─ 审批策略与审批卡片
+   │         └─ synapse_* 工具管线
 ```
 
 仓库是 pnpm workspace monorepo：
@@ -103,10 +105,12 @@ Electron Main
 - `apps/desktop/`：Electron Main、preload、React Renderer 和 E2E。
 - `packages/domain/`：Session、终端抽象和外部调用领域模型。
 - `packages/terminal-service/`：PTY 适配、SessionActor/Manager、Shell 发现、执行与输出处理。
+- `packages/session-runtime/`：Session 生命周期、环境发现、启动默认值和输出事件映射。
+- `packages/mcp-runtime/`：Sharing、MCP 外部事务、审批/输入授权和内嵌 MCP Server。
 - `packages/test-kit/`：Fake PTY 和测试替身。
 - `docs/`：架构、安全与工程文档；`openspec/`：规格变更提案与归档。
 
-Renderer 不直接持有 Node API、PTY 或 Session 内部状态；Electron Main 在应用退出时终止全部 Session。进入 SSH、容器或 WSL 后，应用仍只管理同一个本地 PTY，不解析远程连接拓扑。
+Renderer 不直接持有 Node API、PTY 或 Session 内部状态；Electron Main 只负责选择并装配 runtime package、IPC adapter 和窗口生命周期，并在应用退出时终止全部 Session。进入 SSH、容器或 WSL 后，应用仍只管理同一个本地 PTY，不解析远程连接拓扑。
 
 ## 文档
 

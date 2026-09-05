@@ -9,6 +9,6 @@ export default defineConfig({
       reporter: ['text', 'html', 'json-summary'],
     },
     exclude: ['**/node_modules/**', '**/dist/**', '**/out/**', '**/release/**', '**/e2e/**'],
-    include: ['{apps,packages}/**/*.{test,spec}.{ts,tsx}'],
+    include: ['{apps,packages}/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.test.mjs'],
   },
 });

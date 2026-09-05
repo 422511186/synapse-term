@@ -1,6 +1,9 @@
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron';
+import { ApprovalQueue, EmbeddedMcpServer, McpController } from '@synapse-term/mcp-runtime';
+import { SessionRuntime } from '@synapse-term/session-runtime';
 
 import type { GeneralSettings, ThemeState } from '../shared/contracts.js';
 import {
@@ -9,12 +12,16 @@ import {
 } from '../shared/desktop-ipc-channels.js';
 import { DesktopWindowRegistry, createBrowserWindowOptions } from './electron-window.js';
 import { resolveWindowBackgroundColor } from './electron-window.js';
-import { ApprovalQueue } from './mcp/approval-queue.js';
-import { EmbeddedMcpServer } from './mcp/embedded-mcp-server.js';
-import { McpController } from './mcp/mcp-controller.js';
 import { GeneralSettingsController } from './settings/general-settings-controller.js';
 import { sanitizeGeneralSettings } from './settings/general-settings.js';
-import { TerminalHost } from './terminal-host.js';
+import { SessionIpcAdapter } from './session-ipc-adapter.js';
+import { DesktopLifecycle } from './desktop-lifecycle.js';
+import type { UpdateAdapter } from './updates/update-adapter.js';
+import { UpdateController } from './updates/update-controller.js';
+import { handleUpdateRequest } from './updates/update-ipc-adapter.js';
+import { updatePreferences } from './updates/update-preferences.js';
+import { MacosUpdateAdapter } from './updates/macos-update-adapter.js';
+import { SparkleProcess } from './updates/sparkle-process.js';
 
 const windows = new DesktopWindowRegistry<BrowserWindow>();
 
@@ -71,18 +78,25 @@ function createWindow(): void {
   else void window.loadFile(join(directory, '../renderer/index.html'));
 }
 
-function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsController): void {
+function registerIpc(
+  sessionIpc: SessionIpcAdapter,
+  generalSettings: GeneralSettingsController,
+  lifecycle: DesktopLifecycle,
+): void {
   for (const channel of DESKTOP_IPC_REQUEST_CHANNELS.filter(
     (channel) =>
       !channel.startsWith('mcp:') &&
       !channel.startsWith('settings:') &&
+      !channel.startsWith('updates:') &&
       !channel.startsWith('theme:'),
   )) {
     ipcMain.handle(channel, (event, ...argumentsValue: unknown[]) => {
       if (!isTrustedRendererEvent(event)) {
         throw new Error('Renderer IPC request is not trusted');
       }
-      return host.handle(channel, argumentsValue);
+      if (channel === 'sessions:create')
+        return lifecycle.createSession(() => sessionIpc.handle(channel, argumentsValue));
+      return sessionIpc.handle(channel, argumentsValue);
     });
   }
   ipcMain.handle('settings:get-general', async (event) => {
@@ -102,13 +116,22 @@ function registerIpc(host: TerminalHost, generalSettings: GeneralSettingsControl
 }
 
 function isTrustedRendererEvent(event: Electron.IpcMainInvokeEvent): boolean {
+  if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame)
+    return false;
   const url = event.senderFrame?.url;
   if (typeof url !== 'string' || url.length === 0) return false;
-  if (url.startsWith('file://')) return true;
   try {
     const parsed = new URL(url);
+    const directory = import.meta.dirname ?? join(app.getAppPath(), 'dist/main');
+    const expected = new URL(
+      !app.isPackaged && process.env.SYNAPSE_TERM_RENDERER_URL
+        ? process.env.SYNAPSE_TERM_RENDERER_URL
+        : pathToFileURL(join(directory, '../renderer/index.html')).href,
+    );
     return (
-      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && parsed.port === '4173'
+      parsed.protocol === expected.protocol &&
+      parsed.host === expected.host &&
+      parsed.pathname === expected.pathname
     );
   } catch {
     return false;
@@ -129,7 +152,7 @@ function broadcast(channel: DesktopIpcEventChannel, payload: unknown): void {
   }
 }
 
-function registerMcpIpc(controller: McpController): void {
+function registerMcpIpc(controller: McpController, lifecycle: DesktopLifecycle): void {
   const handlers: Record<string, (args: readonly unknown[]) => Promise<unknown> | unknown> = {
     'mcp:get-settings': () => controller.getSettings(),
     'mcp:update-settings': (args) => controller.updateSettings(args[0] as never),
@@ -144,6 +167,7 @@ function registerMcpIpc(controller: McpController): void {
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(channel, async (event, ...argumentsValue: unknown[]) => {
       if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+      if (lifecycle.closing) throw new Error('应用正在退出');
       return await handler(argumentsValue);
     });
   }
@@ -155,11 +179,12 @@ async function startDesktopMain(): Promise<void> {
   await app.whenReady();
   Menu.setApplicationMenu(null);
 
-  const host = new TerminalHost({ version: app.getVersion() });
+  const sessionRuntime = new SessionRuntime({ version: app.getVersion() });
+  const sessionIpc = new SessionIpcAdapter(sessionRuntime);
   const generalSettings = new GeneralSettingsController({
     settingsStoreDirectory: join(app.getPath('userData'), 'settings'),
     apply: async (settings) => {
-      host.setProbeEchoVisibility(settings.hideCompletionProbeEcho);
+      void sessionRuntime.setProbeEchoVisibility(settings.hideCompletionProbeEcho);
       applyTheme(settings);
     },
   });
@@ -179,15 +204,22 @@ async function startDesktopMain(): Promise<void> {
   });
   const mcpController = new McpController({
     settingsStoreDirectory: join(app.getPath('userData'), 'mcp'),
-    sessions: host.getMcpSessionSource(),
+    sessions: sessionRuntime.getSessionSource(),
     approvalQueue,
+  });
+  const lifecycle = new DesktopLifecycle({
+    stopMcp: () => mcpController.stop(),
+    stopSessions: () => sessionRuntime.shutdown(),
   });
   const mcpEndpoint = new EmbeddedMcpServer({
     getSettings: () => mcpController.getSettingsSnapshot(),
-    callTool: (name, input) => mcpController.callTool(name, input),
+    callTool: (name, input) => {
+      if (lifecycle.closing) throw new Error('SESSION_EXPIRED: 应用正在退出');
+      return mcpController.callTool(name, input);
+    },
   });
   mcpController.setEndpoint(mcpEndpoint);
-  void mcpController.reload().catch((error: unknown) => {
+  await mcpController.reload().catch((error: unknown) => {
     console.error('[desktop-mcp] settings load failed', error);
   });
   const removeApprovalListener = approvalQueue.onRequest((request) =>
@@ -199,38 +231,85 @@ async function startDesktopMain(): Promise<void> {
   const removeExecutionListener = mcpController.onExecution((event) =>
     broadcast('mcp:execution', event),
   );
-  const removeSessionListener = host.onSessionChanged((session) =>
+  const removeSessionListener = sessionRuntime.onSessionChanged((session) =>
     broadcast('session:changed', session),
   );
-  const removeOutputListener = host.onTerminalOutput((event) =>
+  const removeOutputListener = sessionRuntime.onTerminalOutput((event) =>
     broadcast('terminal:output', event),
   );
-  registerIpc(host, generalSettings);
-  registerMcpIpc(mcpController);
+  const preferences = updatePreferences(join(app.getPath('userData'), 'settings'));
+  let adapter: UpdateAdapter | null = null;
+  if (app.isPackaged && process.platform === 'win32' && process.arch === 'x64') {
+    const { WindowsUpdateAdapter } = await import('./updates/windows-update-adapter.js');
+    adapter = new WindowsUpdateAdapter(app.getVersion(), () =>
+      dialog.showErrorBox(
+        'Synapse Term 更新失败',
+        '安装器启动失败。已结束的 Session 无法恢复，请重新打开应用检查版本，或从 GitHub Releases 手动下载安装。',
+      ),
+    );
+  } else if (app.isPackaged && process.platform === 'darwin' && process.arch === 'arm64') {
+    adapter = new MacosUpdateAdapter({
+      currentVersion: app.getVersion(),
+      cacheDirectory: join(app.getPath('userData'), 'updates'),
+      native: new SparkleProcess(
+        join(process.resourcesPath, '../Helpers/SynapseUpdater.app/Contents/MacOS/SynapseUpdater'),
+        () => app.quit(),
+      ),
+    });
+  }
+  const updates = new UpdateController({
+    currentVersion: app.getVersion(),
+    adapter,
+    automaticChecks: await preferences.load(),
+    saveAutomaticChecks: preferences.save,
+    unsupportedReason: app.isPackaged ? '当前平台或架构不支持应用内更新' : '开发模式不执行应用更新',
+    getSessionIds: () => {
+      if (lifecycle.creatingSession) throw new Error('Session 正在创建，请完成后重新确认');
+      return sessionRuntime
+        .listSessions()
+        .filter((session) => session.pty === 'running' || session.pty === 'starting')
+        .map((session) => session.id);
+    },
+    shutdownForInstall: () => lifecycle.shutdown(),
+  });
+  updates.onChanged((state) => broadcast('updates:changed', state));
+  for (const channel of DESKTOP_IPC_REQUEST_CHANNELS.filter((item) =>
+    item.startsWith('updates:'),
+  )) {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!isTrustedRendererEvent(event)) throw new Error('Renderer IPC request is not trusted');
+      return handleUpdateRequest(updates, channel, args);
+    });
+  }
+  registerIpc(sessionIpc, generalSettings, lifecycle);
+  registerMcpIpc(mcpController, lifecycle);
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!lifecycle.closing && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
   let quitting = false;
+  let cleanupComplete = false;
   app.on('before-quit', (event) => {
-    if (quitting) return;
+    if (cleanupComplete) return;
     event.preventDefault();
+    if (quitting) return;
     quitting = true;
-    void host
-      .shutdown()
-      .catch((error: unknown) => console.error('[desktop-main] shutdown failed', error))
-      .finally(async () => {
-        nativeTheme.removeListener('updated', handleThemeUpdated);
-        removeSessionListener();
-        removeOutputListener();
-        removeApprovalListener();
-        removeApprovalClosedListener();
-        removeExecutionListener();
-        await mcpController.stop();
-        app.quit();
-      });
+    void Promise.allSettled([updates.dispose(), lifecycle.shutdown()]).then((results) => {
+      for (const result of results) {
+        if (result.status === 'rejected')
+          console.error('[desktop-main] shutdown failed', result.reason);
+      }
+      nativeTheme.removeListener('updated', handleThemeUpdated);
+      removeSessionListener();
+      removeOutputListener();
+      removeApprovalListener();
+      removeApprovalClosedListener();
+      removeExecutionListener();
+      cleanupComplete = true;
+      app.quit();
+    });
   });
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

@@ -7,7 +7,7 @@ docs/ 按主题分类维护；新增文档必须放入对应分类目录，不�
 | `adr/` | 架构决策记录（编号递增；现存决策有效，推翻需同步更新） | `adr/` |
 | `architecture/` | 产品边界、仓库结构、进程与模块、IPC 契约 | `architecture/architecture.md` |
 | `security/` | 安全边界与进程隔离 | `security/security.md` |
-| `engineering/` | 开发工程约定：编码/提交、测试、命令手册、发布流程 | `engineering/conventions.md`、`engineering/testing.md`、`engineering/runbook.md`、`engineering/release.md` |
+| `engineering/` | 开发工程约定：编码/提交、测试、命令手册、发布流程与应用更新 | `engineering/conventions.md`、`engineering/testing.md`、`engineering/runbook.md`、`engineering/release.md`、`engineering/app-updates.md` |
 
 ## 加载指引
 

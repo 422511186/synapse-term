@@ -1,7 +1,11 @@
-import type { SessionLaunchInput } from '../preload/preload-api.js';
-import type { SessionSummary } from '../preload/preload-api.js';
-import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
+import type {
+  SessionEnvironment,
+  SessionLaunchInput,
+  SessionSummary,
+} from '../preload/preload-api.js';
 import { resolveSessionAlias } from './session-alias.js';
+
+type LocalShellDescriptor = SessionEnvironment['shells'][number];
 
 export { getDefaultSessionAlias, resolveSessionAlias } from './session-alias.js';
 

@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-应用按当前用户运行，不持久化数据、不保存凭据、不建立远程资产模型；Renderer 只能通过受限 preload API 访问 Main 持有的 PTY/Session。
+应用按当前用户运行，不持久化 Session、终端输出或远程运行凭据，不建立远程资产模型；本机设置、MCP 本机访问 Token 和 ADR-0021 规定的有限更新缓存由各自控制器管理。Renderer 只能通过受限 preload API 访问 Main 持有的能力。
 
 ## 影响
 

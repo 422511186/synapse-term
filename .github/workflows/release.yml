@@ -20,6 +20,7 @@ jobs:
   verify:
     name: 发布前验证
     runs-on: ubuntu-latest
+    environment: release
     timeout-minutes: 30
     steps:
       - name: 检出代码
@@ -41,6 +42,12 @@ jobs:
 
       - name: 运行发布前验证
         run: pnpm verify
+
+      - name: 检查正式版本和生产更新密钥
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: node scripts/update-release.mjs production-keys
 
   package-windows:
     name: 发布 Windows x64
@@ -73,11 +80,25 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm package:win
 
+      - name: 校验 Windows 包内版本
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $setup = Get-Item "release/Synapse-Term-$version-x64-Setup.exe"
+          $application = Get-Item 'release/win-unpacked/Synapse Term.exe'
+          $expectedVersions = @($version, "$version.0")
+          if ($setup.VersionInfo.ProductVersion -notin $expectedVersions -or $application.VersionInfo.ProductVersion -notin $expectedVersions) {
+            throw 'Windows package versions do not match the release version'
+          }
+
       - name: 上传 Windows Release 资产
         uses: actions/upload-artifact@v4
         with:
           name: synapse-term-windows-x64
-          path: release/Synapse-Term-*-Setup.exe
+          path: |
+            release/Synapse-Term-*-Setup.exe
+            release/Synapse-Term-*-Setup.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
           retention-days: 3
 
@@ -85,6 +106,9 @@ jobs:
     name: 发布 macOS arm64
     needs: verify
     runs-on: macos-14
+    environment: release
+    env:
+      SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
     timeout-minutes: 45
     steps:
       - name: 检出代码
@@ -112,11 +136,22 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: pnpm package:mac
 
+      - name: 校验打包后的应用和真实 PTY
+        run: pnpm smoke:packaged-desktop 'release/mac-arm64/Synapse Term.app/Contents/MacOS/Synapse Term'
+
+      - name: 为最终 DMG 签名并生成固定版本 appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: pnpm updates:sign-mac
+
       - name: 上传 macOS Release 资产
         uses: actions/upload-artifact@v4
         with:
           name: synapse-term-macos-arm64
-          path: release/Synapse-Term-*.dmg
+          path: |
+            release/Synapse-Term-*-arm64.dmg
+            release/appcast.xml
+            release/mac-update-build.json
           if-no-files-found: error
           retention-days: 3
 
@@ -126,10 +161,28 @@ jobs:
       - package-windows
       - package-macos
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     timeout-minutes: 10
     steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装校验依赖
+        run: pnpm install --frozen-lockfile
+
       - name: 下载 Windows 和 macOS 产物
         uses: actions/download-artifact@v4
         with:
@@ -137,27 +190,22 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: 生成 SHA256 校验文件
-        working-directory: release-assets
-        run: sha256sum *.exe *.dmg > SHA256SUMS.txt
+      - name: 校验完整更新资产并生成 SHA256SUMS
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+        run: pnpm updates:validate release-assets
 
-      - name: 创建 GitHub Release
+      - name: 上传到草稿并发布不可变 Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          PRERELEASE_FLAG=""
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
+          set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --title "Synapse Term $GITHUB_REF_NAME" \
-              --generate-notes \
-              $PRERELEASE_FLAG
+            echo 'A release already exists. Inspect a failed draft or publish a higher version; assets must not be overwritten.' >&2
+            exit 1
           fi
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Synapse Term $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

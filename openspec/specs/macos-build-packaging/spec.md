@@ -1,7 +1,7 @@
 # macos-build-packaging Specification
 
 ## Purpose
-支持 macOS arm64 桌面应用打包、平台适配验证，同时保持 Windows 打包路径可用。
+规定 Synapse Term 在 macOS arm64 上生成 DMG 与未打包目录的构建要求，以及本地 Shell 发现、PTY 创建和进程树终止的跨平台适配，支持验证真实桌面终端生命周期并保持 Windows 打包与运行路径可用。
 
 ## Requirements
 
