@@ -9,11 +9,11 @@ export default async function afterSign(context) {
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const helper = join(app, 'Contents/Helpers/SynapseUpdater.app/Contents/MacOS/SynapseUpdater');
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
-  execFileSync('/usr/bin/lipo', ['-verify_arch', 'arm64', helper]);
+  execFileSync('/usr/bin/lipo', [helper, '-verify_arch', 'arm64']);
   execFileSync('/usr/bin/lipo', [
+    join(app, 'Contents/MacOS/Synapse Term'),
     '-verify_arch',
     'arm64',
-    join(app, 'Contents/MacOS/Synapse Term'),
   ]);
   if ((await readFile(join(app, 'Contents/Resources/Sparkle-LICENSE.txt'))).byteLength === 0) {
     throw new Error('Sparkle license is missing');

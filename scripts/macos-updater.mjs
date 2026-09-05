@@ -95,7 +95,7 @@ async function prepare() {
     ],
     { stdio: 'inherit' },
   );
-  execFileSync('/usr/bin/lipo', ['-verify_arch', 'arm64', join(contents, 'MacOS/SynapseUpdater')]);
+  execFileSync('/usr/bin/lipo', [join(contents, 'MacOS/SynapseUpdater'), '-verify_arch', 'arm64']);
 }
 
 export default async function afterPack(context) {
