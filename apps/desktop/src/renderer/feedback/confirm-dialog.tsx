@@ -66,7 +66,7 @@ export function ConfirmDialog({
             busyLabel="处理中…"
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 ${
               danger
-                ? 'bg-red-500/90 text-white hover:bg-red-500'
+                ? 'bg-destructive text-foreground hover:bg-destructive/90'
                 : 'bg-white text-black hover:bg-white/90'
             }`}
             onClick={onConfirm}

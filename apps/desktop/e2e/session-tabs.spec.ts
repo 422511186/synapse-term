@@ -14,6 +14,8 @@ interface ConfirmDialogColors {
   titleColor: RgbColor;
   bodyColor: RgbColor;
   cancelColor: RgbColor;
+  confirmBackground: RgbColor;
+  confirmColor: RgbColor;
 }
 
 function parseCssColor(value: string): RgbColor {
@@ -125,6 +127,11 @@ async function readConfirmDialogColors(confirmation: Locator): Promise<ConfirmDi
           button.textContent?.includes('取消'),
         )
       : undefined;
+    const confirm = footer
+      ? Array.from(footer.querySelectorAll('button')).find(
+          (button) => !button.textContent?.includes('取消'),
+        )
+      : undefined;
     const readColor = (element: Element | undefined | null, property: string): string =>
       element === undefined || element === null
         ? ''
@@ -136,6 +143,8 @@ async function readConfirmDialogColors(confirmation: Locator): Promise<ConfirmDi
       titleColor: readColor(heading, 'color'),
       bodyColor: readColor(body, 'color'),
       cancelColor: readColor(cancel, 'color'),
+      confirmBackground: readColor(confirm, 'backgroundColor'),
+      confirmColor: readColor(confirm, 'color'),
     };
   });
   const parse = (value: string): RgbColor => parseCssColor(value);
@@ -146,6 +155,8 @@ async function readConfirmDialogColors(confirmation: Locator): Promise<ConfirmDi
     titleColor: parse(colors.titleColor),
     bodyColor: parse(colors.bodyColor),
     cancelColor: parse(colors.cancelColor),
+    confirmBackground: parse(colors.confirmBackground),
+    confirmColor: parse(colors.confirmColor),
   };
 }
 
@@ -153,6 +164,8 @@ function expectReadable(colors: ConfirmDialogColors): void {
   expect(contrastRatio(colors.titleColor, colors.headerBackground)).toBeGreaterThanOrEqual(4.5);
   expect(contrastRatio(colors.bodyColor, colors.panelBackground)).toBeGreaterThanOrEqual(4.5);
   expect(contrastRatio(colors.cancelColor, colors.footerBackground)).toBeGreaterThanOrEqual(4.5);
+  expect(colors.confirmBackground.a).toBeGreaterThan(0);
+  expect(contrastRatio(colors.confirmColor, colors.confirmBackground)).toBeGreaterThanOrEqual(4.5);
 }
 
 test('keeps the close confirmation readable in dark and light themes', async ({ page }) => {

@@ -43,7 +43,7 @@ export class TerminalHost {
     );
     this.#shellLocator = options.shellLocator ?? new ShellLocator();
     this.#home = options.home ?? homedir();
-    this.#version = options.version ?? '0.5.0';
+    this.#version = options.version ?? '0.5.1';
     this.#hideCompletionProbeEcho = options.hideCompletionProbeEcho ?? true;
   }
 
