@@ -2,8 +2,13 @@ export type {
   CompletionMetadata,
   CommandRiskEvidence,
   ExecutionContextId,
+  ExternalTransactionKind,
   ExternalErrorCode,
   ExternalTransactionStatus,
+  InputGrantId,
+  InputGrantMode,
+  InputKey,
+  InputRequestId,
   OutputCursor,
   TransactionId,
   TransactionOutputRange,
@@ -19,3 +24,4 @@ export * from './session/output-buffer.js';
 export * from './session/terminal-text-sanitizer.js';
 export * from './session/external-lease.js';
 export * from './session/command-executor.js';
+export * from './session/interactive-command-executor.js';

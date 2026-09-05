@@ -1,10 +1,21 @@
-import type { CommandRisk } from '@synapse-term/domain';
+import type { CommandRisk, InputGrantMode, InputKey } from '@synapse-term/domain';
+
+export interface ApprovalInputLimits {
+  maxCalls: number;
+  maxBytes: number;
+  idleTimeoutMs: number;
+}
 
 export interface ApprovalRequest {
   sessionId: string;
   command: string;
   risk: CommandRisk;
   reasons: readonly string[];
+  kind?: 'structured' | 'interactive' | 'free_input' | undefined;
+  inputGrantMode?: InputGrantMode | undefined;
+  inputLimits?: ApprovalInputLimits | undefined;
+  text?: string | undefined;
+  keys?: readonly InputKey[] | undefined;
 }
 
 export type ApprovalDecision = 'allow_once' | 'allow_session' | 'denied';
@@ -53,6 +64,11 @@ export class ApprovalQueue {
       command: current.command,
       risk: current.risk,
       reasons: current.reasons,
+      ...(current.kind === undefined ? {} : { kind: current.kind }),
+      ...(current.inputGrantMode === undefined ? {} : { inputGrantMode: current.inputGrantMode }),
+      ...(current.inputLimits === undefined ? {} : { inputLimits: current.inputLimits }),
+      ...(current.text === undefined ? {} : { text: current.text }),
+      ...(current.keys === undefined ? {} : { keys: current.keys }),
     };
   }
 

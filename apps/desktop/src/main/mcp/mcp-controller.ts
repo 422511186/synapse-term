@@ -71,6 +71,7 @@ export class McpController {
         command: string;
         source: string;
         phase: 'started' | 'finished';
+        kind: 'structured' | 'interactive';
       }) => void)
     | undefined;
 
@@ -144,6 +145,8 @@ export class McpController {
       transactionId: string;
       command: string;
       source: string;
+      kind: 'structured' | 'interactive';
+      phase: 'started' | 'finished';
     }) => void,
   ): () => void {
     this.#executionListener = listener;
@@ -224,12 +227,13 @@ export class McpController {
     shared.removeLifecycleListener = actor.onEvent((event) => {
       if (event.type === 'pty_exit') void this.unshare(sessionId);
     });
-    executor.onEvent((event) => {
+    pipeline.onEvent((event) => {
       this.#executionListener?.({
         sessionId,
         transactionId: event.transaction.id,
         command: event.transaction.command,
         source: 'MCP 外部客户端',
+        kind: event.transaction.kind,
         phase: event.type,
       });
     });
@@ -299,6 +303,27 @@ export class McpController {
             this.#context(),
           ),
         );
+      case 'synapse_start_interactive':
+        return unwrap(
+          await shared.pipeline.startInteractive(
+            rawInput as unknown as Parameters<ExternalToolPipeline['startInteractive']>[0],
+            this.#context(),
+          ),
+        );
+      case 'synapse_input':
+        return unwrap(
+          await shared.pipeline.input(
+            rawInput as unknown as Parameters<ExternalToolPipeline['input']>[0],
+            this.#context(),
+          ),
+        );
+      case 'synapse_finish_interactive':
+        return unwrap(
+          await shared.pipeline.finishInteractive(
+            rawInput as unknown as Parameters<ExternalToolPipeline['finishInteractive']>[0],
+            this.#context(),
+          ),
+        );
       case 'synapse_wait':
         return unwrap(
           await shared.pipeline.wait(rawInput as { transactionId: string }, this.#context()),
@@ -308,7 +333,7 @@ export class McpController {
           await shared.pipeline.interrupt(rawInput as { transactionId: string }, this.#context()),
         );
       default:
-        throw new Error('POLICY_DENIED: 请求的工具不存在。仅提供五个 synapse_* 工具。');
+        throw new Error('POLICY_DENIED: 请求的工具不存在。仅提供八个 synapse_* 工具。');
     }
   }
 

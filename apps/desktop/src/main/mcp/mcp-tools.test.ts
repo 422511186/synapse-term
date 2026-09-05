@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { runMcpTool, serializeMcpToolError, type McpToolRuntime } from './mcp-tools.js';
+import {
+  MCP_TOOL_NAMES,
+  runMcpTool,
+  serializeMcpToolError,
+  validateToolInput,
+  type McpToolRuntime,
+} from './mcp-tools.js';
 
 function createRuntime(
   callTool: McpToolRuntime['callTool'] = async () => ({ ok: true }),
@@ -18,6 +24,19 @@ async function textOf(result: Awaited<ReturnType<typeof runMcpTool>>): Promise<s
 }
 
 describe('MCP tool contract', () => {
+  it('exposes exactly the eight protocol tools', () => {
+    expect(MCP_TOOL_NAMES).toEqual([
+      'synapse_execute',
+      'synapse_start_interactive',
+      'synapse_input',
+      'synapse_finish_interactive',
+      'synapse_observe',
+      'synapse_wait',
+      'synapse_interrupt',
+      'synapse_status',
+    ]);
+  });
+
   it('requires an observation context before execute and does not call the runtime', async () => {
     let calls = 0;
     const result = await runMcpTool(
@@ -200,5 +219,118 @@ describe('MCP tool contract', () => {
     );
 
     expect(await textOf(result)).toMatch(/^POLICY_DENIED:/);
+  });
+
+  it('validates interactive start, input mode combinations, and finish cursors', () => {
+    const validStart = {
+      sessionId: 'session-1',
+      command: 'sudo su -',
+      expectedContextId: 'context-1',
+      inputGrantMode: 'bounded',
+    };
+    expect(validateToolInput('synapse_start_interactive', validStart)).toBeUndefined();
+    expect(
+      validateToolInput('synapse_start_interactive', {
+        ...validStart,
+        inputGrantMode: 'unlimited',
+      }),
+    ).toMatch(/^POLICY_DENIED:/);
+    expect(
+      validateToolInput('synapse_finish_interactive', {
+        sessionId: 'session-1',
+        transactionId: 'transaction-1',
+      }),
+    ).toMatch(/^OUTPUT_CURSOR_STALE:/);
+    expect(
+      validateToolInput('synapse_finish_interactive', {
+        sessionId: 'session-1',
+        transactionId: 'transaction-1',
+        observedCursor: 'x'.repeat(2_049),
+      }),
+    ).toMatch(/^OUTPUT_CURSOR_STALE:/);
+
+    const common = {
+      sessionId: 'session-1',
+      inputRequestId: 'request-1',
+      text: 'password\n',
+    };
+    expect(
+      validateToolInput('synapse_input', {
+        ...common,
+        transactionId: 'transaction-1',
+        inputGrantId: 'grant-1',
+      }),
+    ).toBeUndefined();
+    expect(
+      validateToolInput('synapse_input', {
+        ...common,
+        transactionId: 'transaction-1',
+        inputGrantId: 'grant-1',
+        expectedContextId: 'context-1',
+      }),
+    ).toMatch(/^POLICY_DENIED:/);
+    expect(
+      validateToolInput('synapse_input', {
+        ...common,
+        transactionId: 'transaction-1',
+      }),
+    ).toMatch(/^POLICY_DENIED:/);
+    expect(
+      validateToolInput('synapse_input', {
+        sessionId: 'session-1',
+        expectedContextId: 'context-1',
+        inputRequestId: 'request-1',
+        keys: ['not-a-key'],
+      }),
+    ).toMatch(/^COMMAND_NOT_AUDITABLE:/);
+    expect(
+      validateToolInput('synapse_input', {
+        sessionId: 'session-1',
+        expectedContextId: 'context-1',
+        inputRequestId: 'request-1',
+      }),
+    ).toMatch(/^COMMAND_NOT_AUDITABLE:/);
+  });
+
+  it('rejects controls, UTF-8 oversize text, excessive keys, and invalid request IDs before runtime calls', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const runtime = createRuntime(async (_name, input) => {
+      calls.push(input);
+      return { unexpected: true };
+    });
+    const base = {
+      sessionId: 'session-1',
+      expectedContextId: 'context-1',
+      inputRequestId: 'request-1',
+    };
+    const invalidInputs: Array<Record<string, unknown>> = [
+      { ...base, text: 'bad\rreturn' },
+      { ...base, text: 'bad\u001bsequence' },
+      { ...base, text: '😀'.repeat(2_049) },
+      { ...base, keys: Array.from({ length: 129 }, () => 'up') },
+      { ...base, inputRequestId: 'bad\u0000id', text: 'x' },
+      { ...base, text: '', keys: [] },
+    ];
+
+    for (const input of invalidInputs) {
+      const result = await runMcpTool(runtime, 'synapse_input', input, 'token-1');
+      expect(result.isError).toBe(true);
+      await expect(textOf(result)).resolves.toMatch(/^(?:POLICY_DENIED|COMMAND_NOT_AUDITABLE):/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('preserves the stable input and startup uncertainty error codes', () => {
+    expect(
+      serializeMcpToolError(new Error('INPUT_GRANT_EXHAUSTED: quota reached 请结束事务。')),
+    ).toMatch(/^INPUT_GRANT_EXHAUSTED:/);
+    expect(
+      serializeMcpToolError(
+        new Error('INTERACTIVE_START_WRITE_UNKNOWN: delivery is uncertain; do not retry.'),
+      ),
+    ).toMatch(/^INTERACTIVE_START_WRITE_UNKNOWN:/);
+    expect(serializeMcpToolError(new Error('TRANSACTION_NOT_ACTIVE: old code'))).toMatch(
+      /^SESSION_NOT_READY:/,
+    );
   });
 });

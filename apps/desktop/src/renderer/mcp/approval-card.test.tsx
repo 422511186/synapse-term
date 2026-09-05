@@ -38,4 +38,44 @@ describe('ApprovalCard', () => {
     expect(markup).toContain('data-decision="allow_session"');
     expect(markup).toContain('data-decision="denied"');
   });
+
+  it('shows fixed limits for interactive grants without showing future input', () => {
+    const markup = renderToStaticMarkup(
+      <ApprovalCard
+        onDecide={() => undefined}
+        request={{
+          ...request,
+          kind: 'interactive',
+          inputGrantMode: 'bounded',
+          inputLimits: { maxCalls: 256, maxBytes: 262_144, idleTimeoutMs: 600_000 },
+        }}
+      />,
+    );
+
+    expect(markup).toContain('后续输入授权');
+    expect(markup).toContain('bounded');
+    expect(markup).toContain('256 次');
+    expect(markup).toContain('262,144 bytes');
+    expect(markup).toContain('10 分钟');
+    expect(markup).not.toContain('future-password');
+  });
+
+  it('renders normalized free-input text and key names for approval matching', () => {
+    const markup = renderToStaticMarkup(
+      <ApprovalCard
+        onDecide={() => undefined}
+        request={{
+          ...request,
+          command: '[free_input]',
+          kind: 'free_input',
+          text: 'menu choice',
+          keys: ['down', 'enter'],
+        }}
+      />,
+    );
+
+    expect(markup).toContain('待发送的自由输入');
+    expect(markup).toContain('menu choice');
+    expect(markup).toContain('键名：down、enter');
+  });
 });

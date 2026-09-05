@@ -53,7 +53,7 @@ describe('EmbeddedMcpServer', () => {
     }
   });
 
-  it('registers exactly the five synapse tools over Streamable HTTP', async () => {
+  it('registers exactly the eight synapse tools over Streamable HTTP', async () => {
     const token = generateMcpToken();
     const server = createServer({ enabled: true, approvalMode: 'managed', port: 0, token });
     await server.start();
@@ -66,14 +66,25 @@ describe('EmbeddedMcpServer', () => {
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
         'synapse_execute',
+        'synapse_finish_interactive',
+        'synapse_input',
         'synapse_interrupt',
         'synapse_observe',
+        'synapse_start_interactive',
         'synapse_status',
         'synapse_wait',
       ]);
       const statusTool = tools.tools.find((tool) => tool.name === 'synapse_status');
       expect(statusTool?.description).toContain('不会触发 Probe');
       expect(statusTool?.description).toContain('synapse_execute');
+      const startTool = tools.tools.find((tool) => tool.name === 'synapse_start_interactive');
+      expect(startTool?.description).toContain('不附加完成 Probe');
+      expect(startTool?.inputSchema).toHaveProperty('properties.inputGrantMode');
+      const inputTool = tools.tools.find((tool) => tool.name === 'synapse_input');
+      expect(inputTool?.description).toContain('inputRequestId');
+      expect(inputTool?.description).toContain('不回显 text 原文');
+      const finishTool = tools.tools.find((tool) => tool.name === 'synapse_finish_interactive');
+      expect(finishTool?.description).toContain('observedCursor');
     } finally {
       await client.close();
       await server.stop();

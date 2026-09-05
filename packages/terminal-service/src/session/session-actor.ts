@@ -30,6 +30,21 @@ export interface ExternalWriteGuard {
   isCancelled(): boolean;
 }
 
+export type GuardedExternalWriteError =
+  | 'stale-environment-epoch'
+  | 'stale-execution-context'
+  | 'environment-unverified'
+  | 'session-not-running'
+  | 'external-write-cancelled';
+
+export type GuardedExternalWriteResult =
+  | { ok: true; executionContextId: string }
+  | { ok: false; error: GuardedExternalWriteError | 'write-unknown' };
+
+export type InteractiveInputWriteResult =
+  | { ok: true; executionContextId: string }
+  | { ok: false; error: 'session-not-running' | 'external-write-cancelled' | 'write-unknown' };
+
 export type SessionActorEvent =
   | { type: 'pty_output'; sequence: number; data: string; historyData?: string }
   | { type: 'terminal_output'; sequence: number; data: string }
@@ -274,6 +289,112 @@ export class SessionActor {
       this.#backend.write(data);
       this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
       return { ok: true as const };
+    });
+  }
+
+  /**
+   * 原子校验环境和执行上下文后，只写入交互启动 command。
+   * 后端 write 抛错表示交付结果不确定，此时立即失效 environment/context。
+   */
+  writeInteractiveStart(
+    data: string,
+    expectedEnvironmentEpoch: number,
+    expectedContextId: string,
+    guard?: ExternalWriteGuard,
+  ): Promise<GuardedExternalWriteResult> {
+    return this.#enqueue(() => {
+      const preflight = this.#validateGuardedExternalWrite(
+        expectedEnvironmentEpoch,
+        expectedContextId,
+        guard,
+      );
+      if (preflight !== undefined) return { ok: false as const, error: preflight };
+      try {
+        this.#backend.write(data);
+      } catch {
+        this.#invalidateEnvironment();
+        return { ok: false as const, error: 'write-unknown' as const };
+      }
+      this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
+      return { ok: true as const, executionContextId: this.#state.executionContextId };
+    });
+  }
+
+  /** 交互事务内输入由 transaction/input grant 保护，不轮换 context 或 capability epoch。 */
+  writeTransactionalInput(
+    data: string,
+    guard?: ExternalWriteGuard,
+  ): Promise<InteractiveInputWriteResult> {
+    return this.#enqueue(() => {
+      if (guard?.isCancelled() === true) {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      if (this.#disposed || this.#state.pty !== 'running') {
+        return { ok: false as const, error: 'session-not-running' as const };
+      }
+      if (this.#state.environment.verificationStatus !== 'verified') {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      try {
+        this.#backend.write(data);
+      } catch {
+        this.#invalidateEnvironment();
+        return { ok: false as const, error: 'write-unknown' as const };
+      }
+      return { ok: true as const, executionContextId: this.#state.executionContextId };
+    });
+  }
+
+  /**
+   * 自由输入在开始后端写入尝试前失效 environment 并轮换 context；写入不确定也不恢复旧值。
+   */
+  writeFreeInput(
+    data: string,
+    expectedContextId: string,
+    guard?: ExternalWriteGuard,
+  ): Promise<InteractiveInputWriteResult | { ok: false; error: 'stale-execution-context' }> {
+    return this.#enqueue(() => {
+      if (guard?.isCancelled() === true) {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      if (this.#disposed || this.#state.pty !== 'running') {
+        return { ok: false as const, error: 'session-not-running' as const };
+      }
+      if (this.#state.executionContextId !== expectedContextId) {
+        return { ok: false as const, error: 'stale-execution-context' as const };
+      }
+      this.#invalidateEnvironment();
+      try {
+        this.#backend.write(data);
+      } catch {
+        return { ok: false as const, error: 'write-unknown' as const };
+      }
+      return { ok: true as const, executionContextId: this.#state.executionContextId };
+    });
+  }
+
+  /** finish 阶段单独发送完成 Probe，不附加或重放交互启动 command。 */
+  writeInteractiveFinishProbe(
+    data: string,
+    guard?: ExternalWriteGuard,
+  ): Promise<InteractiveInputWriteResult> {
+    return this.#enqueue(() => {
+      if (guard?.isCancelled() === true) {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      if (this.#disposed || this.#state.pty !== 'running') {
+        return { ok: false as const, error: 'session-not-running' as const };
+      }
+      if (this.#state.environment.verificationStatus !== 'verified') {
+        return { ok: false as const, error: 'external-write-cancelled' as const };
+      }
+      try {
+        this.#backend.write(data);
+      } catch {
+        this.#invalidateEnvironment();
+        return { ok: false as const, error: 'write-unknown' as const };
+      }
+      return { ok: true as const, executionContextId: this.#state.executionContextId };
     });
   }
 
@@ -554,6 +675,25 @@ export class SessionActor {
       type: 'environment_invalidated',
       capabilityEpoch: this.#state.environment.capabilityEpoch,
     });
+  }
+
+  #validateGuardedExternalWrite(
+    expectedEnvironmentEpoch: number,
+    expectedContextId: string,
+    guard?: ExternalWriteGuard,
+  ): GuardedExternalWriteError | undefined {
+    if (guard?.isCancelled() === true) return 'external-write-cancelled';
+    if (this.#disposed || this.#state.pty !== 'running') return 'session-not-running';
+    if (this.#state.environment.verificationStatus !== 'verified') {
+      return 'environment-unverified';
+    }
+    if (this.#state.environment.capabilityEpoch !== expectedEnvironmentEpoch) {
+      return 'stale-environment-epoch';
+    }
+    if (this.#state.executionContextId !== expectedContextId) {
+      return 'stale-execution-context';
+    }
+    return undefined;
   }
 
   #enqueue<T>(task: () => T): Promise<T> {

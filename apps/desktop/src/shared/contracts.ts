@@ -1,4 +1,5 @@
 import type { LocalShellDescriptor } from '@synapse-term/terminal-service';
+import type { InputGrantMode, InputKey } from '@synapse-term/domain';
 
 export interface SessionSummary {
   id: string;
@@ -106,6 +107,17 @@ export interface McpApprovalRequest {
   command: string;
   risk: 'read_only' | 'unknown' | 'mutating' | 'privileged' | 'destructive';
   reasons: readonly string[];
+  kind?: 'structured' | 'interactive' | 'free_input' | undefined;
+  inputGrantMode?: InputGrantMode | undefined;
+  inputLimits?:
+    | {
+        maxCalls: number;
+        maxBytes: number;
+        idleTimeoutMs: number;
+      }
+    | undefined;
+  text?: string | undefined;
+  keys?: readonly InputKey[] | undefined;
 }
 
 export type McpApprovalDecision = 'allow_once' | 'allow_session' | 'denied';
@@ -120,6 +132,7 @@ export interface McpExecutionEvent {
   command: string;
   source: string;
   phase: 'started' | 'finished';
+  kind?: 'structured' | 'interactive' | undefined;
 }
 
 export interface DesktopApi {

@@ -4,6 +4,7 @@ import {
   PosixShellDriver,
   PowerShellDriver,
   ShellDriverError,
+  isKnownStdinReader,
   parseEnvironmentFingerprint,
   resolveShellDriver,
 } from './shell-driver.js';
@@ -69,6 +70,31 @@ describe('ShellDriver', () => {
     );
   });
 
+  it.each(['sudo su -', 'su -', 'vim notes.txt', 'ssh user@example.com'])(
+    'builds a command-only dispatch for interactive %s',
+    (command) => {
+      const dispatch = new PosixShellDriver().buildInteractiveDispatch(command);
+
+      expect(dispatch.payload).toBe(`${command}\r`);
+      expect(dispatch.payload).not.toContain('777;TA;');
+    },
+  );
+
+  it('keeps literal audit and interactive classification separate', () => {
+    const driver = new PosixShellDriver();
+
+    expect(() => driver.validateCommand('sudo -S id')).toThrow(
+      expect.objectContaining({ code: 'INTERACTIVE_COMMAND_UNSUPPORTED' }),
+    );
+    expect(() => driver.validateInteractiveCommand('sudo -S id')).not.toThrow();
+    expect(() =>
+      driver.validateInteractiveCommand('custom-wrapper-that-may-read-stdin'),
+    ).not.toThrow();
+    expect(() => driver.validateInteractiveCommand('printf \u0000')).toThrow(
+      expect.objectContaining({ code: 'COMMAND_NOT_AUDITABLE' }),
+    );
+  });
+
   it('rejects interactive container and REPL commands in their known forms', () => {
     for (const command of [
       'podman exec -it app sh',
@@ -80,6 +106,20 @@ describe('ShellDriver', () => {
         expect.objectContaining({ code: 'INTERACTIVE_COMMAND_UNSUPPORTED' }),
       );
     }
+  });
+
+  it('recognizes common stdin readers without treating unknown commands as interactive', () => {
+    for (const command of [
+      'sudo -S id',
+      'doas -n true',
+      'su -',
+      'passwd',
+      'ssh host',
+      'vim file',
+    ]) {
+      expect(isKnownStdinReader(command)).toBe(true);
+    }
+    expect(isKnownStdinReader('custom-wrapper-that-may-read-stdin')).toBe(false);
   });
 
   it('parses only the completion payload for the selected transaction', () => {

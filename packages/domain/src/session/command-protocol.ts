@@ -14,7 +14,42 @@ export type ExecutionContextId = string;
 export type TransactionId = string;
 /** 服务端签名、绑定当前 Session/Sharing 的不透明输出游标。 */
 export type OutputCursor = string;
+export type ExternalTransactionKind = 'structured' | 'interactive';
 export type ExternalTransactionStatus = 'running' | 'completed' | 'interrupted' | 'unknown';
+
+/** 交互输入允许的固定键名；不开放原始 PTY 字节或任意转义序列。 */
+export type InputKey =
+  | 'up'
+  | 'down'
+  | 'right'
+  | 'left'
+  | 'enter'
+  | 'esc'
+  | 'tab'
+  | 'backspace'
+  | 'delete'
+  | 'home'
+  | 'end'
+  | 'pageup'
+  | 'pagedown'
+  | 'space'
+  | 'f1'
+  | 'f2'
+  | 'f3'
+  | 'f4'
+  | 'f5'
+  | 'f6'
+  | 'f7'
+  | 'f8'
+  | 'f9'
+  | 'f10'
+  | 'f11'
+  | 'f12';
+
+/** 交互事务启动时明确选择的有限输入授权档位。 */
+export type InputGrantMode = 'one_shot' | 'bounded';
+export type InputGrantId = string;
+export type InputRequestId = string;
 
 export interface TransactionOutputRange {
   startCursor: OutputCursor;
