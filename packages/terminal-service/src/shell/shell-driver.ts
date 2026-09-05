@@ -17,10 +17,22 @@ export interface ShellDispatch {
   };
 }
 
+/** 只包含用户命令的字面 Shell payload；交互事务不会在这里附加完成 Probe。 */
+export interface ShellCommandDispatch {
+  readonly command: string;
+  readonly payload: string;
+  readonly transportMode: typeof LITERAL_SHELL_TRANSPORT;
+}
+
 export interface ShellDriver {
   readonly dialect: 'posix' | 'powershell';
   buildEnvironmentProbe(nonce: string): string;
   validateCommand(command: string): void;
+  validateInteractiveCommand(command: string): void;
+  buildCommandOnlyDispatch(command: string): ShellCommandDispatch;
+  buildInteractiveDispatch(command: string): ShellCommandDispatch;
+  buildCompletionProbe(nonce: string): string;
+  buildCompletionEchoPattern(nonce: string): ShellDispatch['echoPattern'];
   buildDispatch(command: string, nonce: string): ShellDispatch;
   parseCompletion(payload: string): CompletionFrame | null;
 }
@@ -44,38 +56,65 @@ abstract class BaseShellDriver implements ShellDriver {
   }
 
   validateCommand(command: string): void {
-    validateLiteralCommand(command);
+    validateLiteralCommand(command, true);
+  }
+
+  validateInteractiveCommand(command: string): void {
+    validateLiteralCommand(command, false);
+  }
+
+  buildCommandOnlyDispatch(command: string): ShellCommandDispatch {
+    this.validateInteractiveCommand(command);
+    const commandTerminator = command.endsWith('\r') || command.endsWith('\n') ? '' : '\r';
+    return {
+      command,
+      payload: `${command}${commandTerminator}`,
+      transportMode: LITERAL_SHELL_TRANSPORT,
+    };
+  }
+
+  buildInteractiveDispatch(command: string): ShellCommandDispatch {
+    return this.buildCommandOnlyDispatch(command);
+  }
+
+  buildCompletionProbe(nonce: string): string {
+    validateNonce(nonce);
+    return this.createCompletionProbe(nonce);
+  }
+
+  buildCompletionEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
+    validateNonce(nonce);
+    return this.createEchoPattern(nonce);
   }
 
   buildDispatch(command: string, nonce: string): ShellDispatch {
     this.validateCommand(command);
-    validateNonce(nonce);
+    const commandOnly = this.buildCommandOnlyDispatch(command);
     const probe = this.buildCompletionProbe(nonce);
-    const commandTerminator = command.endsWith('\r') || command.endsWith('\n') ? '' : '\r';
     return {
       command,
       probe,
-      payload: `${command}${commandTerminator}${probe}\r`,
-      transportMode: LITERAL_SHELL_TRANSPORT,
-      echoPattern: this.buildEchoPattern(nonce),
+      payload: `${commandOnly.payload}${probe}\r`,
+      transportMode: commandOnly.transportMode,
+      echoPattern: this.buildCompletionEchoPattern(nonce),
     };
   }
 
   abstract parseCompletion(payload: string): CompletionFrame | null;
 
-  protected abstract buildCompletionProbe(nonce: string): string;
+  protected abstract createCompletionProbe(nonce: string): string;
 
-  protected abstract buildEchoPattern(nonce: string): ShellDispatch['echoPattern'];
+  protected abstract createEchoPattern(nonce: string): ShellDispatch['echoPattern'];
 }
 
 export class PosixShellDriver extends BaseShellDriver {
   readonly dialect = 'posix' as const;
 
-  protected buildCompletionProbe(nonce: string): string {
+  protected createCompletionProbe(nonce: string): string {
     return `printf '\\033]777;TA;%s;%s\\007' ${shellSingleQuote(nonce)} "$?"`;
   }
 
-  protected buildEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
+  protected createEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
     return {
       start: `printf '\\033]777;TA;%s;%s\\007' ${shellSingleQuote(nonce)} `,
       end: '"$?"',
@@ -90,12 +129,12 @@ export class PosixShellDriver extends BaseShellDriver {
 export class PowerShellDriver extends BaseShellDriver {
   readonly dialect = 'powershell' as const;
 
-  protected buildCompletionProbe(nonce: string): string {
+  protected createCompletionProbe(nonce: string): string {
     const quotedNonce = powerShellSingleQuote(nonce);
     return `[Console]::Write(([char]27+']777;TA;'+${quotedNonce}+';'+$(if($?){0}elseif($null -ne $LASTEXITCODE){$LASTEXITCODE}else{1})+[char]7))`;
   }
 
-  protected buildEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
+  protected createEchoPattern(nonce: string): ShellDispatch['echoPattern'] {
     const quotedNonce = powerShellSingleQuote(nonce);
     return {
       start: `[Console]::Write(([char]27+']777;TA;'+${quotedNonce}+';'+`,
@@ -141,7 +180,7 @@ export function parseEnvironmentFingerprint(
   return null;
 }
 
-function validateLiteralCommand(command: string): void {
+function validateLiteralCommand(command: string, rejectInteractive: boolean): void {
   if (command.trim().length === 0) {
     throw new ShellDriverError('COMMAND_NOT_AUDITABLE', '命令为空，无法进行字面审计。');
   }
@@ -176,7 +215,7 @@ function validateLiteralCommand(command: string): void {
   ) {
     throw new ShellDriverError('COMMAND_NOT_AUDITABLE', '命令包含保留的事务边界标记。');
   }
-  if (isKnownInteractiveCommand(command)) {
+  if (rejectInteractive && isKnownInteractiveCommand(command)) {
     throw new ShellDriverError(
       'INTERACTIVE_COMMAND_UNSUPPORTED',
       '命令需要持续交互或不会返回当前 Shell 提示符，不能作为结构化外部事务提交。',
@@ -194,14 +233,37 @@ function powerShellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function isKnownInteractiveCommand(command: string): boolean {
+export function isKnownInteractiveCommand(command: string): boolean {
   const tokens = tokenizeCommand(command);
   const executable = tokens[0]?.toLowerCase().replaceAll('\\', '/').split('/').pop();
   if (executable === undefined) return false;
   if (
-    ['ssh', 'telnet', 'top', 'htop', 'vim', 'vi', 'nvim', 'nano', 'less', 'more', 'watch'].includes(
-      executable,
-    )
+    [
+      'ssh',
+      'telnet',
+      'top',
+      'htop',
+      'vim',
+      'vi',
+      'nvim',
+      'nano',
+      'less',
+      'more',
+      'watch',
+      'sudo',
+      'doas',
+      'su',
+      'passwd',
+      'login',
+      'read',
+      'select',
+      'fzf',
+      'dialog',
+      'whiptail',
+      'mysql',
+      'psql',
+      'sqlite3',
+    ].includes(executable)
   ) {
     return true;
   }
@@ -227,6 +289,11 @@ function isKnownInteractiveCommand(command: string): boolean {
     return hasInteractive && hasTty;
   }
   return false;
+}
+
+/** Alias used by callers that care about stdin consumption rather than UI shape. */
+export function isKnownStdinReader(command: string): boolean {
+  return isKnownInteractiveCommand(command);
 }
 
 function tokenizeCommand(command: string): string[] {

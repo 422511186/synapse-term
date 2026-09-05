@@ -32,6 +32,10 @@ function formatReason(reason: string): string {
   return explanations.get(reason) ?? reason;
 }
 
+function formatBytes(value: number): string {
+  return `${value.toLocaleString('en-US')} bytes`;
+}
+
 export function ApprovalCard({
   request,
   onDecide,
@@ -67,6 +71,60 @@ export function ApprovalCard({
               </dd>
             </div>
           </dl>
+
+          {request.kind === 'interactive' && request.inputGrantMode !== undefined && (
+            <section className="approval-section" aria-labelledby="approval-input-title">
+              <div className="approval-section-heading">
+                <div>
+                  <h3 id="approval-input-title">后续输入授权</h3>
+                  <p>本次启动只授予固定范围的输入能力，不包含未来输入内容。</p>
+                </div>
+              </div>
+              <dl className="approval-details" data-approval-input-grant="true">
+                <div className="approval-detail">
+                  <dt>授权档位</dt>
+                  <dd>
+                    <code>{request.inputGrantMode}</code>
+                  </dd>
+                </div>
+                {request.inputLimits !== undefined && (
+                  <>
+                    <div className="approval-detail">
+                      <dt>固定调用上限</dt>
+                      <dd>{request.inputLimits.maxCalls.toLocaleString('en-US')} 次</dd>
+                    </div>
+                    <div className="approval-detail">
+                      <dt>固定字节上限</dt>
+                      <dd>{formatBytes(request.inputLimits.maxBytes)}</dd>
+                    </div>
+                    <div className="approval-detail">
+                      <dt>连续空闲上限</dt>
+                      <dd>{Math.round(request.inputLimits.idleTimeoutMs / 60_000)} 分钟</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            </section>
+          )}
+
+          {request.kind === 'free_input' && (
+            <section className="approval-section" aria-labelledby="approval-free-input-title">
+              <div className="approval-section-heading">
+                <div>
+                  <h3 id="approval-free-input-title">待发送的自由输入</h3>
+                  <p>审批匹配使用规范化文本和按序键名。</p>
+                </div>
+              </div>
+              {request.text !== undefined && request.text.length > 0 && (
+                <pre className="approval-command-scroll" title={request.text}>
+                  {request.text}
+                </pre>
+              )}
+              {request.keys !== undefined && request.keys.length > 0 && (
+                <p className="approval-reason">键名：{request.keys.join('、')}</p>
+              )}
+            </section>
+          )}
 
           <section className="approval-section" aria-labelledby="approval-command-title">
             <div className="approval-section-heading">

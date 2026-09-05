@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { _electron, expect, test, type ElectronApplication } from '@playwright/test';
 
 const appRoot = fileURLToPath(new URL('../', import.meta.url));
+const configuredMcpPort = Number(process.env.SYNAPSE_TERM_ELECTRON_E2E_PORT ?? 4_739);
 
 test.skip(!process.env.SYNAPSE_TERM_ELECTRON_E2E, 'real Electron verification is opt-in');
 
@@ -46,6 +47,22 @@ function executionContextIdOf(result: Awaited<ReturnType<typeof callTool>>): str
   return json.executionContextId;
 }
 
+function inputGrantIdOf(result: Awaited<ReturnType<typeof callTool>>): string {
+  const json = result.json as { inputGrantId?: unknown } | undefined;
+  if (typeof json?.inputGrantId !== 'string') {
+    throw new Error(`missing input grant id: ${result.text}`);
+  }
+  return json.inputGrantId;
+}
+
+function outputCursorOf(result: Awaited<ReturnType<typeof callTool>>): string {
+  const json = result.json as { nextCursor?: unknown } | undefined;
+  if (typeof json?.nextCursor !== 'string') {
+    throw new Error(`missing output cursor: ${result.text}`);
+  }
+  return json.nextCursor;
+}
+
 test.beforeAll(async () => {
   userDataDirectory = await mkdtemp(join(tmpdir(), 'synapse-electron-e2e-'));
   electronApp = await _electron.launch({
@@ -71,7 +88,7 @@ test.afterAll(async () => {
   await rm(userDataDirectory, { recursive: true, force: true });
 });
 
-test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, and revocation', async () => {
+test('verifies real MCP calls, interactive input, approvals, visibility, grants, timeout, denial, and revocation', async () => {
   test.setTimeout(120_000);
 
   await page.getByRole('button', { name: '新建终端会话', exact: true }).click();
@@ -85,6 +102,12 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
     .getByRole('navigation', { name: '设置分类' })
     .getByRole('button', { name: /MCP 服务/ })
     .click();
+  const portInput = page.getByLabel('MCP 服务端口');
+  if (configuredMcpPort !== 4_739) {
+    await portInput.fill(String(configuredMcpPort));
+    await portInput.press('Enter');
+    await expect(portInput).toHaveValue(String(configuredMcpPort));
+  }
   const enabledToggle = page
     .locator('label')
     .filter({ hasText: '启用本机 MCP 端点' })
@@ -94,8 +117,10 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   await page.getByLabel('托管').click();
   await expect(page.getByLabel('托管')).toBeChecked();
   await expect(page.getByText('运行状态：运行中')).toBeVisible();
-  await expect(page.getByLabel('MCP 服务端口')).toHaveValue('4739');
-  await expect(page.locator('input[readonly]')).toHaveValue('http://127.0.0.1:4739/mcp');
+  await expect(portInput).toHaveValue(String(configuredMcpPort));
+  await expect(page.locator('input[readonly]')).toHaveValue(
+    `http://127.0.0.1:${configuredMcpPort}/mcp`,
+  );
   await expect(page.getByLabel('Authorization 请求头', { exact: true })).toContainText('Bearer');
   await page.screenshot({ path: 'test-results/ui-audit/01-settings.png' });
   await page.getByRole('button', { name: '返回工作区' }).click();
@@ -126,11 +151,30 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   expect(runtime.connectionString).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
   expect(runtime.sessionId).toBeTruthy();
 
+  const terminalContent = page.locator('.prototype-terminal-content');
+  const terminalHeightBeforeExternalExecution = await terminalContent.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().height),
+  );
+
   const transport = new StreamableHTTPClientTransport(new URL(runtime.connectionString!), {
     requestInit: { headers: { authorization: `Bearer ${runtime.token}` } },
   });
   const client = new Client({ name: 'playwright-external-client', version: '1.0.0' });
   await client.connect(transport);
+
+  const tools = await client.listTools();
+  expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
+    [
+      'synapse_execute',
+      'synapse_finish_interactive',
+      'synapse_input',
+      'synapse_interrupt',
+      'synapse_observe',
+      'synapse_start_interactive',
+      'synapse_status',
+      'synapse_wait',
+    ].sort(),
+  );
 
   const status = await callTool(client, 'synapse_status', { sessionId: runtime.sessionId });
   expect(status.isError).toBe(false);
@@ -157,6 +201,97 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
   expect(tailObservation.isError, tailObservation.text).toBe(false);
   let executionContextId = executionContextIdOf(tailObservation);
 
+  const interactiveInput = 'electron-interactive-input';
+  const interactiveCommand = /powershell/i.test(runtime.terminalType ?? '')
+    ? '$synapseValue = Read-Host; Write-Output "interactive-e2e:$synapseValue"'
+    : `IFS= read -r synapse_value; printf 'interactive-e2e:%s\\n' "$synapse_value"`;
+  const interactiveStartPromise = callTool(client, 'synapse_start_interactive', {
+    sessionId: runtime.sessionId,
+    command: interactiveCommand,
+    expectedContextId: executionContextId,
+    inputGrantMode: 'one_shot',
+  });
+  let card = page.getByRole('dialog', { name: 'MCP 审批' });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(interactiveCommand);
+  await expect(card).toContainText('one_shot');
+  await expect(card).not.toContainText(interactiveInput);
+  await page.screenshot({ path: 'test-results/ui-audit/03-interactive-approval-card.png' });
+  await card.getByRole('button', { name: '允许一次' }).click();
+  const interactiveStart = await interactiveStartPromise;
+  expect(interactiveStart.isError, interactiveStart.text).toBe(false);
+  expect(interactiveStart.json).toMatchObject({
+    status: 'running',
+    transaction: { kind: 'interactive', command: interactiveCommand },
+    inputGrantMode: 'one_shot',
+  });
+  await expect(page.getByTestId('external-execution-banner')).toBeVisible();
+  await expect
+    .poll(() =>
+      terminalContent.evaluate((element) => Math.round(element.getBoundingClientRect().height)),
+    )
+    .toBe(terminalHeightBeforeExternalExecution);
+  const interactiveTransactionId = transactionIdOf(interactiveStart);
+  const interactiveInputResult = await callTool(client, 'synapse_input', {
+    sessionId: runtime.sessionId,
+    transactionId: interactiveTransactionId,
+    inputGrantId: inputGrantIdOf(interactiveStart),
+    inputRequestId: 'electron-interactive-input-1',
+    text: `${interactiveInput}\n`,
+  });
+  expect(interactiveInputResult.isError, interactiveInputResult.text).toBe(false);
+  expect(interactiveInputResult.json).toMatchObject({
+    status: 'running',
+    sent: { keys: [] },
+  });
+  expect(interactiveInputResult.text).not.toContain(interactiveInput);
+
+  let interactiveObservation: Awaited<ReturnType<typeof callTool>> | undefined;
+  await expect
+    .poll(
+      async () => {
+        interactiveObservation = await callTool(client, 'synapse_observe', {
+          sessionId: runtime.sessionId,
+          tail: true,
+        });
+        return interactiveObservation.text;
+      },
+      { timeout: 10_000 },
+    )
+    .toContain(`interactive-e2e:${interactiveInput}`);
+  if (interactiveObservation === undefined || interactiveObservation.isError) {
+    throw new Error(`interactive output observation failed: ${interactiveObservation?.text ?? ''}`);
+  }
+  await page.waitForTimeout(200);
+  interactiveObservation = await callTool(client, 'synapse_observe', {
+    sessionId: runtime.sessionId,
+    tail: true,
+  });
+  expect(interactiveObservation.isError, interactiveObservation.text).toBe(false);
+  const interactiveFinish = await callTool(client, 'synapse_finish_interactive', {
+    sessionId: runtime.sessionId,
+    transactionId: interactiveTransactionId,
+    observedCursor: outputCursorOf(interactiveObservation),
+  });
+  expect(interactiveFinish.isError, interactiveFinish.text).toBe(false);
+  expect(interactiveFinish.json).toMatchObject({
+    status: 'completed',
+    transaction: { kind: 'interactive' },
+  });
+  await expect(page.getByTestId('external-execution-banner')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      terminalContent.evaluate((element) => Math.round(element.getBoundingClientRect().height)),
+    )
+    .toBe(terminalHeightBeforeExternalExecution);
+  const interruptAfterInteractiveFinish = await callTool(client, 'synapse_interrupt', {
+    sessionId: runtime.sessionId,
+    transactionId: interactiveTransactionId,
+  });
+  expect(interruptAfterInteractiveFinish.isError).toBe(true);
+  expect(interruptAfterInteractiveFinish.text).toMatch(/^TRANSACTION_NOT_FOUND:/);
+  executionContextId = executionContextIdOf(interactiveFinish);
+
   const appWindow = await electronApp.browserWindow(page);
   await appWindow.evaluate((desktopWindow) => desktopWindow.minimize());
 
@@ -169,7 +304,7 @@ test('verifies real MCP calls, approvals, visibility, grants, timeout, denial, a
     expectedContextId: executionContextId,
     observationWindowMs: 100,
   });
-  let card = page.getByRole('dialog', { name: 'MCP 审批' });
+  card = page.getByRole('dialog', { name: 'MCP 审批' });
   await expect(card).toBeVisible();
   expect(await appWindow.evaluate((desktopWindow) => desktopWindow.isMinimized())).toBe(false);
   await expect(card).toContainText(command);

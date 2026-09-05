@@ -695,6 +695,75 @@ describe('SessionActor', () => {
     actor.dispose();
   });
 
+  it('writes interactive commands without rotating the environment epoch on success', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const before = actor.snapshot;
+
+    await expect(
+      actor.writeInteractiveStart(
+        'vim notes.txt\r',
+        before.environment.capabilityEpoch,
+        before.executionContextId,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(backend.writes).toEqual(['vim notes.txt\r']);
+    expect(actor.snapshot.environment.capabilityEpoch).toBe(before.environment.capabilityEpoch);
+    expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
+
+    await expect(actor.writeTransactionalInput(':q\r')).resolves.toMatchObject({ ok: true });
+    expect(backend.writes).toEqual(['vim notes.txt\r', ':q\r']);
+    actor.dispose();
+  });
+
+  it('invalidates free input before the write attempt and never restores a stale context', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const before = actor.snapshot;
+
+    await expect(
+      actor.writeFreeInput('\u001b[B\r', before.executionContextId),
+    ).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(backend.writes).toEqual(['\u001b[B\r']);
+    expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
+    expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
+
+    await expect(actor.writeFreeInput('stale\r', before.executionContextId)).resolves.toEqual({
+      ok: false,
+      error: 'stale-execution-context',
+    });
+    expect(backend.writes).toHaveLength(1);
+    actor.dispose();
+  });
+
+  it('maps interactive backend write exceptions to an unknown delivery and invalidates context', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const before = actor.snapshot;
+    backend.write = () => {
+      throw new Error('backend write failed');
+    };
+
+    await expect(
+      actor.writeInteractiveStart(
+        'sudo su -\r',
+        before.environment.capabilityEpoch,
+        before.executionContextId,
+      ),
+    ).resolves.toEqual({ ok: false, error: 'write-unknown' });
+    expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
+    expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
+    actor.dispose();
+  });
+
   it('rejects user input after exit', async () => {
     const backend = createFakeTerminalBackend();
     const actor = new SessionActor('s1', backend, { title: 't', terminalType: 'Zsh' });
