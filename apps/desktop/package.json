@@ -1,6 +1,6 @@
 {
   "name": "@synapse-term/desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Synapse Term desktop shell",
   "author": "huangzy",
