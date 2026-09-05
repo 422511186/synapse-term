@@ -1,6 +1,6 @@
 {
   "name": "synapse-term",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
   "description": "Local-first desktop terminal for user-managed sessions.",
   "author": "huangzy",
