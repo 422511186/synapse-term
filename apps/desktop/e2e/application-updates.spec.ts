@@ -5,6 +5,10 @@ test('downloads an update and requires confirmation before ending Sessions', asy
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/?sessions=2&updates=available');
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page
+    .getByRole('navigation', { name: '设置分类' })
+    .getByRole('button', { name: '通用', exact: true })
+    .click();
   const updates = page.getByRole('region', { name: '软件更新' });
   await expect(updates).toBeVisible();
   await updates.getByRole('button', { name: '下载更新' }).click();

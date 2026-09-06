@@ -72,6 +72,7 @@ describe('ThemeSettingsView', () => {
     expect(markup).toContain('深色');
     expect(markup).toContain('跟随系统');
     expect(markup).toContain('自定义核心配色');
+    expect(markup).toContain('重置核心配色');
     expect(markup).toContain('背景色');
     expect(markup).toContain('前景色');
     expect(markup).toContain('强调色');

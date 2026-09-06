@@ -1,5 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { List, Pencil, Plus, Radio, Search, Settings, Share2, X } from 'lucide-react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+} from 'react';
+import {
+  ChevronDown,
+  Ellipsis,
+  List,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  Share2,
+  X,
+} from 'lucide-react';
 
 import type {
   DesktopApi,
@@ -21,9 +39,9 @@ import { ExternalExecutionStatus } from './mcp/external-execution-status.js';
 import { ShareDialog } from './mcp/share-dialog.js';
 import { buildSessionLaunch } from './session-launch.js';
 import { chooseInitialSessionId } from './session-selection.js';
-import { getSessionAvailability } from './session-status.js';
 import { AllSessionsPopover, NewSessionModal } from './sessions/index.js';
-import { SettingsWorkspace } from './settings/settings-workspace.js';
+import { SessionTabList } from './sessions/session-tab-list.js';
+import { SettingsWorkspace, type SettingsCategoryId } from './settings/settings-workspace.js';
 import { useUpdateState } from './settings/use-update-state.js';
 import { applyThemeToDocument } from './theme/theme-palette.js';
 import { TerminalView } from './terminal/terminal-view.js';
@@ -81,6 +99,7 @@ export function App(): JSX.Element {
   const [activeSessionId, setActiveSessionId] = useState('');
   const [environment, setEnvironment] = useState<SessionEnvironment>({ home: '', shells: [] });
   const [view, setView] = useState<ViewMode>('workspace');
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategoryId>('appearance');
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
   const [isAllSessionsOpen, setIsAllSessionsOpen] = useState(false);
   const [sessionSearch, setSessionSearch] = useState('');
@@ -99,6 +118,7 @@ export function App(): JSX.Element {
   const [runtimeError, setRuntimeError] = useState<string>();
   const [themeState, setThemeState] = useState<ThemeState | undefined>(undefined);
   const terminalSearchInputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const outputHistoryRef = useRef(new Map<string, TerminalOutputEvent[]>());
 
   const refreshSessions = useCallback(async (): Promise<void> => {
@@ -174,13 +194,27 @@ export function App(): JSX.Element {
         terminalSearchInputRef.current?.select();
       }
       if (event.key === 'Escape') {
+        if (document.activeElement?.closest('[role="menu"], .session-all-popover')) {
+          document
+            .querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+            ?.focus({ preventScroll: true });
+        }
         setContextMenu(undefined);
         setRenameState(undefined);
+        setIsAllSessionsOpen(false);
       }
     };
     window.addEventListener('keydown', handleTerminalSearchShortcut, true);
     return () => window.removeEventListener('keydown', handleTerminalSearchShortcut, true);
   }, [view]);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu || !contextMenu) return;
+    menu.style.left = `${Math.max(8, Math.min(contextMenu.x, window.innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(contextMenu.y, window.innerHeight - menu.offsetHeight - 8))}px`;
+    menu.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
+  }, [contextMenu]);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
   const activeExecution =
@@ -304,6 +338,11 @@ export function App(): JSX.Element {
     setContextMenu(undefined);
   };
 
+  const openSessionMenu = (sessionId: string, x: number, y: number): void => {
+    setIsAllSessionsOpen(false);
+    setContextMenu({ sessionId, x, y });
+  };
+
   const shareFromContextMenu = async (): Promise<void> => {
     if (contextMenu === undefined) return;
     const sessionId = contextMenu.sessionId;
@@ -354,90 +393,32 @@ export function App(): JSX.Element {
     >
       {view === 'workspace' ? (
         <>
-          <header className="prototype-header flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
-            <div className="prototype-brand flex shrink-0 items-center gap-3 border-r border-border pr-6">
+          <header className="prototype-header flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-3">
+            <div className="prototype-brand flex shrink-0 items-center gap-2 border-r border-border pr-3">
               <img
                 alt="Synapse Term logo"
-                className="h-9 w-9"
-                height={36}
+                className="h-6 w-6"
+                height={24}
                 src={synapseTermLogoUrl}
-                width={36}
+                width={24}
               />
-              <span
-                className="prototype-brand-name bg-clip-text text-[15px] font-bold tracking-tight text-transparent"
-                style={{
-                  backgroundImage:
-                    'linear-gradient(to right, var(--foreground), color-mix(in oklab, var(--foreground) 60%, transparent))',
-                }}
-              >
+              <span className="prototype-brand-name text-[13px] font-semibold text-foreground">
                 Synapse Term
               </span>
             </div>
 
             <div className="session-tab-strip relative z-50 flex min-w-0 flex-1 items-center">
-              <div
-                aria-label="终端会话"
-                className="session-tab-list flex min-w-0 flex-1"
-                role="tablist"
-              >
-                {sessions.map((session) => {
-                  const availability = getSessionAvailability(session);
-                  return (
-                    <div
-                      className={`session-tab ${session.id === activeSessionId ? 'is-active' : ''}`}
-                      key={session.id}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setContextMenu({
-                          sessionId: session.id,
-                          x: event.clientX,
-                          y: event.clientY,
-                        });
-                      }}
-                    >
-                      <button
-                        aria-controls="active-terminal-panel"
-                        aria-label={`${session.title} ${session.terminalType}`}
-                        aria-selected={session.id === activeSessionId}
-                        className="session-tab-select"
-                        onClick={() => setActiveSessionId(session.id)}
-                        role="tab"
-                        title={`${session.title} · ${session.terminalType}`}
-                        type="button"
-                      >
-                        <span
-                          aria-label={availability.label}
-                          className={`session-status-dot is-${availability.tone}`}
-                          title={availability.label}
-                        />
-                        <span className="session-tab-copy-block">
-                          <span className="session-tab-title">{session.title}</span>
-                          <span className="session-tab-type">{session.terminalType}</span>
-                        </span>
-                        {executions.has(session.id) && (
-                          <Radio
-                            aria-label="外部执行中"
-                            className="session-execution-indicator"
-                            size={12}
-                          />
-                        )}
-                      </button>
-                      <button
-                        aria-label={`关闭 ${session.title}`}
-                        className="session-tab-close"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setConfirmClose(session);
-                        }}
-                        title={`关闭 ${session.title}`}
-                        type="button"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <SessionTabList
+                activeSessionId={activeSessionId}
+                isExecuting={(sessionId) => executions.has(sessionId)}
+                onClose={setConfirmClose}
+                onOpenMenu={openSessionMenu}
+                onRename={(session) =>
+                  setRenameState({ sessionId: session.id, value: session.title })
+                }
+                onSelect={setActiveSessionId}
+                sessions={sessions}
+              />
               <div className="session-tab-tools flex shrink-0 items-center" role="group">
                 <button
                   aria-label="新建终端会话"
@@ -452,12 +433,38 @@ export function App(): JSX.Element {
                   aria-expanded={isAllSessionsOpen}
                   aria-label="全部会话"
                   className="session-tab-tool session-tab-tool-wide"
-                  onClick={() => setIsAllSessionsOpen((open) => !open)}
+                  onClick={() => {
+                    setContextMenu(undefined);
+                    setSessionSearch('');
+                    setIsAllSessionsOpen((open) => !open);
+                  }}
                   title="全部会话"
                   type="button"
                 >
-                  <List size={16} />
-                  <span className="session-action-label">全部会话</span>
+                  <List aria-hidden="true" size={15} />
+                  <span className="session-all-label">全部会话</span>
+                  {sessions.length > 0 && <span className="session-count">{sessions.length}</span>}
+                  <ChevronDown aria-hidden="true" size={14} />
+                </button>
+                <button
+                  aria-label="当前会话操作"
+                  aria-haspopup="menu"
+                  aria-expanded={contextMenu !== undefined}
+                  className="session-tab-tool"
+                  disabled={activeSession === undefined}
+                  onClick={(event) => {
+                    if (!activeSession) return;
+                    if (contextMenu) {
+                      setContextMenu(undefined);
+                      return;
+                    }
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openSessionMenu(activeSession.id, rect.left, rect.bottom + 6);
+                  }}
+                  title="当前会话操作"
+                  type="button"
+                >
+                  <Ellipsis aria-hidden="true" size={17} />
                 </button>
               </div>
 
@@ -465,7 +472,22 @@ export function App(): JSX.Element {
                 <div
                   aria-label="会话操作菜单"
                   className="session-context-menu"
+                  ref={menuRef}
                   role="menu"
+                  onKeyDown={(event) => {
+                    const items = [
+                      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        '[role="menuitem"]',
+                      ),
+                    ];
+                    const index = items.findIndex((item) => item === document.activeElement);
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      items[
+                        (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+                      ]?.focus();
+                    }
+                  }}
                   style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
                   <button onClick={openRenameFromContextMenu} role="menuitem" type="button">
@@ -474,7 +496,7 @@ export function App(): JSX.Element {
                   <button onClick={() => void shareFromContextMenu()} role="menuitem" type="button">
                     <Share2 size={14} /> 共享到 MCP
                   </button>
-                  <div className="my-1 border-t border-border/60" />
+                  <div className="session-menu-separator" />
                   <button onClick={closeCurrentFromContextMenu} role="menuitem" type="button">
                     关闭当前
                   </button>
@@ -524,12 +546,12 @@ export function App(): JSX.Element {
               )}
             </div>
 
-            <div className="mx-1 h-4 w-px shrink-0 bg-border" />
+            <div className="prototype-header-divider" />
 
             <div className="prototype-global-actions relative z-50 flex shrink-0 items-center gap-3">
               <button
                 aria-label="设置"
-                className="relative flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                className="prototype-settings-button relative flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 onClick={() => setView('settings')}
                 title="设置"
                 type="button"
@@ -632,8 +654,10 @@ export function App(): JSX.Element {
         </>
       ) : (
         <SettingsWorkspace
+          activeCategory={settingsCategory}
           api={api}
           onBack={() => setView('workspace')}
+          onSelectCategory={setSettingsCategory}
           themeScheme={themeState?.scheme}
         />
       )}

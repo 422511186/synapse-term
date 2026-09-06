@@ -312,3 +312,55 @@ test('closes all tabs from the context menu', async ({ page }) => {
   await confirm.getByRole('button', { name: '全部关闭', exact: true }).click();
   await expect(page.getByRole('tab')).toHaveCount(0);
 });
+
+test('reveals the selected tab after switching from the list and resizing', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/?sessions=20');
+  await page.getByRole('button', { name: '全部会话', exact: true }).click();
+  await page.getByRole('option', { name: 'session 20 Git Bash', exact: true }).click();
+  const selected = page.getByRole('tab', { name: 'session 20 Git Bash', exact: true });
+  await expect(selected).toHaveAttribute('aria-selected', 'true');
+  await expect(selected).toBeInViewport({ ratio: 1 });
+  const closeSelected = page.getByRole('button', { name: '关闭 session 20', exact: true });
+  await expect(closeSelected).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize({ width: 760, height: 720 });
+  await expect(selected).toBeInViewport({ ratio: 1 });
+  await expect(closeSelected).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('button', { name: '新建终端会话', exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: '当前会话操作', exact: true })).toBeInViewport();
+  const tabList = page.getByRole('tablist', { name: '终端会话' });
+  const scrollLeft = await tabList.evaluate((element) => element.scrollLeft);
+  await page.getByRole('button', { name: '向左滚动会话标签' }).click();
+  await expect
+    .poll(() => tabList.evaluate((element) => element.scrollLeft))
+    .toBeLessThan(scrollLeft);
+});
+
+test('navigates tabs with the keyboard and opens the visible session menu', async ({ page }) => {
+  await page.goto('/?sessions=3');
+  const first = page.getByRole('tab', { name: 'session 1 Git Bash', exact: true });
+  const second = page.getByRole('tab', { name: 'session 2 Git Bash', exact: true });
+  const last = page.getByRole('tab', { name: 'session 3 Git Bash', exact: true });
+  await first.focus();
+  await first.press('ArrowRight');
+  await expect(second).toBeFocused();
+  await expect(second).toHaveAttribute('aria-selected', 'true');
+  await second.press('End');
+  await expect(last).toBeFocused();
+  await last.press('ArrowRight');
+  await expect(first).toBeFocused();
+  await expect(second).toHaveAttribute('tabindex', '-1');
+
+  await page.getByRole('button', { name: '当前会话操作', exact: true }).click();
+  const menu = page.getByRole('menu', { name: '会话操作菜单' });
+  await expect(menu).toBeInViewport({ ratio: 1 });
+  const rename = menu.getByRole('menuitem', { name: '重命名', exact: true });
+  await expect(rename).toBeFocused();
+  await rename.press('ArrowDown');
+  await expect(menu.getByRole('menuitem', { name: '共享到 MCP' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).not.toBeVisible();
+  await expect(first).toBeFocused();
+  await first.press('F2');
+  await expect(page.getByRole('dialog', { name: '重命名会话' })).toBeVisible();
+});
