@@ -6,7 +6,7 @@
 ## Requirements
 
 ### Requirement: Terminal-Only Workspace
-桌面工作区 MUST 只提供终端会话相关入口，MUST NOT 展示 Agent 面板、Composer、审批卡片、运行状态条、ACP 切换、MCP 共享入口或审计入口；Header MUST 只包含品牌、会话标签操作和设置入口。
+桌面工作区 MUST 以终端会话为主要内容，MUST NOT 展示 Agent 面板、Composer、ACP 切换或审计入口；Header MUST 只包含品牌、会话标签操作和设置入口。会话操作菜单可提供显式 Sharing；外部调用触发的审批卡片和外部执行状态遵循 ADR-0015，本地终端输入始终保持可用。
 
 #### Scenario: Workspace loads without agent surfaces
 - **WHEN** 用户打开桌面工作区
@@ -29,7 +29,19 @@
 
 #### Scenario: Navigate many terminal tabs
 - **WHEN** 活动 Session 数量超过标签栏可见宽度或全部会话弹层可见高度
-- **THEN** 用户 MUST 能通过单行横向滚动标签栏或搜索、滚动全部会话视图选择任一 Session，且 `+` 和全部会话操作不随标签列表滚动而消失
+- **THEN** 用户 MUST 能通过单行横向滚动标签栏或搜索、滚动全部会话视图选择任一 Session，且 `+`、全部会话和当前会话操作不随标签列表滚动而消失；从列表切换或窗口缩小时，活动标签 MUST 自动进入可视范围
+
+#### Scenario: Navigate tabs with the keyboard
+- **WHEN** 用户将焦点放在会话标签并使用方向键、Home 或 End
+- **THEN** 系统 MUST 切换并聚焦对应 Session 标签，左右方向键在两端循环，非活动标签不进入常规 Tab 顺序；这些按键不得写入 PTY
+
+#### Scenario: Discover session actions
+- **WHEN** 用户点击可见的当前会话操作按钮或打开标签的上下文菜单
+- **THEN** 系统 MUST 显示包含重命名、Sharing 与关闭命令的同一会话操作菜单，菜单不得超出视口，且支持键盘选择与 Escape 关闭
+
+#### Scenario: Rename directly from a tab
+- **WHEN** 用户双击标签或在标签获得焦点时按 F2
+- **THEN** 系统 MUST 打开该 Session 的重命名界面，保留其唯一 sessionId
 
 #### Scenario: Rename a terminal tab
 - **WHEN** 用户通过标签上下文操作提交一个非空的新名称
@@ -98,7 +110,7 @@
 
 #### Scenario: Enter the Settings Workspace
 - **WHEN** 用户点击 Header 的“设置”按钮
-- **THEN** 系统 MUST 进入 Settings Workspace 并显示占位内容，不显示旧的设置下拉菜单
+- **THEN** 系统 MUST 进入 Settings Workspace 并显示真实配置内容，不显示旧的设置下拉菜单
 
 ### Requirement: Prototype Fonts and Desktop Scope
 Renderer MUST 从本地资源加载 `Inter`、`Noto Sans SC` 与 `JetBrains Mono`，不得依赖网络字体；UI MUST 使用 `Inter, "Noto Sans SC", system-ui, sans-serif`，终端 MUST 使用 `"JetBrains Mono", monospace`。本变更不定义或验收移动端布局。

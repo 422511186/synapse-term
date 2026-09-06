@@ -9,6 +9,7 @@ import {
   buildXtermTheme,
   getCustomThemeContrastIssues,
   readableOn,
+  resetCustomCoreColors,
   resolveTerminalTextPalette,
   resolveThemeCssVariables,
   SCHEME_CORE_PALETTES,
@@ -347,6 +348,30 @@ describe('theme palette', () => {
       const disabled = setCustomThemeEnabled(withText, false, 'light');
       expect(disabled.enabled).toBe(false);
       expect(disabled.terminalText).toBe(withText.terminalText);
+    });
+  });
+
+  describe('resetCustomCoreColors', () => {
+    const customized: CustomThemePalette = {
+      enabled: true,
+      background: '#112233',
+      foreground: '#ddeeff',
+      accent: '#aa3366',
+      terminalText: { ...SCHEME_ANSI_PALETTES.dark, red: '#ff0000' },
+    };
+
+    it('restores scheme core colors while preserving enabled state and terminal text', () => {
+      const lightResult = resetCustomCoreColors(customized, 'light');
+      expect(lightResult.enabled).toBe(true);
+      expect(lightResult.background).toBe(SCHEME_CORE_PALETTES.light.background);
+      expect(lightResult.foreground).toBe(SCHEME_CORE_PALETTES.light.foreground);
+      expect(lightResult.accent).toBe(SCHEME_CORE_PALETTES.light.accent);
+      expect(lightResult.terminalText).toBe(customized.terminalText);
+
+      const darkResult = resetCustomCoreColors(customized, 'dark');
+      expect(darkResult.background).toBe(SCHEME_CORE_PALETTES.dark.background);
+      expect(darkResult.foreground).toBe(SCHEME_CORE_PALETTES.dark.foreground);
+      expect(darkResult.accent).toBe(SCHEME_CORE_PALETTES.dark.accent);
     });
   });
 });

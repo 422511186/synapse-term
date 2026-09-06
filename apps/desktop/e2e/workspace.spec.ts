@@ -33,15 +33,20 @@ test('opens the categorized settings workspace with menu navigation', async ({ p
   const workspace = page.getByTestId('settings-workspace');
   await expect(workspace).toBeVisible();
 
-  // Settings are organized into a left category menu.
   const nav = workspace.getByRole('navigation', { name: '设置分类' });
-  await expect(nav.getByRole('button', { name: /通用/ })).toBeVisible();
-  await expect(nav.getByRole('button', { name: /外观/ })).toBeVisible();
-  await expect(nav.getByRole('button', { name: /MCP 服务/ })).toBeVisible();
-  await expect(nav.getByRole('button', { name: /通用/ })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.getByRole('button')).toHaveText(['外观', 'MCP 服务', '通用']);
+  await expect(nav.getByRole('button', { name: '外观', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(workspace.getByTestId('theme-settings-section')).toBeVisible();
+  await expect(workspace.getByLabel('终端文字 红 输入')).not.toBeVisible();
 
-  // The default category shows general settings only.
+  await nav.getByRole('button', { name: '通用', exact: true }).click();
   await expect(workspace.getByRole('region', { name: '终端显示' })).toBeVisible();
+  const generalSections = await workspace.locator('.settings-panel > section').allTextContents();
+  expect(generalSections[0]).toContain('软件更新');
+  expect(generalSections[1]).toContain('终端显示');
   const probeEchoToggle = workspace.getByLabel('隐藏自动 Probe 回显');
   await expect(probeEchoToggle).toBeChecked();
   await probeEchoToggle.uncheck();
@@ -63,6 +68,11 @@ test('opens the categorized settings workspace with menu navigation', async ({ p
 
   await workspace.getByRole('button', { name: '返回工作区' }).click();
   await expect(page.locator('.prototype-shell')).toBeVisible();
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(nav.getByRole('button', { name: 'MCP 服务', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('creates a session from the new session modal', async ({ page }) => {
@@ -147,9 +157,22 @@ test('switches theme mode and custom terminal colors from settings', async ({ pa
   // Set the custom background color; the foreground stays readable.
   await themeSection.getByLabel('背景色 选择器').fill('#123456');
   await expect.poll(rootBackground).toBe('#123456');
+  await expect(themeSection.getByRole('figure', { name: '终端配色预览' })).toHaveCSS(
+    'background-color',
+    'rgb(18, 52, 86)',
+  );
+
+  // Reset core colors back to the active scheme and keep customization enabled.
+  await themeSection.getByRole('button', { name: '重置核心配色' }).click();
+  await expect.poll(rootBackground).toBe('#ffffff');
+  await expect.poll(rootForeground).toBe('#09090b');
+  await expect(themeSection.getByLabel('启用自定义配色')).toBeChecked();
+  await expect(themeSection.getByLabel('背景色 输入')).toHaveValue('#ffffff');
 
   // Customize a terminal ANSI color; the reset control appears and clears it.
   const redInput = themeSection.getByLabel('终端文字 红 输入');
+  await expect(redInput).not.toBeVisible();
+  await themeSection.locator('summary').filter({ hasText: '终端文字配色' }).click();
   await redInput.fill('#ff0000');
   await expect(redInput).toHaveValue('#ff0000');
   const resetButton = themeSection.getByRole('button', { name: '恢复默认终端文字配色' });

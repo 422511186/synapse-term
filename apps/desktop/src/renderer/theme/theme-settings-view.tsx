@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Palette, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Monitor, Moon, RotateCcw, Sun } from 'lucide-react';
 import type { JSX } from 'react';
 
 import {
@@ -10,15 +10,17 @@ import {
 import {
   applyTerminalTextEdit,
   ANSI_TEXT_FIELDS,
+  buildXtermTheme,
   getCustomThemeContrastIssues,
+  resetCustomCoreColors,
   SCHEME_ANSI_PALETTES,
   setCustomThemeEnabled,
 } from './theme-palette.js';
 
-const MODES: Array<{ value: ThemeMode; label: string; description: string }> = [
-  { value: 'light', label: '浅色', description: '使用明亮的外观配色。' },
-  { value: 'dark', label: '深色', description: '使用深邃的外观配色。' },
-  { value: 'system', label: '跟随系统', description: '跟随操作系统外观自动切换。' },
+const MODES: Array<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
+  { value: 'light', label: '浅色', icon: Sun },
+  { value: 'dark', label: '深色', icon: Moon },
+  { value: 'system', label: '跟随系统', icon: Monitor },
 ];
 
 const COLOR_FIELDS: Array<{
@@ -108,11 +110,20 @@ export function ThemeSettingsView({
     onSetCustomTheme({ ...settings.customTheme, terminalText: undefined });
   };
 
+  const resetCoreColors = (): void => {
+    onSetCustomTheme(resetCustomCoreColors(settings.customTheme, scheme));
+  };
+
   const terminalText = settings.customTheme.terminalText;
   const canEdit = !busy && settings.customTheme.enabled;
   const contrastIssues = settings.customTheme.enabled
     ? getCustomThemeContrastIssues(settings.customTheme)
     : [];
+  const preview = buildXtermTheme({
+    mode: settings.themeMode,
+    scheme,
+    customTheme: settings.customTheme,
+  });
 
   return (
     <section
@@ -120,63 +131,97 @@ export function ThemeSettingsView({
       className="mcp-settings-card theme-settings-card"
       data-testid="theme-settings-section"
     >
-      <div className="mcp-card-heading">
-        <div className="mcp-card-kicker">
-          <Palette aria-hidden="true" size={14} /> 外观
+      <div className="settings-page-heading">
+        <h2 id="theme-settings-title">外观</h2>
+      </div>
+      <div className="theme-mode-heading">
+        <h3 id="theme-mode-label">主题模式</h3>
+        <div
+          aria-labelledby="theme-mode-label"
+          className="mcp-mode-options theme-mode-options"
+          role="radiogroup"
+        >
+          {MODES.map((mode) => {
+            const Icon = mode.icon;
+            return (
+              <label
+                className={`mcp-mode-option ${settings.themeMode === mode.value ? 'is-selected' : ''}`}
+                key={mode.value}
+              >
+                <input
+                  aria-label={mode.label}
+                  checked={settings.themeMode === mode.value}
+                  disabled={busy}
+                  name="theme-mode"
+                  onChange={() => onSetMode(mode.value)}
+                  type="radio"
+                  value={mode.value}
+                />
+                <Icon aria-hidden="true" size={15} />
+                <span className="mcp-mode-title">{mode.label}</span>
+                {settings.themeMode === mode.value && (
+                  <Check aria-hidden="true" className="mcp-mode-check" size={16} />
+                )}
+              </label>
+            );
+          })}
         </div>
-        <h3 id="theme-settings-title">主题</h3>
-        <p>选择浅色、深色或跟随系统外观，也可以自定义核心配色与终端文字。</p>
       </div>
 
-      <div
-        aria-labelledby="theme-settings-title"
-        className="mcp-mode-options theme-mode-options"
-        role="radiogroup"
+      <figure
+        className="theme-preview"
+        aria-label="终端配色预览"
+        style={{ background: preview.background, color: preview.foreground }}
       >
-        {MODES.map((mode) => (
-          <label
-            className={`mcp-mode-option ${settings.themeMode === mode.value ? 'is-selected' : ''}`}
-            key={mode.value}
-          >
-            <input
-              aria-label={mode.label}
-              checked={settings.themeMode === mode.value}
-              disabled={busy}
-              name="theme-mode"
-              onChange={() => onSetMode(mode.value)}
-              type="radio"
-              value={mode.value}
-            />
-            <span className="mcp-mode-radio" aria-hidden="true" />
-            <span className="mcp-mode-copy">
-              <span className="mcp-mode-title">{mode.label}</span>
-              <span className="mcp-mode-description">{mode.description}</span>
-            </span>
-            {settings.themeMode === mode.value && (
-              <Check aria-hidden="true" className="mcp-mode-check" size={16} />
-            )}
-          </label>
-        ))}
-      </div>
+        <figcaption>终端预览</figcaption>
+        <pre>
+          <span style={{ color: preview.green }}>synapse-term</span>{' '}
+          <span style={{ color: preview.blue }}>main</span>
+          {'\n$ git status --short\n'}
+          <span style={{ color: preview.green }}>M src/app.ts</span>
+          {'\n$ '}
+          <span className="theme-preview-cursor" aria-hidden="true" />
+        </pre>
+        <div className="theme-preview-swatches" aria-hidden="true">
+          {ANSI_TEXT_FIELDS.slice(0, 8).map((key) => (
+            <span key={key} style={{ background: preview[key] }} />
+          ))}
+        </div>
+      </figure>
 
       <div className="theme-custom-block">
-        <label className="mcp-switch-control">
-          <input
-            aria-label="启用自定义配色"
-            checked={settings.customTheme.enabled}
-            disabled={busy}
-            onChange={(event) =>
-              onSetCustomTheme(
-                setCustomThemeEnabled(settings.customTheme, event.target.checked, scheme),
-              )
-            }
-            type="checkbox"
-          />
-          <span aria-hidden="true" className="mcp-switch-track">
-            <span className="mcp-switch-thumb" />
-          </span>
-          <span className="mcp-switch-label">自定义核心配色</span>
-        </label>
+        <div className="theme-custom-heading">
+          <h3>自定义核心配色</h3>
+          <div className="theme-custom-actions">
+            <button
+              aria-label="重置核心配色"
+              className="theme-terminal-reset"
+              disabled={!canEdit}
+              onClick={resetCoreColors}
+              title="重置核心配色"
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={13} />
+              重置核心配色
+            </button>
+            <label className="mcp-switch-control">
+              <input
+                aria-label="启用自定义配色"
+                checked={settings.customTheme.enabled}
+                disabled={busy}
+                onChange={(event) =>
+                  onSetCustomTheme(
+                    setCustomThemeEnabled(settings.customTheme, event.target.checked, scheme),
+                  )
+                }
+                type="checkbox"
+              />
+              <span aria-hidden="true" className="mcp-switch-track">
+                <span className="mcp-switch-thumb" />
+              </span>
+            </label>
+          </div>
+        </div>
 
         <div className="theme-color-fields">
           {COLOR_FIELDS.map((field) => (
@@ -217,63 +262,59 @@ export function ThemeSettingsView({
           </div>
         )}
 
-        <div className="theme-terminal-heading">
-          <div>
-            <p className="theme-terminal-title">终端文字配色</p>
-            <p className="theme-terminal-note">
-              终端里命令输出（如 git、ls）会用编号 0-15 的 ANSI
-              颜色上色；这里可逐行改这些颜色。未定制时 跟随当前浅色/深色主题的内置色板。
-            </p>
-          </div>
+        <details className="theme-terminal-details">
+          <summary>
+            <ChevronRight aria-hidden="true" size={16} />
+            <span>终端文字配色</span>
+            <span className="theme-terminal-count">16 色</span>
+          </summary>
           {terminalText !== undefined && (
-            <button
-              aria-label="恢复默认终端文字配色"
-              className="theme-terminal-reset"
-              disabled={!canEdit}
-              onClick={resetTerminalText}
-              type="button"
-            >
-              <RotateCcw aria-hidden="true" size={13} />
-              恢复默认
-            </button>
+            <div className="theme-terminal-heading">
+              <button
+                aria-label="恢复默认终端文字配色"
+                className="theme-terminal-reset"
+                disabled={!canEdit}
+                onClick={resetTerminalText}
+                type="button"
+                title="恢复默认终端文字配色"
+              >
+                <RotateCcw aria-hidden="true" size={13} />
+                恢复默认
+              </button>
+            </div>
           )}
-        </div>
 
-        <div className="theme-color-grid">
-          {ANSI_TEXT_FIELDS.map((key) => {
-            const value = terminalText?.[key] ?? SCHEME_ANSI_PALETTES[scheme][key];
-            return (
-              <label className="theme-color-row" key={key}>
-                <span className="theme-color-label">
-                  <span className="theme-color-slot">{ANSI_SLOTS[key]}</span>
-                  {ANSI_LABELS[key]}
-                </span>
-                <input
-                  aria-label={`终端文字 ${ANSI_LABELS[key]} 输入`}
-                  className="theme-color-input"
-                  disabled={!canEdit}
-                  onChange={(event) => updateTerminalColor(key, event.target.value)}
-                  spellCheck={false}
-                  type="text"
-                  value={value}
-                />
-                <input
-                  aria-label={`终端文字 ${ANSI_LABELS[key]} 选择器`}
-                  className="theme-color-swatch"
-                  disabled={!canEdit}
-                  onChange={(event) => updateTerminalColor(key, event.target.value)}
-                  type="color"
-                  value={value}
-                />
-              </label>
-            );
-          })}
-        </div>
-
-        <p className="theme-custom-note">
-          自定义配色会覆盖内置主题的背景、前景与强调色，并可选覆盖终端文字 16
-          色；其余颜色沿用当前主题的默认值。
-        </p>
+          <div className="theme-color-grid">
+            {ANSI_TEXT_FIELDS.map((key) => {
+              const value = terminalText?.[key] ?? SCHEME_ANSI_PALETTES[scheme][key];
+              return (
+                <label className="theme-color-row" key={key}>
+                  <span className="theme-color-label">
+                    <span className="theme-color-slot">{ANSI_SLOTS[key]}</span>
+                    {ANSI_LABELS[key]}
+                  </span>
+                  <input
+                    aria-label={`终端文字 ${ANSI_LABELS[key]} 输入`}
+                    className="theme-color-input"
+                    disabled={!canEdit}
+                    onChange={(event) => updateTerminalColor(key, event.target.value)}
+                    spellCheck={false}
+                    type="text"
+                    value={value}
+                  />
+                  <input
+                    aria-label={`终端文字 ${ANSI_LABELS[key]} 选择器`}
+                    className="theme-color-swatch"
+                    disabled={!canEdit}
+                    onChange={(event) => updateTerminalColor(key, event.target.value)}
+                    type="color"
+                    value={value}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </details>
       </div>
     </section>
   );

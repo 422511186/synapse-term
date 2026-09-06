@@ -39,6 +39,15 @@ export function setCustomThemeEnabled(
   return { ...custom, ...SCHEME_CORE_PALETTES[scheme], enabled: true };
 }
 
+// Resets the three custom core colors to the built-in scheme palette. The
+// enabled flag and any customized terminal text palette are intentionally kept.
+export function resetCustomCoreColors(
+  custom: CustomThemePalette,
+  scheme: ThemeScheme,
+): CustomThemePalette {
+  return { ...custom, ...SCHEME_CORE_PALETTES[scheme] };
+}
+
 // The CSS custom properties the desktop UI relies on. Values follow the zinc
 // palette already defined for the built-in dark theme in prototype-tailwind.css.
 export const BASE_THEME_PALETTES: Record<ThemeScheme, Record<string, string>> = {

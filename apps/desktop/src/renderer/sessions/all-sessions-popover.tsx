@@ -81,10 +81,10 @@ export function AllSessionsPopover({
         })}
         {visibleSessions.length === 0 && <div className="session-all-empty">没有匹配的会话</div>}
       </div>
-      <div className="border-t border-border/60 p-2">
+      <div className="session-all-footer">
         <button
           aria-label="关闭全部终端"
-          className="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+          className="session-all-close-all flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={sessions.length === 0}
           onClick={onCloseAll}
           title="关闭全部终端"

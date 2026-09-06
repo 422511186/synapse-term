@@ -8,9 +8,14 @@ import { SettingsWorkspace } from './settings-workspace.js';
 describe('SettingsWorkspace', () => {
   it('renders the dedicated workspace without topic dropdowns', () => {
     const markup = renderToStaticMarkup(
-      <SettingsWorkspace api={createMockDesktopApi()} onBack={vi.fn()} />,
+      <SettingsWorkspace
+        activeCategory="appearance"
+        api={createMockDesktopApi()}
+        onBack={vi.fn()}
+        onSelectCategory={vi.fn()}
+      />,
     );
-    expect(markup).toContain('设置工作区');
+    expect(markup).toContain('设置分类');
     expect(markup).toContain('返回工作区');
     expect(markup).toContain('设置加载中');
     expect(markup).not.toContain('服务商配置');
@@ -52,7 +57,7 @@ describe('SettingsWorkspace', () => {
       />,
     );
 
-    expect(markup).toContain('通用');
+    expect(markup).toContain('终端显示');
     expect(markup).toContain('隐藏自动 Probe 回显');
     expect(markup).toContain('仅控制本地终端 UI');
     expect(markup).toContain('Probe 仍会写入当前 PTY');
