@@ -1,110 +1,104 @@
+## Purpose
+
+规定用户通过当前 Session 的终端通道上传、下载多个文件和目录的行为，包括目标响应绑定、本机文件授权、目的文件系统名称规则、流式处理、冲突处理和可确认的逐文件结果。
+
 ## ADDED Requirements
 
 ### Requirement: Transfer over the Existing PTY
 
-文件上传和下载 MUST 使用用户已经登录的当前 Session PTY 通道及当前身份，不创建新的 SSH/SFTP 认证、网络端点或拓扑对象。操作 MUST 以当次匹配响应的最内层环境为目标；开始文件数据阶段前 MUST 验证新操作实例。旧 Session 名称、主机名、能力代际或执行上下文 ID MUST NOT 单独证明目标未变化。
+文件操作 MUST 沿用户已经登录的当前 Session PTY 和当前身份进行，不创建新的 SSH/SFTP 认证或网络端点。每次传输 MUST 取得匹配新操作的响应后才发送文件数据，并验证响应环境与用户确认目标一致。相对路径 MUST 根据本次响应目录解析；旧名称、能力代际或执行上下文 ID 不得单独证明目标身份。
 
 #### Scenario: Transfer through multiple authentication hops
 
-- **WHEN** 用户经多跳 SSH 到达目标并在空闲 Shell 启用文件能力
-- **THEN** 上传下载 MUST 沿原通道完成，不要求再次提供任何一跳的密码、密钥或验证码
+- **WHEN** 用户经 SSH、跳板机、容器、WSL 或身份切换到达目标后发起传输
+- **THEN** 文件 MUST 使用最内层本次响应环境的路径和权限，不要求再次提供任一跳的凭证
 
-#### Scenario: Transfer in a container or changed user
+#### Scenario: A hop closes during transfer
 
-- **WHEN** 用户进入容器、WSL 或切换用户后启用文件能力
-- **THEN** 文件路径和权限 MUST 采用本次最内层响应环境及当前身份，不自动操作宿主机或上一层账户
-
-#### Scenario: A hop closes before payload delivery
-
-- **WHEN** 应用观测到本次握手失效、接收器退出或通道可能退回上一层
-- **THEN** 应用 MUST 停止后续文件发送并失效目标绑定，不能在新响应环境自动重启接收器或继续旧路径操作
-- **AND** 已经交给 PTY/SSH 缓冲的字节 MUST 按实际证据或未确认结果处理，不能声称已撤回或目标一定没有消费
+- **WHEN** 系统观测到接收器退出、绑定失效或通道退回上一层
+- **THEN** 系统 MUST 停止新增发送并报告实际终态，不自动启动新接收器或重放旧路径操作
+- **AND** 已交给 PTY 或 SSH 缓冲的字节 MUST 按证据或未确认结果处理，不声称已撤回
 
 ### Requirement: Multiple Files and Directories
 
-首版 MUST 支持多个普通文件及目录，并保持所选目录内部的相对结构。系统 MUST 不跟随符号链接、reparse point 或其他特殊文件，遇到这些条目 MUST 给出逐项跳过原因；不得将未支持条目当作已完成。文件内容 MUST 不因终端文本脱敏、换行转换或编码替换而改变。
+系统 MUST 支持多个普通文件和目录，保持所选目录内部相对结构与文件内容。遍历 MUST 不跟随符号链接、reparse point 或其他特殊文件，并逐项报告跳过原因。文件内容 MUST 不经过终端脱敏、换行转换或编码替换；传输不提供 owner、ACL、稀疏属性或备份语义保证。
 
 #### Scenario: Transfer a mixed selection
 
-- **WHEN** 用户选择多个普通文件和目录
-- **THEN** 系统 MUST 逐项传输并展示各项结果，接收的普通文件内容及目录结构与被选内容一致
-
-#### Scenario: A selected directory contains a symbolic link
-
-- **WHEN** 目录遍历遇到链接或平台特殊文件
-- **THEN** 系统 MUST 不跟随其访问目录外内容，结果 MUST 标明该项被跳过以及原因
+- **WHEN** 选择中包含多个文件、目录和链接
+- **THEN** 系统 MUST 传输普通文件与目录结构，跳过链接和特殊文件，并展示各项结果
 
 ### Requirement: Selected Files and Bound Paths
 
-本机文件访问 MUST 由 Main 基于真实用户选择/拖入建立有限引用，绑定 Session 和本次操作。Renderer 或远端协议 MUST NOT 通过任意本机路径取得访问权。远端路径 MUST 作为已校验的平台参数提交，相对路径 MUST 根据本次响应的目录解析，不能使用旧快照目录。接收端 MUST 将不可信目录元数据限制在用户选择的根目录内，并抵抗路径检查后被替换的情况。
+本机访问 MUST 由真实文件选择或拖入建立有限引用，并绑定 Session 和本次操作；Renderer 或远端不得凭任意本机路径取得权限。远端路径 MUST 作为字面参数处理，拒绝无法安全引用的控制字符。接收端 MUST 将全部路径限制在选择根目录内，抵抗绝对路径、父目录跳转、分隔符混用、链接逃逸和检查后替换。
 
 #### Scenario: Remote metadata escapes the selected directory
 
-- **WHEN** 下载元数据包含绝对路径、父目录跳转、分隔符混用或利用链接逃逸的路径
-- **THEN** 接收端 MUST 在越界写入前拒绝该项或操作，用户选择目录之外不得出现文件写入
+- **WHEN** 远端名称或目录元数据试图越过本机保存根目录
+- **THEN** 系统 MUST 在任何越界写入前拒绝该项或操作
 
 #### Scenario: A path contains Shell syntax
 
-- **WHEN** 用户选择的合法路径含空格、引号或 Shell 元字符
-- **THEN** 路径 MUST 以当前平台的字面参数处理而不能执行附带命令；无法安全引用的控制字符路径 MUST 在写入 PTY 前被拒绝
+- **WHEN** 合法路径含空格、引号或 Shell 元字符
+- **THEN** 系统 MUST 将其作为字面路径处理，不执行其中的 Shell 语义
 
-#### Scenario: File selection completes after the operation expires
+#### Scenario: File selection completes after expiry
 
-- **WHEN** 原生文件选择返回时 Session 或操作绑定已经失效
-- **THEN** 该选择引用 MUST 被释放且不得触发 PTY 或文件写入
+- **WHEN** 文件选择返回时 Session 或操作引用已经失效
+- **THEN** 系统 MUST 释放该选择，不触发文件访问或终端写入
+
+### Requirement: Destination Filesystem Names
+
+接收端 MUST 按目的文件系统校验每级名称。Windows 名称 MUST 拒绝 NTFS 数据流语法、DOS 设备名及设备命名空间，包括带扩展名的设备名。目的系统的尾随点或空格、大小写及 Unicode 规范化造成的同名解释 MUST 作为不可表示名称或冲突处理，不得静默转换后写入其他文件、数据流或设备。用户换名后 MUST 重新验证。
+
+#### Scenario: A Unix name denotes a Windows stream or device
+
+- **WHEN** 向 Windows 传输 `report.txt:payload`、`NUL.txt` 或同类特殊名称
+- **THEN** 系统 MUST 在创建目标前拒绝该名称并允许跳过或换名，不写入命名数据流或设备
+
+#### Scenario: Distinct source names collide at the destination
+
+- **WHEN** 两个源名称在目的文件系统中被解释为同一路径
+- **THEN** 系统 MUST 报告冲突并保留已存在文件，不能把两项同时标为成功
 
 ### Requirement: Preserve Existing Files by Default
 
-上传和下载 MUST 默认不覆盖已有同名文件，遇到冲突 MUST 保留原文件并允许用户跳过或换名。最终发布 MUST 再次保证不覆盖，不能仅依赖开始时的存在性检查。首版 MUST 不自动覆盖、合并不明结果或续传中断任务。
+同名文件 MUST 默认保留，允许用户跳过或换名。接收 MUST 先写入本次操作的专属临时文件，完整性验证通过后以不覆盖方式发布，并在最终提交时抵抗同名竞态。MUST NOT 自动覆盖、续传或合并未确认结果；已提交文件不得因批次失败被删除。
 
-#### Scenario: Destination already exists
+#### Scenario: Destination exists or appears during transfer
 
-- **WHEN** 某个目标路径已有文件
-- **THEN** 原文件 MUST 保持不变，界面 MUST 显示冲突并提供跳过/换名处理，不得默认选择覆盖
-
-#### Scenario: A conflicting file appears during transfer
-
-- **WHEN** 初始检查后有其他程序在目标位置创建了文件
-- **THEN** 最终发布 MUST 不替换该文件，并报告该项冲突
+- **WHEN** 目标开始时已存在，或其他程序在最终提交前创建了同名文件
+- **THEN** 系统 MUST 保持原文件不变，报告冲突并提供跳过或换名
 
 ### Requirement: Bounded Streaming and Integrity
 
-传输 MUST 采用有界分块、未确认窗口、背压和节流进度；内存使用 MUST 不随整个文件大小线性增长。系统 MUST 为协议帧、解压输出、等待时间和缓冲设置明确上限，并在文件接收完成与完整性验证后才发布成功结果。协议错误或载荷内容 MUST NOT 被当作普通 Shell 输入重试。
+传输 MUST 对分块、未确认窗口、帧、解压输出、缓冲、等待和进度频率设置明确上限；内存不得随整个文件大小线性增长。目录遍历与逐项结果 MUST 有数量、深度和状态保留预算，超限必须明确报告。接收完成并验证完整性之前 MUST 不发布文件成功。
 
 #### Scenario: Transfer a file larger than the memory budget
 
-- **WHEN** 传输文件明显大于配置的传输内存预算
-- **THEN** 应用 MUST 持续流式处理且缓冲受限，终端 UI 保持响应并持续显示有界频率的进度
+- **WHEN** 文件大小远超操作内存预算
+- **THEN** 系统 MUST 持续流式处理、实施背压并保持界面可响应
 
-#### Scenario: Corrupted or oversized protocol data
+#### Scenario: Corrupted or excessive protocol data arrives
 
-- **WHEN** 收到校验不符、超大帧或超出解压预算的数据
-- **THEN** 系统 MUST 有界终止受影响操作，不发布该文件为成功，也不向普通终端或 Sharing 历史回灌载荷
+- **WHEN** 校验失败、帧或解压输出超限、目录遍历预算耗尽
+- **THEN** 系统 MUST 有界终止受影响操作并说明原因，不发布未经验证的文件或把载荷回灌普通文本
 
-### Requirement: Confirmed Per-File Results
+### Requirement: Confirmed Per-File Results and Cancellation
 
-结果 MUST 逐项区分成功、跳过、已确认失败、已确认取消和结果未确认；目录/多文件批次 MUST 能表示部分完成。backend 写入成功 MUST NOT 被视为远端消费或文件落盘成功。文件接收 MUST 使用本次操作专属临时文件，完整性验证通过后才以不覆盖方式发布。
+结果 MUST 区分成功、跳过、已确认失败、已确认取消和未确认，多文件批次 MUST 能表示部分完成。本地写入被接受不等于远端落盘。用户取消或接管 MUST 停止新增协议数据并进行有限取消；只有对应结束证据可以确认取消。清理 MUST 仅针对可确认属于本次操作的临时文件，不向失效环境发送删除命令。
 
-#### Scenario: Connection is lost before the final acknowledgement
+#### Scenario: Final acknowledgement is lost
 
-- **WHEN** 文件数据可能已经到达，但最终完成证据丢失
-- **THEN** 结果 MUST 标记为未确认，不能显示成功、假定远端未写入或自动重新上传
+- **WHEN** 文件可能已到达但最终完成证据丢失
+- **THEN** 系统 MUST 报告未确认，不显示成功、假定未写入或自动重传
 
-#### Scenario: A batch completes only some files
+#### Scenario: A batch is partially complete
 
-- **WHEN** 批次中部分文件成功，另有跳过、失败或未确认项
-- **THEN** 系统 MUST 保留已完成文件并逐项报告，整体不得显示为全部成功
+- **WHEN** 部分文件成功，其他项跳过、失败或未确认
+- **THEN** 系统 MUST 保留成功文件并逐项汇总，整体不能显示全部成功
 
-### Requirement: Cancellation without Replay
+#### Scenario: User takes over and a late reply arrives
 
-用户 MUST 能取消传输或通过本地输入接管。系统 MUST 立即停止新增协议数据、撤销后续自动写入资格并进行有限取消处理，只有收到对应完成/取消证据才能声称已取消。MUST NOT 自动重放命令、载荷或用户按键。清理 MUST 只作用于能确认属于本次操作的临时文件，不得向失效目标继续发送删除命令。
-
-#### Scenario: User takes over during a transfer
-
-- **WHEN** 用户在传输期间输入或发起中断
-- **THEN** 本地输入 MUST 保持可用，自动传输写入 MUST 停止；无可靠终结证据时显示未确认结果，不宣称远端程序已经终止
-
-#### Scenario: A late response arrives after cancellation
-
-- **WHEN** 已取消或失效操作收到迟到确认、进度或文件选择回调
-- **THEN** 系统 MUST 不恢复写入、不重新开始传输，也不覆盖后续操作的状态
+- **WHEN** 用户取消或输入后收到迟到确认、进度或文件选择回调
+- **THEN** 系统 MUST 不恢复写入或重放按键，不覆盖其他操作状态；已确认成功的文件结果保持成功

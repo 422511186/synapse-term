@@ -1,90 +1,85 @@
+## Purpose
+
+规定用户在当前终端环境中按需查看身份、目录和资源状态的行为，明确三平台采集范围、指标口径、采样时间、结果完整性与不可用状态，使快照不会被误用为实时监控或执行授权。
+
 ## ADDED Requirements
 
 ### Requirement: Snapshot of the Current Execution Environment
 
-环境快照 MUST 表示本次有界采集实际响应的最内层环境及当前身份，至少包含真实 OS、环境显示名、当前用户、目录和采样时间。实际 OS MUST 与 Shell 方言分别验证，不能从本地启动配置、提示符或 `posix/powershell` 单独推断。快照 MUST 不构成主机资产、连接拓扑、执行授权或 MCP Session 就绪状态。
+快照 MUST 表示本次有界采集实际响应的最内层环境，包含真实 OS、环境显示名、当前用户、目录和采样时间。实际 OS 与 Shell 方言 MUST 分别验证，不从本机启动配置或提示符推断；快照不得构成主机资产、连接拓扑、MCP 就绪状态或执行授权。
 
-#### Scenario: PowerShell is running on a Unix target
+#### Scenario: PowerShell runs on a Unix target
 
-- **WHEN** 用户在 Linux 或 macOS 上运行 PowerShell 并请求快照
-- **THEN** 系统 MUST 按实际 OS 选择采集能力，不得仅因 PowerShell 方言标记为 Windows
+- **WHEN** 当前 Shell 为 PowerShell，真实 OS 为 Linux 或 macOS
+- **THEN** 系统 MUST 根据实际 OS 采集和标记结果，不将其标为 Windows
 
-#### Scenario: Nested environment supplies its own facts
+#### Scenario: A nested environment responds
 
-- **WHEN** 用户在容器或切换用户后启用并请求快照
-- **THEN** 快照 MUST 显示本次环境及身份，不能把上一层的名称、目录或用户混入成功结果
+- **WHEN** 用户在容器、WSL 或切换用户后请求快照
+- **THEN** 系统 MUST 使用本次响应的身份、目录与平台事实，不混入上一层数据
 
 ### Requirement: On-Demand Literal Collection
 
-系统 MUST 在明确启用成功后采集一次，此后仅在用户处于空闲 Shell 并请求刷新时采集。采集 MUST 使用固定明文命令或完整可检查的固定采集片段，包含有限执行范围、时间/输出预算和结束证据。系统 MUST NOT 定时向 PTY 注入命令、自动中断前台程序，或通过编码 RPC 请求隐藏的采集执行。
+系统 MUST 在明确启用流程中采集一次，此后仅根据用户在空闲 Shell 的刷新请求采集。采集 MUST 使用固定明文命令，在同一有限执行范围内取得开始、结束和环境一致性证据，并设置时间与输出预算。MUST NOT 定时注入命令、自动中断前台或在后台猜测空闲后补发。
 
 #### Scenario: No refresh was requested
 
-- **WHEN** 快照面板保持打开但用户没有请求刷新
-- **THEN** 应用 MUST 保留带采样时间的历史快照，不自动向 PTY 写入采集命令
+- **WHEN** 面板保持打开但没有刷新请求
+- **THEN** 系统 MUST 保留原采样时间，不向 PTY 写入采集命令
 
 #### Scenario: Session is busy or unverified
 
-- **WHEN** 文件操作、外部执行、已知前台交互状态或缺少本次空闲 Shell 的明确操作前提阻止安全采集
-- **THEN** 系统 MUST 显示暂停/待验证并保留旧样本时间，不向该程序注入采集命令，也不触发 Ctrl+C
+- **WHEN** 文件操作、外部执行或未知前台阻止采集
+- **THEN** 系统 MUST 显示暂停或待验证并保留旧样本，不注入命令或 Ctrl+C
 
-#### Scenario: Collection times out or changes environment
+#### Scenario: Collection cannot be verified
 
-- **WHEN** 采集超时、前后环境不一致或结束证据不可靠
-- **THEN** 系统 MUST 不发布混合环境的成功快照，旧样本保留为过期，错误明确表示此次结果不可确认
+- **WHEN** 采集超时、环境前后不一致或缺少结束证据
+- **THEN** 系统 MUST 不发布成功快照，显示此次结果未确认并将旧样本标为过期
 
 ### Requirement: CPU Memory and Disk Metrics
 
-Linux、macOS、Windows 目标适配 MUST 提供其能力允许的 CPU、内存和本次目录所在文件系统的磁盘指标，并附单位、采样区间及统计口径。CPU 利用率需要差分时 MUST 在同一操作的有界区间采样。命令缺失、权限不足、字段不可解析或不支持时 MUST 为该项返回明确不可用原因，不得以零值或其他平台数据代替。
+Linux、macOS、Windows 适配 MUST 提供平台能力允许的 CPU、内存及当前目录所在文件系统的磁盘指标，附单位、统计口径和采样区间。CPU 差分 MUST 使用同一操作内的有效计数及时间间隔。缺少工具、权限、字段或支持时 MUST 对该项显示不可用原因，不能用零值代替。
 
-#### Scenario: Compute a sampled CPU percentage
+#### Scenario: Compute a CPU percentage
 
-- **WHEN** 当前平台需要两次计数器值来计算 CPU 利用率
-- **THEN** 系统 MUST 使用同一采集范围内的两次有效样本和对应时间区间，不把单个累计计数当作百分比
+- **WHEN** 当前平台需要差分计数计算 CPU 利用率
+- **THEN** 系统 MUST 使用同一采集范围的两次样本及其时间间隔，不把累计值当作百分比
 
 #### Scenario: A metric is unavailable
 
-- **WHEN** 当前身份不能访问某项指标或目标缺少其采集工具
-- **THEN** 该指标 MUST 显示不可用及原因，其他已验证指标仍可展示，不能将不可用显示为 0
+- **WHEN** 某项采集失败而其他项已验证
+- **THEN** 系统 MUST 展示有效指标，并对失败项显示具体原因
 
 ### Requirement: Explicit Container Metric Scope
 
-容器中的指标 MUST 明确区分可验证的容器配额/使用量和宿主机或系统可见值。可读取 cgroup 等限额时 MUST 使用匹配的统计范围；无法确定时 MUST 标明口径或不可用，不得将宿主机总量冒充容器限制。WSL 目标 MUST 使用本次 Linux 环境的数据，不能套用 Windows 宿主机指标。
+容器指标 MUST 区分可验证的配额与使用量、宿主机值和系统可见值；无法确认容器口径时 MUST 标明范围或不可用。WSL MUST 使用本次 Linux 环境数据，不使用 Windows 宿主机指标冒充。
 
-#### Scenario: Container exposes host memory totals
+#### Scenario: Container exposes host totals
 
-- **WHEN** 容器可见的系统数据是宿主机总量且容器限额无法验证
-- **THEN** 快照 MUST 明确标记该值的可见范围或将容器指标标为不可用，不能将其标为容器配额
+- **WHEN** 当前只能读取宿主机总量而无法验证容器限额
+- **THEN** 系统 MUST 明确标记宿主机或系统可见口径，不能将该值标为容器限额
 
-#### Scenario: Container has a verified quota
+#### Scenario: Container quota is verified
 
-- **WHEN** 当前环境能验证 CPU/内存限额及对应使用量
-- **THEN** 快照 MUST 展示匹配该环境的值及限额口径，不能与宿主机利用率混算
+- **WHEN** CPU 或内存配额及使用量可以验证
+- **THEN** 系统 MUST 使用匹配范围计算与展示，不混入宿主机利用率
 
-### Requirement: Snapshot Freshness Is Explicit
+### Requirement: Snapshot Freshness and Runtime Access
 
-快照 MUST 始终显示采样时间，不声称实时监控。用户输入、外部写入、环境失效、文件操作或 Session 生命周期变化后，旧样本 MUST 标为过期或待验证。返回上一层或重新启用后，只有本次新采集成功才能替换旧样本，不得仅修改旧样本的环境标签。
+快照 MUST 始终显示原采样环境与时间；用户输入、外部写入、文件操作、环境失效或生命周期变化后 MUST 标为过期或待验证。本次成功采集正常收敛所需的 MCP 环境验证失效 MUST NOT 使刚完成的样本立即过期；样本有效也不得恢复 MCP 环境验证。普通输出增长不得刷新采样时间。快照 MUST 仅在应用运行期通过受限桌面接口访问，不进入 MCP 状态、工具或 Sharing 历史，不作为环境验证缓存。
 
-#### Scenario: User leaves the sampled machine
+#### Scenario: Collection finishes and invalidates external preconditions
 
-- **WHEN** 用户输入退出或跳转命令，或当前绑定失效
-- **THEN** 旧快照 MUST 标明过期并保留原采样环境与时间，不能作为新环境的当前状态
+- **WHEN** 采集成功且无其他输入或环境变化，操作终态使 MCP 执行前提失效
+- **THEN** 系统 MUST 展示本次新样本，MCP 环境验证仍保持失效，不将新样本直接标为过期
 
-#### Scenario: The terminal emits unrelated passive output
+#### Scenario: User leaves the sampled environment
 
-- **WHEN** 采样后终端继续产生输出而没有新快照
-- **THEN** 面板 MUST 保留原采样时间，不能因输出增长或 PTY running 将旧数据标为新采集
+- **WHEN** 用户退出当前目标或进入另一层环境
+- **THEN** 系统 MUST 保留旧样本的环境和时间并标为过期，只有新的成功采集才能替换
 
-### Requirement: Runtime-Only Snapshot Access
+#### Scenario: External access or application restart
 
-快照结构和本地操作绑定 MUST 只存在于应用运行期，由 Main 经受限 API 提供给对应 Session 的桌面 UI。结构化快照 MUST NOT 加入 MCP `synapse_status`、工具列表或 Sharing 分页历史；普通明文命令及可读输出仍遵循既有 Sharing 规则。应用重启 MUST 不恢复快照或其执行前提。
-
-#### Scenario: A shared Session has a local snapshot
-
-- **WHEN** 外部客户端观察一个用户正在查看快照的已 Sharing Session
-- **THEN** 外部工具 MUST 不获得本地快照结构、文件引用或操作句柄，只能按既有规则观察普通脱敏输出
-
-#### Scenario: Application restarts
-
-- **WHEN** 应用退出后重新启动
-- **THEN** 系统 MUST 不恢复上次快照、目标绑定或采集任务
+- **WHEN** 外部客户端观察 Session，或应用退出后重启
+- **THEN** 外部客户端 MUST 不获得内部快照结构，应用重启 MUST 不恢复快照或采集资格

@@ -2,7 +2,7 @@
 
 ### Requirement: Terminal-Only Workspace
 
-桌面工作区 MUST 以终端会话为主要内容，MUST NOT 展示 Agent 面板、Composer、ACP 切换或审计入口；Header MUST 只包含品牌、会话标签操作和设置入口，不展示资源监控。会话操作菜单可提供显式 Sharing，并 MUST 提供文件传输和环境快照入口；这两个本地功能 MUST 位于对应 Session 内容区的可关闭面板。外部调用触发的审批卡片和外部执行状态遵循 ADR-0015，本地终端输入始终保持可用。
+桌面工作区 MUST 以终端 Session 为主要内容，MUST NOT 展示 Agent 面板、Composer、ACP 切换或审计入口。Header MUST 只包含品牌、会话标签操作和设置入口，不展示资源监控。会话菜单 MUST 提供文件传输和环境快照入口，面板位于对应 Session 内容区并可关闭。会话菜单可提供显式 Sharing；外部调用的审批卡片与外部执行状态遵循 ADR-0015，本地输入保持可用。
 
 #### Scenario: Workspace loads without agent surfaces
 
@@ -11,128 +11,84 @@
 
 #### Scenario: Open settings from header
 
-- **WHEN** 用户点击 Header 的“设置”按钮
-- **THEN** 系统 MUST 进入单页 Settings Workspace 并保留返回工作区入口
+- **WHEN** 用户点击 Header 设置按钮
+- **THEN** 系统 MUST 进入单页 Settings Workspace 并保留返回入口
 
-#### Scenario: Open local capability panels
+#### Scenario: Open a local capability panel
 
-- **WHEN** 用户从会话操作菜单选择文件传输或环境快照
-- **THEN** 对应面板 MUST 在当前 Session 内容区打开，Header 不新增资源监控控件，关闭面板后终端仍可使用
+- **WHEN** 用户从会话菜单选择文件传输或环境快照
+- **THEN** 对应面板 MUST 在该 Session 内容区打开，不向 Header 增加资源监控
 
 ## ADDED Requirements
 
-### Requirement: File Transfer Entry Points
+### Requirement: File Transfer Preparation
 
-桌面 UI MUST 提供多文件/目录上传按钮、真实文件拖入，以及指定远端文件/目录路径的下载入口。UI MUST 展示当前操作目标、路径、文件选择、进度和取消；不提供远端目录浏览器。未启用、未知目标或尚未声明回到空闲 Shell 时，拖入和按钮操作 MUST 只准备请求，不自动向终端发送命令或 Ctrl+C。
+界面 MUST 提供多文件与目录选择、真实拖入、指定远端路径下载和本机保存位置选择，展示目标、路径、选择摘要及启动入口。未启用或未明确回到空闲 Shell 时 MUST 只准备请求，不发送命令或 Ctrl+C。安装、文件选择等等待后 MUST 重新核对目标及选择有效性。
 
-#### Scenario: Drag files into an unprepared Session
+#### Scenario: Drag into an unknown foreground
 
-- **WHEN** 用户向尚未验证的终端拖入文件或目录
-- **THEN** UI MUST 展示待上传选择和启用说明，不自动打断前台程序、不开始传输
+- **WHEN** 用户向编辑器或未验证 Session 拖入文件
+- **THEN** 界面 MUST 展示选择摘要及启用说明，不中断前台或开始传输
 
-#### Scenario: Download explicitly selected remote paths
+#### Scenario: Start a download
 
-- **WHEN** 用户指定远端路径并选择本机保存位置，在当前有效操作前提下启动下载
-- **THEN** UI MUST 展示本次路径及目标环境，Main 仅在对应选择范围内保存文件
+- **WHEN** 用户指定远端路径、选择本机保存位置并在有效前提下启动
+- **THEN** 界面 MUST 显示本次目标和路径，文件仅保存到授权范围
 
-### Requirement: Transfer Tool Detection Controls
+### Requirement: Detection and Installation Controls
 
-文件面板 MUST 提供“检测当前环境”和重新检测入口，在发送命令前满足本次明确启用与空闲 Shell 前提。UI MUST 分别展示上传与下载工具的状态、可用的路径/版本、检测时间及原因；使用 `trzsz` 时明确上传依赖目标的 `trz`、下载依赖目标的 `tsz`。状态 MUST 区分未检测、检测中、可用、缺失、版本/能力不兼容、执行受限、检测未完成和过期，不能把超时或未验证统一显示为未安装。
+文件面板 MUST 提供检测与重新检测入口，分别展示上传、下载工具状态、路径、版本、检测环境和时间。状态 MUST 区分缺失、不兼容、受限、未完成与过期。存在适用固定方案时提供快速安装和复制命令；预览 MUST 展示完整命令、来源、版本、位置及联网和权限条件，复制不执行。第三方审计记录不影响已验证方案可用性。
 
-#### Scenario: User requests a check from an unknown foreground
+安装与复检 MUST 分别显示进度和结果。复检成功返回准备页面，不自动传输；过期引用要求重新选择。无适用方案时 MUST 提供具体原因与手工安装后复检指引。
 
-- **WHEN** 用户点击检测，但尚未明确回到空闲 Shell 或当前操作前提已失效
-- **THEN** UI MUST 展示启用步骤与待验证状态，不能直接注入检查命令或自动中断前台程序
+#### Scenario: Only upload is available
 
-#### Scenario: Upload is available but download is missing
+- **WHEN** 上传能力通过检测，下载能力缺失
+- **THEN** 界面 MUST 分别显示上传可准备与下载不可用原因
 
-- **WHEN** 复核确认上传工具兼容可用，而下载工具缺失
-- **THEN** UI MUST 分别展示上传可准备和下载需安装，不将整个文件面板标为已就绪或全部不可用
+#### Scenario: Preview is copied or cancelled
 
-#### Scenario: A previous check becomes stale
+- **WHEN** 用户仅复制安装命令或关闭预览
+- **THEN** 系统 MUST 不执行安装，保留可展示的选择摘要，不延长旧引用
 
-- **WHEN** 用户输入或其他上下文变化使工具检测结果失去当前执行前提
-- **THEN** UI MUST 保留可辨认的原检测环境/时间并标为过期，不能沿用旧“可用”状态自动启动操作
+#### Scenario: Installation recheck fails or remains unknown
 
-### Requirement: Guided Transfer Tool Installation
+- **WHEN** 安装结束后存在 PATH、版本、权限问题或没有可靠结果
+- **THEN** 界面 MUST 显示具体原因和复检入口，不显示传输就绪或自动重试
 
-对于缺失、不兼容或执行受限的工具，UI MUST 说明具体问题，并在存在适用方案时提供“快速安装”“复制安装命令”和“重新检测”。快速安装 MUST 先展示本次目标环境、完整明文命令、来源、固定版本、安装位置及联网/权限/基础工具条件，由用户选择执行；复制只写入剪贴板，不发送 PTY 输入。没有已验证适用方案时 MUST 明确说明快捷执行不可用，保留目标认可的手工安装指引与复检入口。
+### Requirement: Operation Results and Recovery Feedback
 
-UI MUST 展示安装及复检的独立进度与结果；只有工具路径、版本和可运行性复检通过后才能表示本次检查可用。安装完成 MUST 返回原上传/下载准备步骤，不自动传文件；保留选择摘要供用户复核，但不得续用过期操作或文件授权。
+界面 MUST 区分准备、忙碌、执行中、取消中、成功、部分完成、失败、未确认与输出不可用，展示逐文件跳过、冲突和换名处理。输出不可用时 MUST 显示“无法安全区分文件数据与终端输出”的原因及新建 Session 指引，保留本地输入和关闭入口，不提供强制显示原始数据或自动重连。
 
-#### Scenario: Preview or copy an installation command
+#### Scenario: A filename cannot be represented or already exists
 
-- **WHEN** 用户打开快速安装预览或选择复制完整安装命令
-- **THEN** UI MUST 显示当前环境与安装条件，系统 MUST 不因此写入 PTY 或启动安装
+- **WHEN** 目的文件系统拒绝名称或存在同名冲突
+- **THEN** 界面 MUST 说明原因并允许跳过或换名，默认保留原文件
 
-#### Scenario: User cancels the installation preview
+#### Scenario: Cancellation lacks confirmation
 
-- **WHEN** 用户关闭安装预览或取消执行
-- **THEN** 系统 MUST 保留文件操作准备状态且不安装、不丢失可展示的选择摘要，也不延长旧文件引用的有效期
+- **WHEN** 用户点击取消但未取得对应结束证据
+- **THEN** 界面 MUST 显示未确认；输出边界也无法确认时，同时显示输出不可用
 
-#### Scenario: User finishes manual installation
+#### Scenario: User switches Sessions or reloads the window
 
-- **WHEN** 用户通过目标认可的方式手工安装工具后，在当前空闲 Shell 重新启用并请求检测
-- **THEN** 系统 MUST 通过明文复检更新实际能力，允许回到原文件操作准备步骤，不要求应用重新安装或再次认证
-
-#### Scenario: Installation completes but recheck fails
-
-- **WHEN** 安装命令结束后发现 PATH、版本或执行权限不满足要求
-- **THEN** UI MUST 显示复检原因及重新检测/手工处理入口，不能显示传输已就绪或自动重试安装
-
-#### Scenario: Successful installation returns to transfer preparation
-
-- **WHEN** 安装和复检成功且原上传/下载准备仍可展示
-- **THEN** UI MUST 返回准备页面供用户复核当前目标、路径及文件，失效引用要求重新选择；用户启动新的传输操作前不得发送文件
-
-### Requirement: Local Operation Feedback
-
-UI MUST 区分准备/启用、忙碌、执行中、取消中、全部成功、部分完成、失败和未确认结果，展示逐文件冲突/跳过原因及可用的取消/接管入口。用户输入始终保持可用；取消按钮点击或本地 backend 接受写入 MUST NOT 直接显示远端已完成/已取消。切换 Session 后事件 MUST 仍归属于原 Session 和操作。
-
-#### Scenario: A filename conflict occurs
-
-- **WHEN** 接收位置已有同名文件
-- **THEN** UI MUST 默认保留原文件，展示跳过或换名处理，不能默认覆盖
-
-#### Scenario: User switches Sessions during transfer
-
-- **WHEN** Session A 的传输仍在进行，用户切到 Session B
-- **THEN** 进度和结果 MUST 保持归属 A，不改变 B 的终端或目标；回到 A 时读取其当前操作状态
-
-#### Scenario: Cancellation is not acknowledged
-
-- **WHEN** 用户取消后没有取得可靠远端结束证据
-- **THEN** UI MUST 显示结果未确认，不能以取消按钮已点击为由显示已取消
+- **WHEN** Session A 的操作仍运行，用户切换至 B 或重载界面
+- **THEN** 状态 MUST 保持归属 A，重载只读取当前状态，不复活旧操作或覆盖 B
 
 ### Requirement: Snapshot Presentation
 
-环境快照面板 MUST 展示环境、身份、目录、CPU、内存、磁盘、采样时间与指标口径，提供手动刷新入口。过期、忙碌、未验证和逐项不可用 MUST 有明确文本状态，不能仅用颜色表示，也不能将缺失值显示为零。面板 MUST 不承诺实时监控或后台刷新。
+快照面板 MUST 显示环境、身份、目录、CPU、内存、磁盘、采样时间与统计口径，并提供手动刷新。过期、暂停、待验证和逐项不可用 MUST 用文本说明，不能仅靠颜色或以零值代替。未知状态不得触发自动采集。
 
-#### Scenario: Show stale data after a hop
+#### Scenario: Display stale or partially available data
 
-- **WHEN** 用户改变环境或操作前提失效
-- **THEN** 面板 MUST 保留旧样本环境和时间并显示过期，不将旧数据重新标记为新目标状态
-
-#### Scenario: Some metrics are unavailable
-
-- **WHEN** 当前权限或平台不支持部分指标
-- **THEN** UI MUST 为该项显示原因，其他有效项继续展示，用户可辨认当前统计口径
+- **WHEN** 用户已离开采样环境或部分指标不可用
+- **THEN** 界面 MUST 保留原环境和时间，显示过期及各项原因，不改标签冒充新数据
 
 ### Requirement: Restricted Local Capability API
 
-文件选择、路径授权、文件 I/O、工具检测、固定安装方案、组件资源和协议状态 MUST 由 Main 通过受限 preload API 管理。Renderer MUST 只能提交已定义操作、有限选择/安装方案引用和已校验参数，读取完整只读命令预览并接收有界进度/快照；MUST NOT 请求任意本机路径读取、任意命令执行、网络端点、原始 PTY 字节或 Session 内部状态。Main MUST 验证调用来源、参数、Session 和操作引用的有效性。
+本机文件访问、组件资源和协议处理 MUST 由 Main 通过受限 preload API 管理。Renderer 只能提交固定操作、有限选择或安装方案引用及已校验参数，接收有界状态；MUST NOT 通过该接口执行任意命令、读取任意本机路径、访问任意网络端点或取得原始协议。Main MUST 验证来源、参数、Session 及引用有效性。
 
-#### Scenario: Renderer fabricates a local path
+#### Scenario: Renderer fabricates a capability
 
-- **WHEN** Renderer 试图用未经过真实用户选择的任意路径或其他 Session 的选择引用上传文件
-- **THEN** Main MUST 拒绝该请求，不能读取或传输该本机文件
-
-#### Scenario: Renderer submits a custom installer
-
-- **WHEN** Renderer 请求执行自定义安装命令、任意下载源或属于其他 Session/过期操作的安装方案
-- **THEN** Main MUST 在命令写入前拒绝请求，不能将安装接口扩展为任意执行或网络访问入口
-
-#### Scenario: Renderer reloads during an operation
-
-- **WHEN** Renderer 重载后重新订阅本地功能
-- **THEN** Main MUST 只返回该 Session 当前有界状态，不能暴露文件流、原始载荷或可重放的内部执行资格
+- **WHEN** Renderer 提交伪造本机路径、自定义安装命令、任意下载源或跨 Session 引用
+- **THEN** Main MUST 在文件访问或终端写入前拒绝请求
