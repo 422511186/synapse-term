@@ -1,14 +1,14 @@
-# ADR-0001：Electron Main 持有 Terminal Session
+# ADR-0001：Electron Main 持有 Session
 
 状态：已实现
 
 ## 决策
 
-PTY、Terminal Session 状态由 Electron Main 进程持有。Electron Renderer 只通过 preload API 和 IPC 通道读取、写入或订阅状态。
+PTY、Session 状态由 Electron Main 进程持有。Electron Renderer 只通过受限 preload API 和 IPC 通道读取、写入或订阅状态。
 
 ## 当前实现
 
-`@synapse-term/session-runtime` 负责 Session 生命周期和 `SessionManager` 的运行装配；`electron-main.ts` 负责创建 runtime、Desktop IPC adapter、窗口与应用退出清理。Renderer 通过 `window.synapseTerm` preload API 请求会话/终端操作。
+当前实现由 `@synapse-term/session-runtime` 和 Electron Main 装配；稳定的进程边界与公共职责见[架构说明](../architecture/architecture.md)。本节不作为独立实现手册。
 
 ## 影响
 

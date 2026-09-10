@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-应用按当前用户运行，不持久化 Session、终端输出或远程运行凭据，不建立远程资产模型；本机设置、MCP 本机访问 Token 和 ADR-0021 规定的有限更新缓存由各自控制器管理。Renderer 只能通过受限 preload API 访问 Main 持有的能力。
+当前存储和进程边界见[本地优先边界](../concepts/local-first-boundary.md)、[本地数据边界](../reference/data-boundary.md)和[安全边界](../security/security.md)。本 ADR 只保留产品边界决策。
 
 ## 影响
 

@@ -19,7 +19,7 @@ function publicKey() {
   const key = process.env.SPARKLE_PUBLIC_KEY?.trim();
   if (!key || !/^[A-Za-z0-9+/]{43}=$/.test(key))
     throw new Error(
-      'Set a valid SPARKLE_PUBLIC_KEY before packaging macOS. See docs/engineering/app-updates.md.',
+      'Set a valid SPARKLE_PUBLIC_KEY before packaging macOS. See docs/maintainers/application-updates.md.',
     );
   return key;
 }

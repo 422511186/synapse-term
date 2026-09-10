@@ -17,16 +17,16 @@
 
 按任务类型加载对应文档，其余不读：
 
-| 任务类型                   | 加载文档                            |
-| -------------------------- | ----------------------------------- |
-| 领域术语、命名、IPC 文案   | `CONTEXT.md`                        |
-| 架构设计、仓库布局         | `docs/architecture/architecture.md` |
-| 安全边界、威胁模型         | `docs/security/security.md`         |
-| 构建、开发、调试、故障处理 | `docs/engineering/runbook.md`       |
-| 编码风格、Git/PR 规范      | `docs/engineering/conventions.md`   |
-| 测试指南、验证矩阵         | `docs/engineering/testing.md`       |
-| GitHub Release 发布说明    | `docs/engineering/release.md`       |
-| 文档总览与导航             | `docs/README.md`                    |
+| 任务类型                      | 加载文档                                                               |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| 领域术语、命名、IPC 文案      | `CONTEXT.md`                                                           |
+| 架构设计、仓库布局            | `docs/architecture/architecture.md`                                    |
+| 安全边界、威胁模型            | `docs/security/security.md`                                            |
+| 构建、开发、调试、故障处理    | `docs/development/setup.md` 与 `docs/guides/troubleshooting.md`        |
+| 编码风格、Git/PR 规范         | `docs/development/conventions.md`                                      |
+| 测试指南、验证矩阵            | `docs/development/testing.md`                                          |
+| GitHub Release 发布流程与说明 | `docs/maintainers/releasing.md` 与 `docs/maintainers/release-notes.md` |
+| 文档总览与导航                | `docs/README.md`                                                       |
 
 ## 术语执行
 

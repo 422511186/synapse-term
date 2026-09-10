@@ -1,103 +1,95 @@
 # 架构说明
 
-本文档描述当前仓库中的 Synapse Term 实现，以及终端工作区和内嵌 MCP Server 之间的边界。
+本文是 Synapse Term 当前实现的稳定架构参考。用户操作见 [docs 导航](../README.md)，长期取舍见 [ADR 索引](../adr/README.md)。本文不替代 MCP Reference、发布手册或领域词汇表。
 
 ## 产品边界
 
-Synapse Term 是单用户、本机运行的桌面终端应用。核心对象是由 Electron Main 持有的 Terminal Session：PTY、终端状态、输入输出序列和有限的 Sharing 输出历史。
+Synapse Term 是单用户、本机运行的 Electron 桌面应用。核心对象是由 Electron Main 持有的 Session：本地 PTY、终端状态、输入输出序列和有限的 Sharing 输出历史。
 
-用户可以在一个 Terminal Session 中运行 SSH、跳板机、容器、WSL 或其他连接流程；Main 不解析连接拓扑，也不建立服务器资产、远程凭据或连接恢复模型。
+用户可以在同一个 Session 中运行 SSH、跳板机、容器、WSL 或其他连接流程；Main 不解析连接拓扑，也不建立远程主机资产、凭据或连接恢复模型。外部客户端只能通过用户显式 Sharing 的 Session 使用内嵌 MCP Server。
 
-外部客户端（例如 Codex）只能通过用户显式 Sharing 的 Session 使用内嵌 MCP Server。未共享的 Session 对外部客户端不存在；Sharing 不是远程端点，也不会自动枚举 Session。
-
-## 进程与边界
+## 进程与能力边界
 
 ```text
 React Renderer + xterm
         |
-        | contextBridge / preload API
+        | contextBridge / 受限 preload API
         v
-Electron Main
-   ├─ Composition Root
-   │    ├─ @synapse-term/session-runtime（PTY / Session 行为）
-   │    ├─ Desktop Session IPC Adapter
-   │    └─ @synapse-term/mcp-runtime（可选，仅监听 127.0.0.1）
-   │         ├─ Sharing 与输出历史
-   │         ├─ 审批队列与风险策略
-   │         └─ synapse_* 工具管线
+Electron Main（Composition Root）
+   ├─ @synapse-term/session-runtime
+   ├─ Desktop IPC Adapter
+   └─ @synapse-term/mcp-runtime（可选，仅监听 127.0.0.1）
 ```
 
-| 组件         | 当前职责                                                               | 不应直接持有                         |
-| ------------ | ---------------------------------------------------------------------- | ------------------------------------ |
-| Renderer     | 工作区、会话标签、终端交互、设置、Sharing 对话框和审批卡片             | Node API、PTY、Session 内部状态      |
-| Preload      | 暴露经过白名单限制的 `window.synapseTerm` API                          | 任意 IPC 转发、文件系统和网络        |
-| Electron Main | Composition Root、BrowserWindow、IPC adapter、runtime 实例、Shell/Session 清理与 Renderer 事件广播 | Renderer 业务状态、远程主机与凭据模型 |
+| 组件 | 当前职责 | 不应直接持有 |
+| --- | --- | --- |
+| Renderer | 工作区、Session 标签、终端交互、设置、Sharing 对话框和审批卡片 | Node API、PTY、Session 内部状态 |
+| Preload | 暴露白名单限制的 `window.synapseTerm` API | 任意 IPC 转发、文件系统和网络 |
+| Electron Main | 创建 runtime、BrowserWindow、IPC adapter、事件广播和退出清理 | Renderer 业务状态、远程主机与凭据模型 |
 
-## Workspace Package
+Renderer 崩溃或窗口关闭不会直接终止活动 Session；显式退出应用时 Main 终止全部 Session。Session 不跨应用重启存活。
 
-| Package                           | 职责                                                     |
-| --------------------------------- | -------------------------------------------------------- |
-| `@synapse-term/domain`            | Session、PTY/终端抽象、外部调用和事务领域模型             |
-| `@synapse-term/terminal-service`  | PTY 适配、SessionActor/Manager、实时输出、Shell 发现与执行 |
-| `@synapse-term/session-runtime`   | Session 生命周期、环境发现、启动默认值、摘要与输出事件映射 |
-| `@synapse-term/mcp-runtime`       | Sharing、外部事务、风险/审批、输入授权、工具和内嵌 MCP Server |
-| `@synapse-term/test-kit`          | Fake PTY 和测试替身                                      |
+## Workspace packages
 
-包通过各自 `src/index.ts` 公共出口互相引用；依赖方向从上层指向下层：`session-runtime` 和 `mcp-runtime` 可以使用 `terminal-service`/`domain`，但不能反向依赖 `apps/desktop` 或另一个 runtime package。策略、输出历史、脱敏和输入编码是 `mcp-runtime` 的内部 implementation，不是 Desktop 或未来运行端的公共知识。
+| Package | 职责 |
+| --- | --- |
+| `@synapse-term/domain` | Session、PTY/终端抽象、外部调用和事务领域模型 |
+| `@synapse-term/terminal-service` | PTY 适配、SessionActor/Manager、实时输出、Shell 发现与执行 |
+| `@synapse-term/session-runtime` | Session 生命周期、环境发现、启动默认值、摘要和输出事件映射 |
+| `@synapse-term/mcp-runtime` | Sharing、外部事务、风险/审批、输入授权、工具和内嵌 MCP Server |
+| `@synapse-term/test-kit` | Fake PTY 和测试替身 |
 
-## 仓库布局
+依赖方向从上层指向下层：
 
-本仓库是 pnpm workspace monorepo：
+```text
+domain
+   ^
+terminal-service
+   ^                 ^
+session-runtime     mcp-runtime
+   ^                 ^
+        apps/desktop
+```
 
-- `apps/desktop/`：Electron Main、preload、React Renderer 和 E2E。
-- `packages/`：领域模型、PTY/Session 服务、Session/MCP runtime 和测试替身。
-- `docs/`：架构、安全与工程文档；`openspec/`：规格变更提案与归档。
+跨包依赖必须经过各 package 的 `src/index.ts` 公共出口。runtime package 不得 import `apps/desktop` 或另一个 package 的内部实现路径；领域模型不得反向依赖终端服务、Electron 或 UI。
 
-## IPC 与契约
+## Desktop IPC
 
-Renderer 与 Main 通过 Electron `ipcMain`/`ipcRenderer` 通信，通道与 `DesktopApi` 类型位于 `apps/desktop/src/shared/`。当前通道分为：
+Renderer 与 Main 通过 Electron IPC 通信，通道与共享类型位于 `apps/desktop/src/shared/`。当前请求通道分为：
 
-- Session/终端：`sessions:list`、`sessions:environment`、`sessions:create`、`sessions:rename`、`sessions:close`、`terminal:write`、`terminal:resize`、`app:status`。
-- 通用设置与主题：`settings:get-general`、`settings:update-general`、`theme:get-state`。
-- 应用更新：`updates:get-state`、`updates:set-automatic-checks`、`updates:check`、`updates:download`、`updates:cancel`、`updates:install-impact`、`updates:install`。
-- MCP 设置与控制：`mcp:get-settings`、`mcp:update-settings`、`mcp:regenerate-token`、`mcp:revoke-token`、`mcp:get-status`、`mcp:list-shared`、`mcp:share-session`、`mcp:unshare-session`、`mcp:decide-approval`。
+- Session/终端：`sessions:list`、`sessions:environment`、`sessions:create`、`sessions:rename`、`sessions:close`、`terminal:write`、`terminal:resize`、`app:status`；
+- 通用设置与主题：`settings:get-general`、`settings:update-general`、`theme:get-state`；
+- 应用更新：`updates:get-state`、`updates:set-automatic-checks`、`updates:check`、`updates:download`、`updates:cancel`、`updates:install-impact`、`updates:install`；
+- MCP：`mcp:get-settings`、`mcp:update-settings`、`mcp:regenerate-token`、`mcp:revoke-token`、`mcp:get-status`、`mcp:list-shared`、`mcp:share-session`、`mcp:unshare-session`、`mcp:decide-approval`。
 
 事件通道包括 `terminal:output`、`session:changed`、`theme:changed`、`updates:changed`、`mcp:approval`、`mcp:approval-closed` 和 `mcp:execution`。
 
-## 应用更新
+具体 channel 名称属于 Desktop 实现契约，新增或修改时应同步 `apps/desktop/src/shared/desktop-ipc-channels.ts`、preload 白名单和对应测试；不要把完整 IPC 清单复制到用户文档。
 
-Desktop Main 的更新控制器负责固定 GitHub Release 的发现、偏好、状态广播和一次性安装确认。Windows adapter 使用 NSIS 与 electron-updater；macOS adapter 在确认前暂存并验证 DMG，确认后通过受限标准输入/输出协议启动 Sparkle helper，由 Sparkle 验签、替换和重启。更新实现只属于 Desktop，不进入 Session、MCP runtime 或领域模型。
+## Session 运行模型
 
-下载与安装授权分离。安装确认绑定候选与活动 Session 集合；完成准备复核后，`DesktopLifecycle` 同步关闭新建 Session 和外部调用入口，停止 MCP、等待已有创建操作收敛并结束 Session，再提交安装。普通退出复用幂等清理，但不获得安装授权。详见 [ADR-0021](../adr/0021-explicit-github-application-updates.md) 与 [应用更新手册](../engineering/app-updates.md)。
+Session 状态描述本地 PTY 生命周期：`starting`、`running`、`exited`、`failed`、`interrupted`。`SessionActor` 串行处理 PTY 输出、用户输入、resize、外部写入和退出事件；Renderer 只接收受限的实时输出事件。
 
-## Terminal Session
-
-Session 状态描述 PTY 生命周期：`starting`、`running`、`exited`、`failed`、`interrupted`。`SessionActor` 串行处理 PTY 输出、用户输入、resize、外部写入和退出事件；Renderer 只接收受限的实时输出事件。
-
-关闭窗口只分离 UI；应用退出时 Main 终止全部 Session。Session 不跨应用重启存活，也不提供屏幕快照或原始 PTY 字节流。
+Shell environment 通过运行时 Probe 验证。进入 SSH、容器、WSL 或嵌套 Shell 后，应用仍管理同一个本地 PTY；当前环境、能力代际和执行上下文由运行时事实更新，不建立远程连接对象。
 
 ## Sharing 与内嵌 MCP Server
 
-MCP Server 默认关闭，启用后绑定本机回环地址，并要求 `Authorization: Bearer <Token>`。用户在终端标签操作菜单中共享 Session，应用同时建立该 Session 的 Sharing 输出边界；取消共享、Session 退出或 Token 吊销都会使外部调用失效。
+MCP runtime 默认不启动端点。启用后只监听本机回环地址，要求 Bearer Token；用户在桌面端明确 Sharing Session 后才建立外部能力。取消 Sharing、Session 退出、Token 吊销或应用退出会清理共享句柄、审批和外部事务。
 
-当前提供八个工具：
+MCP 工具协议、输入授权、输出游标和稳定错误码见 [MCP 工具参考](../reference/mcp-tools.md)。安全边界见 [安全说明](../security/security.md)，不可回退的语义见 [ADR-0014 至 ADR-0019](../adr/README.md)。
 
-- `synapse_status`、`synapse_observe`：检查就绪状态并按游标读取 Sharing 边界内的清理输出。
-- `synapse_execute`、`synapse_wait`、`synapse_interrupt`：执行带完成证据的结构化外部事务。
-- `synapse_start_interactive`、`synapse_input`、`synapse_finish_interactive`：为需要 stdin 的程序提供有限输入授权和显式终结流程。
+## 应用更新
 
-外部执行必须携带最近 `synapse_observe` 返回的 `executionContextId`；用户输入或环境变化后，旧上下文会在 PTY 写入前失效。审批模式分为 `read_only`、`managed` 和 `full`，高风险调用在 `managed` 下进入桌面审批卡片。
+应用更新控制器只属于 Desktop Main，不进入 Session、MCP runtime 或领域模型。它管理固定 GitHub Release 来源、候选校验、一次性安装确认和平台安装适配器；安装前的 Session 清理顺序和信任取舍见 [ADR-0021](../adr/0021-explicit-github-application-updates.md)。
 
-Sharing 输出只在当前应用运行期间保留，从 Sharing 建立后开始记录；输出经过协议帧清理和脱敏，可用 `afterCursor`、`tail` 和 `maxBytes` 分页读取。读取不会消费历史，历史也不跨应用重启持久化。
+用户行为见[更新指南](../guides/updates.md)，发布和验收见[维护者文档](../maintainers/application-updates.md)。
 
-## 生命周期与本地数据
+## 数据边界
 
-- 窗口关闭（macOS 应用常驻）：Session 继续运行，重开窗口后继续订阅实时输出。
-- 应用退出：Main 调用 `SessionRuntime.shutdown()` 终止全部 PTY，MCP runtime 同时停止并清理共享句柄。
-- Session、PTY 和 Sharing 输出历史只存在于应用运行期；MCP 端口、审批模式和访问 Token 由本机设置存储管理。
-- 更新偏好、公钥与有限安装包缓存允许本地保存，不保存 Session 或可重放的安装确认。
-- 应用不建立产品账户、远程主机资产、SSH 拓扑或集中审计日志。
+Session、PTY 和 Sharing 输出历史只存在于应用运行期；本机设置、MCP Token、更新偏好、公钥和有限更新缓存由各自控制器管理。应用不提供产品账户、远程主机资产、SSH 拓扑、远程凭据库或集中审计日志。
+
+完整数据清单见[本地数据边界](../reference/data-boundary.md)。
 
 ## 兼容标识
 
-产品名统一为 Synapse Term；旧的 `TERMINAL_AGENT_*` 环境变量与 `terminal-agent` 数据目录不再使用。
+当前产品名统一为 Synapse Term；旧的 `TERMINAL_AGENT_*` 环境变量与 `terminal-agent` 数据目录不再使用。兼容迁移的具体处理不在本架构总览中，按用户问题查阅对应 Release 或故障排查指南。
