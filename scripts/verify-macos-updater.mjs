@@ -8,7 +8,17 @@ export default async function afterSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const helper = join(app, 'Contents/Helpers/SynapseUpdater.app/Contents/MacOS/SynapseUpdater');
-  execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
+  // On pull_request builds, electron-builder intentionally skips Apple code signing
+  // (it refuses to sign PRs for security), so the app is left unsigned and
+  // `codesign --verify` cannot pass. Skip the signature check there; every other
+  // packaging validation below still runs. For push/release/local builds the app is
+  // signed, so any verification failure is still treated as an error.
+  try {
+    execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
+  } catch (err) {
+    if (process.env.GITHUB_EVENT_NAME !== 'pull_request') throw err;
+    console.warn('Skipping codesign --verify: PR build is not code-signed.');
+  }
   execFileSync('/usr/bin/lipo', [helper, '-verify_arch', 'arm64']);
   execFileSync('/usr/bin/lipo', [
     join(app, 'Contents/MacOS/Synapse Term'),
