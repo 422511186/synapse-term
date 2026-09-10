@@ -14,7 +14,9 @@ export default async function afterSign(context) {
   // packaging validation below still runs. For push/release/local builds the app is
   // signed, so any verification failure is still treated as an error.
   try {
-    execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
+    execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app], {
+      stdio: 'inherit',
+    });
   } catch (err) {
     if (process.env.GITHUB_EVENT_NAME !== 'pull_request') throw err;
     console.warn('Skipping codesign --verify: PR build is not code-signed.');
