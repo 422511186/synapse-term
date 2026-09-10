@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-桌面入口位于 `apps/desktop`；PTY 和 Shell 逻辑位于 `@synapse-term/terminal-service`，领域模型位于 `@synapse-term/domain`，UI 组件位于 desktop renderer。
+当前入口和 package 所有权见[架构说明](../architecture/architecture.md)；该页面不再复制逐包实现细节。
 
 ## 影响
 

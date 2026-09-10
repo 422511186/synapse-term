@@ -1,4 +1,4 @@
-# ADR-0002：Terminal Session 与连接拓扑无关
+# ADR-0002：Session 与连接拓扑无关
 
 状态：已实现
 
@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-`SessionState` 只记录 PTY 状态与终端元数据；`terminal-service` 的 SessionActor 对 SSH、跳板、容器等嵌套连接保持同一个本地 PTY 语义。
+当前 `SessionState` 只记录 PTY 状态与终端元数据；稳定语义见[Session 与 Sharing](../concepts/session-and-sharing.md)和[架构说明](../architecture/architecture.md)。
 
 ## 影响
 

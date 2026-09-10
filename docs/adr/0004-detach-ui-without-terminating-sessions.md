@@ -8,7 +8,7 @@
 
 ## 当前实现
 
-Main 在应用退出时调用 `SessionRuntime.shutdown()` 终止全部 PTY。Session 仅存在于应用运行期内存。
+当前生命周期和本地数据边界见[创建第一个 Session](../getting-started/first-session.md)与[本地数据边界](../reference/data-boundary.md)。
 
 ## 影响
 

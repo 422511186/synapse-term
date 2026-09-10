@@ -15,6 +15,7 @@
     "start": "pnpm --filter @synapse-term/desktop start",
     "format": "prettier --write \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
     "format:check": "prettier --check \"apps/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"packages/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"scripts/**/*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\" \"docs/**/*.{md,json,yml}\" \"*.{js,mjs,cjs,ts,tsx,json,css,md,yml}\"",
+    "docs:check": "node scripts/check-doc-links.mjs",
     "icons:generate": "node scripts/generate-icons.mjs",
     "lint": "eslint .",
     "postinstall": "node scripts/ensure-node-pty-helper.mjs",
@@ -32,7 +33,7 @@
     "test:coverage": "vitest run --coverage --passWithNoTests",
     "test:e2e": "playwright test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
+    "verify": "pnpm format:check && pnpm docs:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,34 +1,61 @@
 schema: spec-driven
 
 context: |
-  本项目的 OpenSpec artifacts 使用“兼容中文”写法：
-  - 面向人的正文内容使用简体中文，包括业务背景、问题描述、设计取舍、风险说明、任务描述和影响范围。
-  - OpenSpec CLI 或 schema 解析依赖的 Markdown 标题、前缀和规范关键字保持英文，不翻译成中文。
-  - 尤其保留 `## Why`、`## What Changes`、`## Capabilities`、`## Impact`、`## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements`、`## Purpose`、`## Requirements`、`### Requirement:`、`#### Scenario:`、`MUST`、`SHALL`、`WHEN`、`THEN`、`AND`。
-  - 目标是让文档便于中文团队阅读，同时继续兼容 `openspec status`、`openspec validate`、`openspec archive` 和 `/opsx:apply`。
+  项目事实：
+  - Synapse Term 是单用户、本地优先的 Electron 桌面终端；技术栈为 TypeScript、React、xterm 与 node-pty，使用 pnpm workspace。
+  - 修改代码、规格、测试或文档前，先遵循 `AGENTS.md`：完整读取 `CONTEXT.md` 与 `docs/adr/*.md`，并按任务类型加载其路由的当前文档。
+  - 涉及 OpenSpec change 时，已批准的 proposal、delta specs、design 与 tasks 是该 change 的事实源。若它们与 `CONTEXT.md`、ADR 或代码冲突，先说明冲突与影响，再请求用户裁决。
+  - 领域文字使用 `CONTEXT.md` 的规范术语；稳定新概念更新 `CONTEXT.md`，难以回退且源于真实取舍的决定新增 ADR。
 
-  本项目在显式 OpenSpec 流程中优先使用仓库内 `.agents/skills/` 的技能：
-  - 用户显式使用仓库内 `.agents/skills/openspec-explore/SKILL.md`、`.agents/skills/openspec-propose/SKILL.md`、`.agents/skills/openspec-apply-change/SKILL.md`、`.agents/skills/openspec-archive-change/SKILL.md`（或对应的 `/opsx:*` 入口），或明确指定某个 OpenSpec change 时，OpenSpec 接管变更生命周期。
-  - `openspec/changes/<change>/proposal.md`、`design.md`、`specs/`、`tasks.md` 是该变更的唯一事实源。
-  - 有活跃 OpenSpec change 时，不要为同一件事再生成第二套 proposal/design/specs/tasks 文档；该 change 内的 artifacts 保持单一事实源。
-  - 需要澄清方案或领域术语时，优先参考 `.agents/skills/grill-with-docs/SKILL.md`、`.agents/skills/grilling/SKILL.md` 和 `.agents/skills/domain-modeling/SKILL.md`；这些技能只用于形成决策和更新项目上下文，不替代 OpenSpec artifacts。
-  - 在 `/opsx:apply` 实现阶段，遵循 `.agents/skills/openspec-apply-change/SKILL.md`；涉及代码行为的功能或修复前优先使用 `.agents/skills/tdd/SKILL.md`，涉及术语或架构边界时同步核对 `CONTEXT.md` 与生效中的 ADR。
-  - 完成实现后，运行与变更范围匹配的 `openspec validate`、项目验证命令（通常为 `pnpm verify`）和 `git diff --check`，并逐项复核任务、规格与实际 diff；不要以未运行的检查结果作完成声明。
-  - 简单理解：OpenSpec 管变更生命周期和任务清单，`.agents/skills/` 提供仓库内的设计、实现与上下文工作流，项目命令负责验证结果。
+  架构与安全硬边界：
+  - Renderer 仅通过受限 preload API 使用能力，不直接访问 Node API、PTY 或 Session 内部状态。
+  - 跨 package 依赖经过公共出口；domain 不反向依赖 terminal service、Electron 或 UI。
+  - Session 是传输无关的本地 PTY 会话；SSH、跳板机、容器和 WSL 不形成主机资产、凭据库或连接拓扑模型。
+  - 产品保持单用户本地边界，不持久化 Session、凭据、终端输出或集中审计日志；UI 重开只重新订阅实时输出。
+  - 外部客户端只能操作用户显式 Sharing 的 Session；Sharing 不提供自动枚举、远程端点或永久授权。
+  - MCP 使用 `read_only`、`managed`、`full` 三档审批模式；`managed` 的高危调用进入审批卡片，超时拒绝；`full` 仍执行输出脱敏。
+
+  OpenSpec 与技能协作：
+  - 面向人的 artifact 正文使用简体中文；schema/template 要求的 Markdown 标题、规范关键字、命令、路径和代码标识符保持原文。
+  - 同一 change 只维护一套 `openspec/changes/<change>/` artifacts；调查、讨论和实现结论回填该事实源，不创建平行 proposal、spec、design 或 plan。
+  - `.agents/skills/openspec-explore` 负责探索与需求澄清；探索阶段不实现产品代码，但可在确认范围内维护 OpenSpec artifacts。`openspec-propose` 只生成规划 artifacts，`openspec-apply-change` 实现 tasks，`openspec-sync-specs` 合并 delta specs，`openspec-archive-change` 完成归档。具体步骤以各自 `SKILL.md` 为准，本配置只提供项目约束与路由。
+  - 按问题触发协同技能：需求或方案含糊时用 `grill-with-docs`（联动 `grilling` 与 `domain-modeling`），外部事实用 `research`，状态机或 UI 取舍用 `prototype`，Module/Interface/Seam 设计用 `codebase-design`，故障与性能回归用 `diagnosing-bugs`，行为实现用 `tdd`，完成前的差异审查用 `code-review`，合并冲突用 `resolving-merge-conflicts`。技能产出服务于当前 OpenSpec change，不替代其 artifacts。
+  - OpenSpec 采用流式动作而非不可回退阶段；实现发现会改变需求、设计或任务时，先更新对应 artifact，再继续工作。
 
 rules:
   proposal:
-    - 保留模板要求的英文标题 `## Why`、`## What Changes`、`## Capabilities`、`## Impact`，标题下正文使用简体中文。
-    - Capabilities 中的能力标识仍使用 kebab-case 英文或拼音式稳定标识，说明文字使用简体中文。
-    - 不要把 OpenSpec 结构标题翻译为 `为什么`、`变更内容`、`能力` 或类似中文标题。
+    - 保留 `## Why`、`## What Changes`、`## Capabilities`、`## Impact` 及其模板层级；正文使用简体中文。
+    - 新 capability path 使用 kebab-case；修改既有 capability 时使用 `openspec/specs/` 下的精确完整路径，不另造近义 capability。
+    - 用可观察的产品或下游行为界定范围；在 Impact 中按适用范围列出受影响的 package、公共 Interface、IPC、文档与验证范围，发现与现有事实源的冲突时显式标出。
   specs:
-    - delta spec 必须保留英文 delta 标题：`## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements`。
-    - 每条需求必须保留 `### Requirement:` 前缀，每个场景必须保留 `#### Scenario:` 前缀；前缀后可以使用英文稳定名称，需求正文和场景说明使用简体中文。
-    - 规范性句子必须继续包含 `MUST` 或 `SHALL`，场景步骤必须继续使用 `WHEN`、`THEN` 和可选 `AND` 标记。
-    - 不要把 `Requirement`、`Scenario`、`MUST`、`SHALL`、`WHEN`、`THEN` 翻译成中文。
+    - delta spec 保留 `## Purpose`（仅新 capability）以及 `## ADDED Requirements`、`## MODIFIED Requirements`、`## REMOVED Requirements`、`## RENAMED Requirements` 等英文结构标题。
+    - 每条需求使用 `### Requirement:`，每个场景使用恰好四级的 `#### Scenario:`；规范句保留 `MUST` 或 `SHALL`，步骤保留 `WHEN`、`THEN` 与可选 `AND`，其余正文使用简体中文。
+    - 规格只描述外部可观察行为、输入输出、错误和安全/兼容约束；实现类名、库选择与执行步骤放入 design 或 tasks。
+    - 使用 `CONTEXT.md` 的规范术语；修改既有 requirement 时带上完整更新后的 requirement 与所有仍然有效的 scenarios，使每个场景都可测试或可明确验证。
   design:
-    - 保留设计模板的英文 Markdown 章节标题；章节内容、背景、目标、决策、风险和迁移说明使用简体中文。
+    - 保留模板英文章节标题，设计说明使用简体中文；引用 proposal/specs，不复制其正文。
+    - 每项关键 Decision 说明选择、替代方案与理由，并把风险写成可执行的 mitigation；涉及迁移时同时给出回滚或安全停止条件。
+    - 明确受影响 Module、Interface、Seam、Adapter、依赖方向与 Renderer/Main 边界；把需要更新 `CONTEXT.md`、ADR、架构、安全或 Reference 文档的工作交给 tasks。
+    - 只在 Open Questions 中保留不会改变规格、方案或任务拆分的可延后问题；会改变这些内容的问题必须先解决。
   tasks:
-    - 保留可被 apply 阶段解析的 checkbox 格式 `- [ ] X.Y ...` 或 `- [x] X.Y ...`。
-    - 任务分组标题和任务描述使用简体中文，但命令、路径、标识符和测试名保持原文。
-    - 不要要求为同一个 OpenSpec change 额外生成第二套计划或规格文档；如需体现工程纪律，应在 OpenSpec tasks 中直接安排测试、实现和验证步骤。
+    - 保留 `- [ ] X.Y ...` / `- [x] X.Y ...` checkbox 格式；按依赖顺序分组，每项任务包含可执行的完成验证。
+    - 行为改动按经确认的公共 Seam 组织纵向 red-green slices：先写能捕获规格场景的失败测试，再写最小实现；故障修复先建立可复现且能判红的反馈回路。
+    - 把术语、ADR、架构、安全、用户文档与测试矩阵更新纳入对应实现任务，保持同一 change 内闭环。
+    - 最后设置与变更范围匹配的整体验证任务：所有 change 运行 `openspec validate <change> --strict` 与 `git diff --check`；代码或行为改动运行 `pnpm verify`，文档改动运行 `pnpm format:check` 与 `pnpm docs:check`；UI/跨进程改动增加 `pnpm test:e2e`，平台或打包改动增加适用的真实 Electron/打包冒烟。
+
+operations:
+  apply:
+    guidance:
+      - 以 `.agents/skills/openspec-apply-change/SKILL.md` 为实现流程入口；使用 CLI 返回的 `contextFiles`，逐项实现并仅在行为和该项验证都完成后勾选 task。
+      - 开始每个任务前重新核对相关 proposal、specs、design、tasks、`CONTEXT.md`、生效 ADR 与按 `AGENTS.md` 路由的文档；发现冲突时停止该分支并说明影响。
+      - 行为实现遵循 `.agents/skills/tdd/SKILL.md` 的公共 Seam 与纵向 red-green 循环；根因不明的故障或性能回归先遵循 `diagnosing-bugs`，Interface/Seam 取舍遵循 `codebase-design`。
+      - 需求或方案仍含糊时先使用 `grill-with-docs`；需要验证 UI 或状态模型时使用 `prototype`；外部事实由 `research` 留下带来源的 Markdown 记录；不要用猜测代替这些协同步骤。
+      - 每项任务先运行最小相关检查；在准备宣告该 change 实现完成前按变更范围运行 strict validation、`pnpm verify` 或文档检查与 `git diff --check`，再按影响范围补 E2E、真实 Electron、平台或打包验证，并如实记录未运行或受阻的检查。
+      - 完成实现或用户要求审查时，使用 `code-review` 的 Standards/Spec 双轴检查；它需要用户给出的 fixed point，不要自行假定比较基点。
+      - 实现证据推翻规划时，先更新对应 OpenSpec artifact 并重新验证一致性，不以代码现实静默缩小或绕过已批准行为。
+  archive:
+    guidance:
+      - 以 `.agents/skills/openspec-archive-change/SKILL.md` 为归档流程入口；存在 delta specs 时使用 `openspec-sync-specs` 做语义合并，并在移动 change 前验证所有受影响 main specs。
+      - 归档前逐项对照 proposal、specs、design、tasks、实际 diff 与验证证据；未完成任务、未解决冲突和未运行检查必须明确呈现，不能写成已完成。
+      - 确认需要的 `CONTEXT.md`、ADR、架构、安全、Reference、用户与测试文档已更新到其 canonical 来源，不把 change artifact 当作长期文档替代品。
+      - 至少运行 change 的 `openspec validate <change> --strict` 与 `git diff --check`；同步 main specs 后运行适用的 specs validation，并在归档摘要中只报告实际结果。
