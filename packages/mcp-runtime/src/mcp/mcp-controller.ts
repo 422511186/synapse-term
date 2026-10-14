@@ -2,6 +2,7 @@ import type { ExternalCaller } from '@synapse-term/domain';
 import {
   CommandExecutor,
   ExternalLeaseRegistry,
+  ExternalTransactionLedger,
   type SessionActor,
 } from '@synapse-term/terminal-service';
 
@@ -195,9 +196,12 @@ export class McpController {
       sessionId,
       sharingId: `${sessionId}:${sharedAt}`,
     });
+    // 活动事务账本是这个 Session 上「有外部事务」的唯一权威；在组合点显式创建并注入两侧。
+    const ledger = new ExternalTransactionLedger();
     const executor = new CommandExecutor(actor, {
       completionDrainMs: 50,
       outputCursor: () => history.cursor,
+      ledger,
     });
     const removeOutputListener = await actor.onPtyOutputAfterBoundary((event) => {
       history.append(event.historyData ?? event.data);
@@ -206,6 +210,7 @@ export class McpController {
       actor,
       executor,
       history,
+      ledger,
       leases: new ExternalLeaseRegistry(),
       requestApproval: (request) => this.#requestApproval(request),
     });

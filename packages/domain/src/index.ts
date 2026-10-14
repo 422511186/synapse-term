@@ -1,4 +1,5 @@
 export * from './external/external-caller.js';
+export * from './external/external-input-limits.js';
 export * from './session/command-hash.js';
 export * from './session/command-protocol.js';
 export * from './session/session-state.js';

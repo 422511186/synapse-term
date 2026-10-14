@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import type { ExternalCaller } from '@synapse-term/domain';
 import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 
 import { CommandExecutor } from './command-executor.js';
 import { InteractiveCommandExecutor } from './interactive-command-executor.js';
 import { SessionActor } from './session-actor.js';
+
+const contractCaller: ExternalCaller = { kind: 'mcp', id: 'caller' };
 
 /**
  * 外部写入前提失败对外的稳定错误码基线。
@@ -105,7 +108,7 @@ async function interactiveStartAfter(
       command: 'vim notes.txt',
       expectedContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller: contractCaller,
     }),
   );
   await pending();
@@ -235,7 +238,7 @@ describe('事务内输入前提失败的外部错误码', () => {
       command: 'sudo su -',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller: contractCaller,
     });
 
     const rejection = rejectionOf(
@@ -244,7 +247,7 @@ describe('事务内输入前提失败的外部错误码', () => {
         inputGrantId: 'contract-grant',
         inputRequestId: 'contract-input-1',
         payload: payload('secret\r'),
-        callerId: 'caller',
+        caller: contractCaller,
       }),
     );
     await actor.writeUser('typed\r');

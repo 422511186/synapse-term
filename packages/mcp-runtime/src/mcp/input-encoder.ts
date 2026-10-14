@@ -1,14 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import type { InputKey } from '@synapse-term/domain';
+import {
+  MAX_INPUT_KEYS,
+  MAX_INPUT_PAYLOAD_BYTES,
+  MAX_INPUT_TEXT_BYTES,
+  type InputKey,
+} from '@synapse-term/domain';
 import type { InteractiveInputPayload } from '@synapse-term/terminal-service';
 
-export const MAX_INPUT_TEXT_BYTES = 8 * 1024;
-export const MAX_INPUT_KEYS = 128;
-export const MAX_INPUT_PAYLOAD_BYTES = 16 * 1024;
-export const BOUNDED_INPUT_MAX_CALLS = 256;
-export const BOUNDED_INPUT_MAX_BYTES = 256 * 1024;
-export const BOUNDED_INPUT_IDLE_TIMEOUT_MS = 10 * 60_000;
+export {
+  MAX_INPUT_KEYS,
+  MAX_INPUT_PAYLOAD_BYTES,
+  MAX_INPUT_TEXT_BYTES,
+} from '@synapse-term/domain';
 
 export const INPUT_KEY_BYTES: Readonly<Record<InputKey, string>> = {
   up: '\u001b[A',

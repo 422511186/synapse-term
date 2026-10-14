@@ -3,6 +3,7 @@ import type {
   ExternalCaller,
   ExternalErrorCode,
   ExecutionContextId,
+  ExternalInputGrantLimits,
   ExternalTransactionKind,
   ExternalTransactionStatus,
   InputGrantMode,
@@ -10,10 +11,13 @@ import type {
   McpApprovalMode,
   OutputCursor,
 } from '@synapse-term/domain';
-import { isExternalErrorCode } from '@synapse-term/domain';
+import { EXTERNAL_INPUT_GRANT_LIMITS, isExternalErrorCode } from '@synapse-term/domain';
+import type { ExternalTransactionLedger, InputRequestRecord } from '@synapse-term/terminal-service';
 import {
   CommandExecutorError,
   ExternalLeaseRegistry,
+  InputRequestLedger,
+  matchesInputRequestFingerprint,
   InteractiveCommandExecutor,
   InteractiveCommandExecutorError,
   ShellProbe as DefaultShellProbe,
@@ -31,14 +35,7 @@ import {
 import type { PolicyDecision } from './policy-engine.js';
 import { PolicyEngine } from './policy-engine.js';
 import { SecretRedactor } from './secret-redactor.js';
-import {
-  BOUNDED_INPUT_IDLE_TIMEOUT_MS,
-  BOUNDED_INPUT_MAX_BYTES,
-  BOUNDED_INPUT_MAX_CALLS,
-  encodeInput,
-  InputEncoderError,
-  validateInputRequestId,
-} from './input-encoder.js';
+import { encodeInput, InputEncoderError, validateInputRequestId } from './input-encoder.js';
 import { OutputCursorError, SharingOutputHistory } from './sharing-output-history.js';
 
 export interface McpToolContext {
@@ -48,11 +45,7 @@ export interface McpToolContext {
 
 export type ApprovalDecision = 'allow_once' | 'allow_session' | 'denied';
 
-export interface InputGrantLimits {
-  maxCalls: number;
-  maxBytes: number;
-  idleTimeoutMs: number;
-}
+export type InputGrantLimits = ExternalInputGrantLimits;
 
 export interface ApprovalRequest {
   sessionId: string;
@@ -82,6 +75,10 @@ export interface ExternalToolPipelineOptions {
   probe?: ShellProbe;
   history?: SharingOutputHistory | undefined;
   requestApproval?: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
+  /** 与本 Session 的执行器共享的活动事务账本；缺省时采纳 `executor` 的实例。 */
+  ledger?: ExternalTransactionLedger | undefined;
+  /** 本层记录工具响应用的输入请求账本；缺省时自建一份。 */
+  inputLedger?: InputRequestLedger | undefined;
 }
 
 export interface ExecuteInput {
@@ -149,15 +146,6 @@ export class ExternalToolError extends Error {
   }
 }
 
-interface InputDedupeRecord {
-  mode: 'transactional' | 'free';
-  transactionId: string | undefined;
-  grantId: string | undefined;
-  payloadHash: string;
-  promise: Promise<ExternalToolResult<Record<string, unknown>>>;
-  outcome?: ExternalToolResult<Record<string, unknown>> | undefined;
-}
-
 export class ExternalToolPipeline {
   readonly #actor: SessionActor;
   readonly #executor: CommandExecutor;
@@ -168,12 +156,13 @@ export class ExternalToolPipeline {
   readonly #requestApproval: NonNullable<ExternalToolPipelineOptions['requestApproval']>;
   readonly #probe: ShellProbe;
   readonly #history: SharingOutputHistory;
+  readonly #ledger: ExternalTransactionLedger;
   readonly #ownsHistory: boolean;
   readonly #removeHistoryListener: () => void;
   readonly #removeExecutorListener: () => void;
   readonly #removeInteractiveExecutorListener: () => void;
   readonly #sessionGrants = new Set<string>();
-  readonly #inputRequests = new Map<string, InputDedupeRecord>();
+  readonly #inputLedger: InputRequestLedger;
   readonly #listeners = new Set<(event: ExternalToolPipelineEvent) => void>();
   #disposed = false;
   #clearPromise: Promise<void> | undefined;
@@ -181,6 +170,10 @@ export class ExternalToolPipeline {
   constructor(options: ExternalToolPipelineOptions) {
     this.#actor = options.actor;
     this.#executor = options.executor;
+    // 缺省采纳 CommandExecutor 的账本，使同一个 Session 的两个执行器与 pipeline 共享一份权威。
+    this.#ledger = options.ledger ?? options.executor.transactionLedger;
+    // 输入请求账本按层持有：这一层缓存的是工具响应，与执行器缓存的输入重放摘要刻意不同。
+    this.#inputLedger = options.inputLedger ?? new InputRequestLedger();
     this.#policy = options.policy ?? new PolicyEngine();
     this.#redactor = options.redactor ?? new SecretRedactor();
     this.#leases = options.leases ?? new ExternalLeaseRegistry();
@@ -195,9 +188,18 @@ export class ExternalToolPipeline {
             if (event.type === 'pty_output') this.#history.append(event.historyData ?? event.data);
           })
         : () => undefined;
+    if (
+      options.interactiveExecutor !== undefined &&
+      options.interactiveExecutor.transactionLedger !== this.#ledger
+    ) {
+      throw new Error(
+        'the injected interactive executor must share the pipeline transaction ledger',
+      );
+    }
     this.#interactiveExecutor =
       options.interactiveExecutor ??
       new InteractiveCommandExecutor(this.#actor, {
+        ledger: this.#ledger,
         outputCursor: () => this.#history.cursor,
         validateObservedCursor: (cursor, minimum) =>
           this.#history.assertCursorAtOrAfter(cursor, minimum),
@@ -216,13 +218,11 @@ export class ExternalToolPipeline {
   }
 
   get activeTransactionId(): string | undefined {
-    return this.#executor.activeTransactionId ?? this.#interactiveExecutor.activeTransactionId;
+    return this.#ledger.active?.transactionId;
   }
 
   get activeTransactionKind(): ExternalTransactionKind | undefined {
-    if (this.#interactiveExecutor.activeTransactionId !== undefined) return 'interactive';
-    if (this.#executor.activeTransactionId !== undefined) return 'structured';
-    return undefined;
+    return this.#ledger.active?.kind;
   }
 
   onEvent(listener: (event: ExternalToolPipelineEvent) => void): () => void {
@@ -234,7 +234,7 @@ export class ExternalToolPipeline {
     if (this.#clearPromise !== undefined) return this.#clearPromise;
     this.#disposed = true;
     this.#sessionGrants.clear();
-    this.#inputRequests.clear();
+    this.#inputLedger.clear();
     this.#removeHistoryListener();
     this.#removeExecutorListener();
     this.#removeInteractiveExecutorListener();
@@ -420,6 +420,7 @@ export class ExternalToolPipeline {
       const result = await this.#executor.execute({
         command: input.command,
         expectedContextId: input.expectedContextId,
+        caller: context.caller,
         risk: decision.level,
         riskEvidence: {
           risk: decision.risk,
@@ -524,7 +525,7 @@ export class ExternalToolPipeline {
         expectedContextId: input.expectedContextId,
         expectedEnvironmentEpoch: environment.capabilityEpoch,
         inputGrantMode: input.inputGrantMode,
-        callerId: context.caller.id,
+        caller: context.caller,
         risk: decision.level,
         riskEvidence: {
           risk: decision.risk,
@@ -599,14 +600,15 @@ export class ExternalToolPipeline {
 
     const payloadHash = payload.payloadHash ?? '';
     const grantId = mode === 'transactional' ? input.inputGrantId : undefined;
-    const key = this.#inputRequestKey(context.caller, input.inputRequestId);
-    const existing = this.#inputRequests.get(key);
+    const existing = this.#inputLedger.locate(context.caller, input.inputRequestId);
     if (existing !== undefined) {
       if (
-        existing.mode !== mode ||
-        existing.transactionId !== input.transactionId ||
-        existing.grantId !== grantId ||
-        existing.payloadHash !== payloadHash
+        !matchesInputRequestFingerprint(existing, {
+          mode,
+          transactionId: input.transactionId,
+          grantId,
+          payloadHash,
+        })
       ) {
         return denied(
           'POLICY_DENIED',
@@ -614,21 +616,21 @@ export class ExternalToolPipeline {
           '请使用新的 inputRequestId；不确定写入不得自动重放。',
         );
       }
-      return existing.outcome === undefined ? existing.promise : structuredClone(existing.outcome);
+      return this.#cachedInputResult(existing);
     }
 
     let resolve!: (result: ExternalToolResult<Record<string, unknown>>) => void;
     const promise = new Promise<ExternalToolResult<Record<string, unknown>>>((done) => {
       resolve = done;
     });
-    const record: InputDedupeRecord = {
+    const record: InputRequestRecord = {
       mode,
       transactionId: input.transactionId,
       grantId,
       payloadHash,
       promise,
     };
-    this.#inputRequests.set(key, record);
+    this.#inputLedger.register(context.caller, input.inputRequestId, record);
     void this.#performInput(mode, input, payload, context).then(
       (result) => {
         record.outcome = cloneInputDedupeResult(result);
@@ -670,7 +672,7 @@ export class ExternalToolPipeline {
       const result = await this.#interactiveExecutor.finish({
         transactionId: input.transactionId,
         observedCursor: input.observedCursor,
-        callerId: context.caller.id,
+        caller: context.caller,
       });
       return { ok: true, result: this.#redactInteractive(result) };
     } catch (error) {
@@ -729,7 +731,7 @@ export class ExternalToolPipeline {
       try {
         const interrupted = await this.#interactiveExecutor.interrupt(
           input.transactionId,
-          context.caller.id,
+          context.caller,
         );
         if (!interrupted) {
           return denied(
@@ -757,7 +759,7 @@ export class ExternalToolPipeline {
         return this.#errorResult(error);
       }
     }
-    if (this.#interactiveExecutor.activeTransactionId !== undefined) {
+    if (this.#ledger.active?.kind === 'interactive') {
       return denied(
         'SESSION_BUSY',
         '当前 Session 有另一个交互事务正在进行。',
@@ -820,7 +822,7 @@ export class ExternalToolPipeline {
           inputGrantId: input.inputGrantId!,
           inputRequestId: input.inputRequestId,
           payload,
-          callerId: context.caller.id,
+          caller: context.caller,
         });
         return {
           ok: true,
@@ -1044,15 +1046,20 @@ export class ExternalToolPipeline {
   }
 
   #hasExternalActivity(): boolean {
+    // 事务的存在性由账本回答，租约是 caller 粒度的独立事实（含审批中、尚未成为事务的调用）。
     return (
-      this.#executor.activeTransactionId !== undefined ||
-      this.#interactiveExecutor.activeTransactionId !== undefined ||
-      this.#leases.owner(this.#actor.snapshot.id) !== undefined
+      this.#ledger.active !== undefined || this.#leases.owner(this.#actor.snapshot.id) !== undefined
     );
   }
 
-  #inputRequestKey(caller: ExternalCaller, requestId: string): string {
-    return `${caller.kind}\u0000${caller.id}\u0000${this.#actor.snapshot.id}\u0000${requestId}`;
+  /** 账本按设计不解释归属方的结果类型；这里是 pipeline 唯一的收窄点。 */
+  #cachedInputResult(
+    record: InputRequestRecord,
+  ): Promise<ExternalToolResult<Record<string, unknown>>> {
+    const outcome = record.outcome as ExternalToolResult<Record<string, unknown>> | undefined;
+    return outcome === undefined
+      ? (record.promise as Promise<ExternalToolResult<Record<string, unknown>>>)
+      : Promise.resolve(structuredClone(outcome));
   }
 
   #readImmediateOutput(afterCursor: OutputCursor) {
@@ -1212,11 +1219,7 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function inputGrantLimits(mode: InputGrantMode): InputGrantLimits {
-  return {
-    maxCalls: mode === 'one_shot' ? 1 : BOUNDED_INPUT_MAX_CALLS,
-    maxBytes: mode === 'one_shot' ? 16 * 1024 : BOUNDED_INPUT_MAX_BYTES,
-    idleTimeoutMs: BOUNDED_INPUT_IDLE_TIMEOUT_MS,
-  };
+  return EXTERNAL_INPUT_GRANT_LIMITS[mode];
 }
 
 function commandGrantKey(

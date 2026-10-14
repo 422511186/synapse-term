@@ -5,10 +5,13 @@ import type {
   CommandRiskEvidence,
   CompletionMetadata,
   ExecutionContextId,
+  ExternalCaller,
   ExternalTransactionStatus,
   OutputCursor,
   TransactionOutputRange,
 } from '@synapse-term/domain';
+
+import { ExternalTransactionLedger } from './external-transaction-ledger.js';
 
 import {
   resolveShellDriver,
@@ -59,6 +62,8 @@ export interface ExecuteCommandInput {
   riskEvidence?: CommandRiskEvidence | undefined;
   observationWindowMs?: number | undefined;
   expectedContextId?: ExecutionContextId | undefined;
+  /** 发起该事务的调用方身份，登记到活动事务账本。 */
+  caller?: ExternalCaller | undefined;
 }
 
 export interface WaitCommandInput {
@@ -86,6 +91,7 @@ interface ActiveRun {
   driver: ShellDriver;
   environmentEpoch: number;
   executionContextId: ExecutionContextId;
+  caller: ExternalCaller | undefined;
   buffer: OutputBuffer;
   listener: () => void;
   initialTimer: NodeJS.Timeout;
@@ -118,6 +124,8 @@ export interface CommandExecutorOptions {
   completionEchoGraceMs?: number;
   outputMaxBytes?: number;
   outputCursor?: (() => OutputCursor) | undefined;
+  /** 与本 Session 其它调用方共享的活动事务账本；缺省时自建一份。 */
+  ledger?: ExternalTransactionLedger | undefined;
 }
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -136,6 +144,7 @@ export class CommandExecutor {
   };
   readonly #listeners = new Set<(event: CommandExecutorEvent) => void>();
   readonly #history = new Map<string, CommandExecutionResult>();
+  readonly #ledger: ExternalTransactionLedger;
   #active: ActiveRun | undefined;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
@@ -151,6 +160,7 @@ export class CommandExecutor {
       outputMaxBytes: options.outputMaxBytes ?? 64 * 1024,
       outputCursor: options.outputCursor,
     };
+    this.#ledger = options.ledger ?? new ExternalTransactionLedger();
     if (
       !Number.isFinite(this.#options.observationWindowMs) ||
       this.#options.observationWindowMs < 0
@@ -173,6 +183,11 @@ export class CommandExecutor {
 
   get activeTransactionId(): string | undefined {
     return this.#active?.transaction.id;
+  }
+
+  /** 本执行器登记活动事务的账本；同一个 Session 的所有调用方共享同一实例。 */
+  get transactionLedger(): ExternalTransactionLedger {
+    return this.#ledger;
   }
 
   onEvent(listener: (event: CommandExecutorEvent) => void): () => void {
@@ -296,6 +311,7 @@ export class CommandExecutor {
     run.driver = driver;
     run.environmentEpoch = snapshot.environment.capabilityEpoch;
     run.executionContextId = snapshot.executionContextId;
+    run.caller = input.caller;
     run.buffer = new OutputBuffer({ maxBytes: this.#options.outputMaxBytes });
     run.listener = this.#actor.onEvent((event) => this.#handleEvent(run, event));
     run.initialTimer = setTimeout(() => {
@@ -437,6 +453,12 @@ export class CommandExecutor {
         outputRange: { startCursor, endCursor: startCursor },
       };
       run.sent = true;
+      this.#ledger.open({
+        kind: 'structured',
+        transactionId: run.transaction.id,
+        caller: run.caller,
+        status: () => run.transaction.status,
+      });
       this.#emit({ type: 'started', transaction: structuredClone(run.transaction) });
       if (run.initialTimerElapsed && !run.settled) {
         this.#resolveInitial(run, this.#result(run));
@@ -556,6 +578,7 @@ export class CommandExecutor {
     };
     run.transaction = finished;
     this.#active = undefined;
+    this.#ledger.close(finished.id);
     const result = this.#snapshotResult(run, finished);
     this.#history.set(finished.id, result);
     this.#emit({ type: 'finished', transaction: structuredClone(finished) });
@@ -577,6 +600,8 @@ export class CommandExecutor {
     clearTimeout(run.completionDrainTimer);
     run.listener();
     if (this.#active === run) this.#active = undefined;
+    // 写入前失败不会登记账本，close 在这里是幂等的。
+    this.#ledger.close(run.transaction.id);
     void this.#actor.releaseInputEcho(run.dispatch.echoPattern).finally(() => {
       for (const resolve of run.settledWaiters) resolve();
       run.settledWaiters.clear();
