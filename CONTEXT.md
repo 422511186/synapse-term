@@ -87,12 +87,16 @@ _Avoid_: 自动收敛、输入结束猜测
 _Avoid_: 旁路执行、免审批通道
 
 **事务不确定态（Unknown Transaction State）**:
-外部命令可能已经写入并执行，但系统未获得可靠完成证据的事务终态；用户输入干扰、PTY/连接断开或完成探针丢失都可能导致该状态。它不等同于失败或中断，不能自动重新提交，必须要求用户判断后续动作。
+外部命令可能已经写入并执行，但系统未获得可靠完成证据的事务终态；写入尝试本身未取得交付确认、用户输入干扰、PTY/连接断开或完成探针丢失都可能导致该状态。它不等同于失败或中断，不能自动重新提交，必须要求用户判断后续动作。
 _Avoid_: 执行失败、已取消
 
 **交互启动写入不确定态（Interactive Start Write Unknown）**:
 `synapse_start_interactive` 已开始向 PTY 后端发起启动命令写入，但 `write()` 抛错或无法确认交付；系统不得向外部客户端签发可操作的 transactionId 或 inputGrantId，必须立即失效当前 PTY environment、递增 capability epoch、轮换 executionContextId、撤销未使用授权并释放租约。启动命令可能已经部分写入或执行，不得自动重试；外部客户端必须先重新 observe，再由用户判断后续动作。它不是已建立的交互事务，也不等同于事务内输入的 `INPUT_WRITE_UNKNOWN`。
 _Avoid_: 启动命令肯定未执行、事务内写入不确定
+
+**结构化写入不确定态（Structured Write Unknown）**:
+`synapse_execute` 已开始向 PTY 后端发起用户命令写入，但 `write()` 抛错或无法确认交付；系统不得返回可操作的 transactionId，必须立即失效当前 PTY environment、递增 capability epoch 并轮换 executionContextId。用户命令可能已经部分写入或执行，不得自动重试；外部客户端必须先重新 observe，再由用户判断后续动作。它不等于写入前失败（缺少或失配执行上下文、environment 未验证），也不等同于交互启动写入不确定态和事务内输入的 `INPUT_WRITE_UNKNOWN`。
+_Avoid_: 用户命令肯定未执行、执行失败、事务不确定
 
 **事务等待超时（Transaction Wait Timeout）**:
 单次 `synapse_wait` 调用达到等待时限而返回当前事务快照的结果；它不改变外部事务状态，运行中的事务仍可继续等待、观察或中断，也不等同于事务不确定态。

@@ -10,6 +10,7 @@ import type {
   McpApprovalMode,
   OutputCursor,
 } from '@synapse-term/domain';
+import { isExternalErrorCode } from '@synapse-term/domain';
 import {
   CommandExecutorError,
   ExternalLeaseRegistry,
@@ -865,7 +866,10 @@ export class ExternalToolPipeline {
         return denied('POLICY_DENIED', '审批模式拒绝了自由输入。', '请调整审批模式后再试。');
       }
       const startCursor = this.#history.cursor;
-      const result = await this.#actor.writeFreeInput(payload.data, expectedContextId);
+      const result = await this.#actor.writeExternal({
+        data: payload.data,
+        premise: { precondition: 'context', executionContextId: expectedContextId },
+      });
       if (!result.ok) {
         if (result.error === 'stale-execution-context') {
           return denied(
@@ -1275,7 +1279,7 @@ function parseStableError(error: unknown): {
 } {
   const message = error instanceof Error ? error.message : String(error);
   const match = /^([A-Z][A-Z0-9_]*):\s*([^。]+。?)(?:\s*(.*))?$/s.exec(message);
-  if (match === null || !STABLE_ERROR_CODES.has(match[1] as ExternalErrorCode)) {
+  if (match === null || !isExternalErrorCode(match[1]!)) {
     return {
       code: 'SESSION_NOT_READY',
       reason: '外部调用失败。',
@@ -1287,26 +1291,6 @@ function parseStableError(error: unknown): {
   const guidance = sanitizeErrorPart(match[3] ?? '') || '请检查当前 Session 状态后重试。';
   return { code: code as ExternalErrorCode, reason, guidance };
 }
-
-const STABLE_ERROR_CODES = new Set<ExternalErrorCode>([
-  'AUTHORIZATION_REVOKED',
-  'SESSION_EXPIRED',
-  'SESSION_NOT_READY',
-  'SESSION_BUSY',
-  'TRANSACTION_NOT_FOUND',
-  'POLICY_DENIED',
-  'SHELL_MISMATCH',
-  'COMMAND_NOT_AUDITABLE',
-  'INTERACTIVE_COMMAND_UNSUPPORTED',
-  'EXECUTION_CONTEXT_REQUIRED',
-  'EXECUTION_CONTEXT_STALE',
-  'OUTPUT_CURSOR_STALE',
-  'APPROVAL_TIMEOUT',
-  'APPROVAL_DENIED',
-  'INPUT_GRANT_EXHAUSTED',
-  'INPUT_WRITE_UNKNOWN',
-  'INTERACTIVE_START_WRITE_UNKNOWN',
-]);
 
 function sanitizeErrorPart(value: string): string {
   let sanitized = '';

@@ -16,8 +16,9 @@ import {
   type ShellDispatch,
   type ShellDriver,
 } from '../shell/shell-driver.js';
-import type { SessionActor, SessionActorEvent } from './session-actor.js';
+import type { SessionActor, SessionActorEvent, WriteError } from './session-actor.js';
 import { OutputBuffer, type OutputSnapshot } from './output-buffer.js';
+import { describeStructuredWriteError } from './write-error-mapping.js';
 
 export type CommandExecutionStatus = ExternalTransactionStatus;
 
@@ -416,12 +417,15 @@ export class CommandExecutor {
     try {
       this.#actor.suppressInputEcho(run.dispatch.echoPattern);
       if (run.settled) return;
-      const write = await this.#actor.writeExternal(
-        run.dispatch.payload,
-        run.environmentEpoch,
-        run.executionContextId,
-        { isCancelled: () => run.settled },
-      );
+      const write = await this.#actor.writeExternal({
+        data: run.dispatch.payload,
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: run.environmentEpoch,
+          executionContextId: run.executionContextId,
+        },
+        cancelled: () => run.settled,
+      });
       if (run.settled) return;
       if (!write.ok) {
         this.#rejectBeforeSend(run, writeError(write.error));
@@ -639,44 +643,7 @@ function normalizeWaitTimeout(timeoutMs: number | undefined): number {
   return value;
 }
 
-function writeError(
-  error:
-    | 'stale-environment-epoch'
-    | 'stale-execution-context'
-    | 'environment-unverified'
-    | 'session-not-running'
-    | 'external-write-cancelled',
-): CommandExecutorError {
-  switch (error) {
-    case 'stale-execution-context':
-      return new CommandExecutorError(
-        'EXECUTION_CONTEXT_STALE',
-        'the execution context changed before the command was written',
-        '请先调用 synapse_observe（必要时使用 tail）获取当前终端内容和新的 executionContextId。',
-      );
-    case 'stale-environment-epoch':
-      return new CommandExecutorError(
-        'SESSION_NOT_READY',
-        'the verified PTY environment changed before the command was written',
-        '请重新观察当前 Session，等待 environment 验证后再执行。',
-      );
-    case 'environment-unverified':
-      return new CommandExecutorError(
-        'SESSION_NOT_READY',
-        'current PTY environment is not verified',
-        '请等待当前 PTY environment 验证完成后重试。',
-      );
-    case 'session-not-running':
-      return new CommandExecutorError(
-        'SESSION_EXPIRED',
-        'terminal session is no longer running',
-        '请重新共享该 Session。',
-      );
-    case 'external-write-cancelled':
-      return new CommandExecutorError(
-        'SESSION_EXPIRED',
-        'external command dispatch was cancelled before the PTY write',
-        '请重新共享 Session 后先观察再执行。',
-      );
-  }
+function writeError(error: WriteError): CommandExecutorError {
+  const description = describeStructuredWriteError(error);
+  return new CommandExecutorError(description.code, description.reason, description.guidance);
 }

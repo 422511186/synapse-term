@@ -20,6 +20,7 @@ ADR 记录难以回退、缺少背景会令人困惑，并且来自真实权衡�
 | [0020](0020-runtime-package-modularization.md) | 已接受 | Runtime implementation 下沉到 workspace packages |
 | [0021](0021-explicit-github-application-updates.md) | 已接受 | GitHub 应用更新与明确安装授权 |
 | [0022](0022-documentation-information-architecture.md) | 已接受 | 按读者任务划分文档并建立唯一事实来源 |
+| [0023](0023-write-attempt-failure-is-uncertain.md) | 已接受 | 写入尝试发起后的失败判为不确定态 |
 
 当前仓库不包含编号 `0005` 至 `0012` 的 ADR，现有记录也没有说明缺失原因。ADR 编号不回收，也不通过重命名填补空缺。
 

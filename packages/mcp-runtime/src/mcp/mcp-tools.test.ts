@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { STABLE_EXTERNAL_ERROR_CODES } from '@synapse-term/domain';
+
 import {
   MCP_TOOL_NAMES,
   runMcpTool,
@@ -329,8 +331,21 @@ describe('MCP tool contract', () => {
         new Error('INTERACTIVE_START_WRITE_UNKNOWN: delivery is uncertain; do not retry.'),
       ),
     ).toMatch(/^INTERACTIVE_START_WRITE_UNKNOWN:/);
+    expect(
+      serializeMcpToolError(
+        new Error('EXECUTION_WRITE_UNKNOWN: delivery is uncertain; do not retry.'),
+      ),
+    ).toMatch(/^EXECUTION_WRITE_UNKNOWN:/);
     expect(serializeMcpToolError(new Error('TRANSACTION_NOT_ACTIVE: old code'))).toMatch(
       /^SESSION_NOT_READY:/,
     );
+  });
+
+  it('accepts every code in the shared stable error code list', () => {
+    for (const code of STABLE_EXTERNAL_ERROR_CODES) {
+      expect(serializeMcpToolError(new Error(`${code}: reason 指引`))).toMatch(
+        new RegExp(`^${code}:`),
+      );
+    }
   });
 });

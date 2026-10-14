@@ -13,6 +13,7 @@ import type {
   OutputCursor,
   TransactionId,
   TransactionOutputRange,
+  WritePremiseError,
 } from '@synapse-term/domain';
 
 import {
@@ -24,11 +25,11 @@ import {
 } from '../shell/shell-driver.js';
 import type { ExternalLeaseHandle } from './external-lease.js';
 import { OutputBuffer, type OutputSnapshot } from './output-buffer.js';
-import type {
-  InteractiveInputWriteResult,
-  SessionActor,
-  SessionActorEvent,
-} from './session-actor.js';
+import type { SessionActor, SessionActorEvent, WriteError } from './session-actor.js';
+import {
+  describeInteractiveStartWriteError,
+  describeTransactionalInputWriteError,
+} from './write-error-mapping.js';
 
 export interface InteractiveInputPayload {
   /** 已规范化、按“先文本后按键”合并的 PTY payload。 */
@@ -558,12 +559,15 @@ export class InteractiveCommandExecutor {
     run.listener = this.#actor.onEvent((event) => this.#handleEvent(run, event));
     this.#active = run;
 
-    const write = await this.#actor.writeInteractiveStart(
-      dispatch.payload,
-      run.environmentEpoch,
-      run.executionContextIdBeforeStart,
-      { isCancelled: () => this.#disposed || run.phase === 'settled' },
-    );
+    const write = await this.#actor.writeExternal({
+      data: dispatch.payload,
+      premise: {
+        precondition: 'environment-and-context',
+        environmentEpoch: run.environmentEpoch,
+        executionContextId: run.executionContextIdBeforeStart,
+      },
+      cancelled: () => this.#disposed || run.phase === 'settled',
+    });
     if (!write.ok) {
       if (write.error === 'write-unknown') {
         run.environmentInvalidated = true;
@@ -574,11 +578,10 @@ export class InteractiveCommandExecutor {
         );
         this.#rejectStart(run, error);
         throw error;
-      } else {
-        const error = startWriteError(write.error);
-        this.#rejectStart(run, error);
-        throw error;
       }
+      const error = startWriteError(write.error);
+      this.#rejectStart(run, error);
+      throw error;
     }
 
     run.sent = true;
@@ -704,15 +707,13 @@ export class InteractiveCommandExecutor {
     run.grant.lastInputAt = Date.now();
     this.#armIdleTimer(run);
 
-    const write = await this.#actor.writeTransactionalInput(request.payload.data, {
-      isCancelled: () => this.#disposed || run.phase !== 'running' || run.environmentInvalidated,
+    const write = await this.#actor.writeExternal({
+      data: request.payload.data,
+      premise: { precondition: 'environment' },
+      cancelled: () => this.#disposed || run.phase !== 'running' || run.environmentInvalidated,
     });
     if (!write.ok) {
-      const error = inputWriteError(
-        write.error,
-        run.environmentInvalidated ||
-          this.#actor.snapshot.environment.verificationStatus !== 'verified',
-      );
+      const error = inputWriteError(write.error, run.environmentInvalidated);
       record.error = error;
       record.reject(error);
       record.resolve = () => undefined;
@@ -755,16 +756,15 @@ export class InteractiveCommandExecutor {
     run.finishNonce = nonce;
     run.finishEchoPattern = run.driver.buildCompletionEchoPattern(nonce);
     this.#actor.suppressInputEcho(run.finishEchoPattern);
-    const write = await this.#actor.writeInteractiveFinishProbe(
-      `${run.driver.buildCompletionProbe(nonce)}\r`,
-      {
-        isCancelled: () =>
-          this.#disposed ||
-          run.phase !== 'finishing' ||
-          run.environmentInvalidated ||
-          this.#actor.snapshot.environment.verificationStatus !== 'verified',
-      },
-    );
+    const write = await this.#actor.writeExternal({
+      data: `${run.driver.buildCompletionProbe(nonce)}\r`,
+      premise: { precondition: 'environment' },
+      cancelled: () =>
+        this.#disposed ||
+        run.phase !== 'finishing' ||
+        run.environmentInvalidated ||
+        this.#actor.snapshot.environment.verificationStatus !== 'verified',
+    });
     if (!write.ok) {
       if (write.error === 'write-unknown') run.environmentInvalidated = true;
       await this.#settle(run, {
@@ -1141,80 +1141,23 @@ function hashInputPayload(payload: InteractiveInputPayload): string {
     .digest('hex');
 }
 
-function startWriteError(
-  error:
-    | 'stale-environment-epoch'
-    | 'stale-execution-context'
-    | 'environment-unverified'
-    | 'session-not-running'
-    | 'external-write-cancelled',
-): InteractiveCommandExecutorError {
-  switch (error) {
-    case 'stale-execution-context':
-      return new InteractiveCommandExecutorError(
-        'EXECUTION_CONTEXT_STALE',
-        'the execution context changed before the interactive command was written',
-        '请先调用 synapse_observe 获取当前内容和新的 executionContextId。',
-      );
-    case 'stale-environment-epoch':
-      return new InteractiveCommandExecutorError(
-        'SESSION_NOT_READY',
-        'the verified PTY environment changed before the interactive command was written',
-        '请重新观察当前 Session 后再启动交互事务。',
-      );
-    case 'environment-unverified':
-      return new InteractiveCommandExecutorError(
-        'SESSION_NOT_READY',
-        'current PTY environment is not verified',
-        '请先验证当前 PTY environment。',
-      );
-    case 'external-write-cancelled':
-      return new InteractiveCommandExecutorError(
-        'SESSION_EXPIRED',
-        'interactive command dispatch was cancelled before the PTY write',
-        '请重新共享 Session 后再试。',
-      );
-    case 'session-not-running':
-      return new InteractiveCommandExecutorError(
-        'SESSION_EXPIRED',
-        'terminal session is no longer running',
-        '请重新共享 Session。',
-      );
-  }
+function startWriteError(error: WritePremiseError): InteractiveCommandExecutorError {
+  const description = describeInteractiveStartWriteError(error);
+  return new InteractiveCommandExecutorError(
+    description.code,
+    description.reason,
+    description.guidance,
+  );
 }
 
 function inputWriteError(
-  error: InteractiveInputWriteResult extends infer Result
-    ? Result extends { ok: false; error: infer Code }
-      ? Code
-      : never
-    : never,
+  error: WriteError,
   environmentInvalidated = false,
 ): InteractiveCommandExecutorError {
-  if (error === 'write-unknown') {
-    return new InteractiveCommandExecutorError(
-      'INPUT_WRITE_UNKNOWN',
-      'the PTY backend did not confirm delivery of the input payload',
-      '所属交互事务已进入 unknown；不要使用新的 inputRequestId 自动重放。',
-    );
-  }
-  if (error === 'external-write-cancelled') {
-    if (environmentInvalidated) {
-      return new InteractiveCommandExecutorError(
-        'INPUT_WRITE_UNKNOWN',
-        'the PTY environment was invalidated before input delivery was confirmed',
-        '所属交互事务已进入 unknown；不要使用新的 inputRequestId 自动重放。',
-      );
-    }
-    return new InteractiveCommandExecutorError(
-      'SESSION_EXPIRED',
-      'input dispatch was cancelled before the PTY write',
-      '请重新共享 Session。',
-    );
-  }
+  const description = describeTransactionalInputWriteError(error, environmentInvalidated);
   return new InteractiveCommandExecutorError(
-    'INPUT_WRITE_UNKNOWN',
-    'the terminal session stopped before input delivery was confirmed',
-    '所属交互事务已进入 unknown；不要自动重放输入。',
+    description.code,
+    description.reason,
+    description.guidance,
   );
 }

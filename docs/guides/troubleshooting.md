@@ -13,7 +13,7 @@
 | 返回 `EXECUTION_CONTEXT_STALE` | 停止提交命令，调用 `synapse_observe`（必要时 `tail: true`）获取新的 `executionContextId`。 |
 | 返回 `SESSION_NOT_READY` | 等待当前 Shell/SSH/嵌套 Shell 提示符稳定；不要循环调用 `synapse_status` 或盲目重试。 |
 | 返回 `APPROVAL_TIMEOUT` 或 `APPROVAL_DENIED` | 检查审批模式和用户裁决；重新提交前确认命令仍符合当前意图。 |
-| 返回 `INPUT_WRITE_UNKNOWN` 或 `INTERACTIVE_START_WRITE_UNKNOWN` | 不要自动重放密码、按键或启动命令；先重新观察并让用户判断可能已经发生的影响。 |
+| 返回 `INPUT_WRITE_UNKNOWN`、`INTERACTIVE_START_WRITE_UNKNOWN` 或 `EXECUTION_WRITE_UNKNOWN` | 对应的输入、启动命令或结构化命令可能已经写入；不要自动重放，先重新观察并让用户判断可能已经发生的影响。 |
 | 更新失败 | 确认网络和 Release 资产完整；重新下载并以重启后的实际版本判断结果。更新不会恢复已结束的 Session。 |
 
 ## 需要报告安全问题

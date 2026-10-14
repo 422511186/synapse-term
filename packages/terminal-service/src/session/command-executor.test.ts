@@ -91,6 +91,30 @@ describe('CommandExecutor', () => {
     actor.dispose();
   });
 
+  it('reports an unconfirmed structured write as EXECUTION_WRITE_UNKNOWN without opening a transaction', async () => {
+    const backend = createFakeTerminalBackend();
+    const actor = new SessionActor('session-1', backend, { title: 'test', terminalType: 'bash' });
+    await actor.markPtyRunning();
+    await actor.verifyEnvironment('posix', 'unix');
+    const before = actor.snapshot;
+    backend.write = () => {
+      throw new Error('pty refused the write');
+    };
+    const executor = new CommandExecutor(actor, { observationWindowMs: 5 });
+    const events: string[] = [];
+    executor.onEvent((event) => events.push(event.type));
+
+    await expect(
+      executor.execute({ command: 'printf ok', expectedContextId: before.executionContextId }),
+    ).rejects.toThrow(/^EXECUTION_WRITE_UNKNOWN:/);
+
+    expect(events).toEqual([]);
+    expect(executor.activeTransactionId).toBeUndefined();
+    expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
+    expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
+    actor.dispose();
+  });
+
   it('selects the verified current dialect instead of the launch Shell hint', async () => {
     const { actor, backend } = await createActor('PowerShell', false);
     await actor.verifyEnvironment('posix', 'unix');

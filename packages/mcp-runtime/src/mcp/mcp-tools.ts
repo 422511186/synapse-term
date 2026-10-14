@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import type { InputKey } from '@synapse-term/domain';
+import { isExternalErrorCode, type InputKey } from '@synapse-term/domain';
 
 import type { McpSettings } from './mcp-settings.js';
 import {
@@ -22,26 +22,6 @@ export const MCP_TOOL_NAMES = [
   'synapse_interrupt',
   'synapse_status',
 ] as const;
-
-const STABLE_ERROR_CODES = new Set([
-  'AUTHORIZATION_REVOKED',
-  'SESSION_EXPIRED',
-  'SESSION_NOT_READY',
-  'SESSION_BUSY',
-  'TRANSACTION_NOT_FOUND',
-  'POLICY_DENIED',
-  'SHELL_MISMATCH',
-  'COMMAND_NOT_AUDITABLE',
-  'INTERACTIVE_COMMAND_UNSUPPORTED',
-  'EXECUTION_CONTEXT_REQUIRED',
-  'EXECUTION_CONTEXT_STALE',
-  'OUTPUT_CURSOR_STALE',
-  'APPROVAL_TIMEOUT',
-  'APPROVAL_DENIED',
-  'INPUT_GRANT_EXHAUSTED',
-  'INPUT_WRITE_UNKNOWN',
-  'INTERACTIVE_START_WRITE_UNKNOWN',
-]);
 
 const INPUT_KEY_ENUM = z.enum(INPUT_KEYS as [InputKey, ...InputKey[]]);
 
@@ -67,7 +47,7 @@ function format(value: unknown): string {
 export function serializeMcpToolError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const match = /^([A-Z][A-Z0-9_]*):\s*([\s\S]*)$/.exec(raw);
-  if (match !== null && STABLE_ERROR_CODES.has(match[1]!)) {
+  if (match !== null && isExternalErrorCode(match[1]!)) {
     const body = sanitizeErrorText(match[2]!);
     if (body.length > 0) return `${match[1]}: ${body}`;
   }
