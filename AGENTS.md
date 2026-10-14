@@ -31,3 +31,17 @@
 ## 术语执行
 
 优先使用 `CONTEXT.md` 中的规范词条（**Session**、**Sharing**、**Share Text**、**内嵌 MCP Server**、**外部客户端**、**审批模式**、**审批卡片**、**会话内放行**、**风险分类**），不用其标注的 `_Avoid_` 近义词。出现新的稳定领域概念时，在同一变更中更新 `CONTEXT.md`（只记术语与边界语义）；难以回退、缺少背景会令人困惑的真实取舍，新增编号 ADR 并同步检查受影响的实现说明。
+
+## Agent skills
+
+### Issue tracker
+
+问题与规格以 GitHub Issues 形式记录，统一使用 `gh` CLI。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+沿用默认五档 triage 标签词表。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文（single-context）布局：根 `CONTEXT.md` + 根 `docs/adr/`。见 `docs/agents/domain.md`。
