@@ -98,6 +98,27 @@ MCP Server MUST 作为 Electron Main 的可选内嵌模块运行，仅监听本�
 - **WHEN** 用户在事务尚未获得完成证据前向同一 PTY 输入内容
 - **THEN** 本地输入 MUST 保持可用，事务 MUST 进入 `unknown`，且外部客户端不得自动重试
 
+### Requirement: Structured Execution Write Uncertainty
+
+`synapse_execute` 在「写入尝试已经发起，但 PTY 后端抛错或无法确认用户命令是否交付」时 MUST 以稳定错误码 `EXECUTION_WRITE_UNKNOWN` 失败，且 MUST NOT 返回可操作的 transactionId。系统 MUST 立即失效当前 PTY environment、递增 capability epoch 并轮换 executionContextId；`synapse_execute` 只有在写入调用正常返回后才轮换 executionContextId。用户命令可能已经部分写入或执行，系统 MUST NOT 自动重试，外部客户端 MUST 先重新 `synapse_observe` 并由用户判断后续动作。
+
+写入尝试发起之前的失败不属于本要求：缺少或失配 `expectedContextId`、environment 未验证、Session 不再运行时 MUST 保持既有稳定错误码，MUST NOT 使用 `EXECUTION_WRITE_UNKNOWN`，并 MUST NOT 失效 environment 或轮换 executionContextId。
+
+#### Scenario: Structured execute write outcome is unknown
+
+- **WHEN** 外部客户端以当前 `expectedContextId` 调用 `synapse_execute`，系统已经开始向 PTY 后端写入用户命令，但写入抛错或后端无法确认命令是否已经交付
+- **THEN** 调用 MUST 以 `EXECUTION_WRITE_UNKNOWN` 开头失败，MUST NOT 返回可操作的 transactionId，当前 PTY environment MUST 立即失效，capability epoch 与 executionContextId MUST 轮换，且系统 MUST NOT 自动重试该命令
+
+#### Scenario: Pre-send rejection is not write uncertainty
+
+- **WHEN** `synapse_execute` 在写入用户命令之前，因缺少或失配 `expectedContextId`、environment 未验证或 Session 不再运行而失败
+- **THEN** 调用 MUST 以对应的既有稳定错误码 `EXECUTION_CONTEXT_REQUIRED`、`EXECUTION_CONTEXT_STALE`、`SESSION_NOT_READY` 或 `SESSION_EXPIRED` 开头失败，MUST NOT 使用 `EXECUTION_WRITE_UNKNOWN`，且 MUST NOT 失效 environment 或轮换 executionContextId
+
+#### Scenario: Unknown structured write requires a new observation
+
+- **WHEN** 一次 `synapse_execute` 以 `EXECUTION_WRITE_UNKNOWN` 失败后，外部客户端立即使用该次调用之前取得的 `expectedContextId` 再次调用 `synapse_execute`
+- **THEN** 调用 MUST 以 `EXECUTION_CONTEXT_STALE` 开头失败且不得写入 PTY，外部客户端 MUST 先重新观察并等待 environment 重新验证
+
 ### Requirement: Risk Classification Evidence
 
 外部命令的风险结果 MUST 使用原始 command 和已验证的当前 PTY environment 进行保守分类，至少包含 `risk`、`confidence`、`reasons` 和 `requiresConfirmation`。评估 MUST NOT 声称已经验证远程主机权限、目标资源影响或回滚条件；复杂管道、脚本、别名和嵌套调用无法完全静态判断时 MUST 通过低置信度或 `unknown` 表达限制。
@@ -212,7 +233,7 @@ MCP 端点 MUST 暴露且仅暴露八个工具：`synapse_execute`（按执行�
 
 服务端 MUST 在写入前检查规范化文本 UTF-8 字节数、按键数量和合并 payload UTF-8 字节数；初始上限分别为 8 KiB、128 项和 16 KiB。任一超限时整次调用 MUST 拒绝，任何前缀都不得写入，也不得消耗授权配额。只有首次通过完整校验并实际发起写入的请求才消耗配额；校验/审批拒绝和相同 requestId 的幂等重放不得重复扣减。`textLength` MUST 表示规范化文本的 UTF-8 字节数。
 
-事务内输入 MUST 不校验或轮换 executionContextId，也不得递增 capability epoch；交互事务句柄和 inputGrantId 是其唯一前提。自由输入 MUST 原子校验 expectedContextId，并在进入后端写入尝试的同一 Session 队列边界失效 PTY environment、递增 capability epoch 并轮换 executionContextId；即使 write 抛错或交付不确定也不得恢复旧 context，且 MUST 返回 `INPUT_WRITE_UNKNOWN`。自由输入不得创建 transactionId。自由输入遇到活动事务 MUST 返回 `SESSION_BUSY`。
+事务内输入 MUST 不校验或轮换 executionContextId，也不得递增 capability epoch；交互事务句柄和 inputGrantId 取代 executionContext 前提，但不取代 Session 就绪前提——Session 不再运行或当前 PTY environment 已不再验证时 MUST 拒绝写入，且该拒绝 MUST NOT 递增 capability epoch 或轮换 executionContextId。自由输入 MUST 原子校验 expectedContextId，并在进入后端写入尝试的同一 Session 队列边界失效 PTY environment、递增 capability epoch 并轮换 executionContextId；即使 write 抛错或交付不确定也不得恢复旧 context，且 MUST 返回 `INPUT_WRITE_UNKNOWN`。自由输入不得创建 transactionId。自由输入遇到活动事务 MUST 返回 `SESSION_BUSY`。
 
 #### Scenario: Transactional input supplies a password
 
@@ -383,7 +404,7 @@ managed 模式下需要人工裁决的调用 MUST 同步阻塞等待：Main 持 
 - **THEN** 状态栏 MUST 截断或折叠命令摘要并保留可访问的完整命令，Terminal Session 的输出内容 MUST 仍可阅读
 
 ### Requirement: Stable External Error Codes
-所有 `synapse_*` 工具的错误结果 MUST 以稳定可解析的错误码开头：认证撤销为 `AUTHORIZATION_REVOKED`，会话未就绪为 `SESSION_NOT_READY`，会话失效为 `SESSION_EXPIRED`，租约不可用为 `SESSION_BUSY`，事务不存在为 `TRANSACTION_NOT_FOUND`，策略拒绝为 `POLICY_DENIED`，Shell 方言不匹配为 `SHELL_MISMATCH`，命令违反字面审计边界为 `COMMAND_NOT_AUDITABLE`，已知交互式命令不支持为 `INTERACTIVE_COMMAND_UNSUPPORTED`，缺少执行上下文为 `EXECUTION_CONTEXT_REQUIRED`，执行上下文失配为 `EXECUTION_CONTEXT_STALE`，输出游标失效为 `OUTPUT_CURSOR_STALE`，审批超时为 `APPROVAL_TIMEOUT`，审批拒绝为 `APPROVAL_DENIED`，输入授权失效或额度耗尽为 `INPUT_GRANT_EXHAUSTED`，输入写入交付无法确认为 `INPUT_WRITE_UNKNOWN`，交互启动写入交付无法确认为 `INTERACTIVE_START_WRITE_UNKNOWN`。MUST NOT 暴露 `TRANSACTION_NOT_ACTIVE`。事务已终态、未知或不属于当前 Sharing 的未知事务调用统一使用 `TRANSACTION_NOT_FOUND`；已登记 requestId 的相同输入重试例外地只读返回缓存结果。错误文本 MUST 同时包含错误码、原因与下一步指引，且不得泄露其他会话信息。
+所有 `synapse_*` 工具的错误结果 MUST 以稳定可解析的错误码开头：认证撤销为 `AUTHORIZATION_REVOKED`，会话未就绪为 `SESSION_NOT_READY`，会话失效为 `SESSION_EXPIRED`，租约不可用为 `SESSION_BUSY`，事务不存在为 `TRANSACTION_NOT_FOUND`，策略拒绝为 `POLICY_DENIED`，Shell 方言不匹配为 `SHELL_MISMATCH`，命令违反字面审计边界为 `COMMAND_NOT_AUDITABLE`，已知交互式命令不支持为 `INTERACTIVE_COMMAND_UNSUPPORTED`，缺少执行上下文为 `EXECUTION_CONTEXT_REQUIRED`，执行上下文失配为 `EXECUTION_CONTEXT_STALE`，输出游标失效为 `OUTPUT_CURSOR_STALE`，审批超时为 `APPROVAL_TIMEOUT`，审批拒绝为 `APPROVAL_DENIED`，输入授权失效或额度耗尽为 `INPUT_GRANT_EXHAUSTED`，输入写入交付无法确认为 `INPUT_WRITE_UNKNOWN`，交互启动写入交付无法确认为 `INTERACTIVE_START_WRITE_UNKNOWN`，结构化执行写入交付无法确认为 `EXECUTION_WRITE_UNKNOWN`。MUST NOT 暴露 `TRANSACTION_NOT_ACTIVE`。事务已终态、未知或不属于当前 Sharing 的未知事务调用统一使用 `TRANSACTION_NOT_FOUND`；已登记 requestId 的相同输入重试例外地只读返回缓存结果。错误文本 MUST 同时包含错误码、原因与下一步指引，且不得泄露其他会话信息。
 
 #### Scenario: No public pre-send transaction race
 
@@ -399,6 +420,11 @@ managed 模式下需要人工裁决的调用 MUST 同步阻塞等待：Main 持 
 
 - **WHEN** 交互启动 command 的 PTY 写入调用已开始，但后端抛错或无法确认 command 是否已经交付
 - **THEN** 调用 MUST 以 `INTERACTIVE_START_WRITE_UNKNOWN` 开头；不得返回可操作的 transactionId 或 inputGrantId，Session environment/context/epoch、未使用授权和交互租约 MUST 按启动写入不确定语义清理，客户端不得使用新调用自动重放
+
+#### Scenario: Unknown structured write delivery is not retried blindly
+
+- **WHEN** 结构化执行 command 的 PTY 写入调用已开始，但后端抛错或无法确认 command 是否已经交付
+- **THEN** 调用 MUST 以 `EXECUTION_WRITE_UNKNOWN` 开头；不得返回可操作的 transactionId，Session environment、capability epoch 与 executionContextId MUST 按结构化写入不确定语义清理，且客户端不得使用新调用自动重放
 
 #### Scenario: Execute fails while shell not ready
 - **WHEN** `synapse_execute` 到达且 Shell 正在探测
