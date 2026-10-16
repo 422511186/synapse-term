@@ -34,6 +34,7 @@ import {
 
 import type { PolicyDecision } from './policy-engine.js';
 import { PolicyEngine } from './policy-engine.js';
+import { renderRiskReasonEn, type RiskReason } from './risk-reasons.js';
 import { SecretRedactor } from './secret-redactor.js';
 import { encodeInput, InputEncoderError, validateInputRequestId } from './input-encoder.js';
 import { OutputCursorError, SharingOutputHistory } from './sharing-output-history.js';
@@ -51,7 +52,8 @@ export interface ApprovalRequest {
   sessionId: string;
   command: string;
   risk: CommandRisk;
-  reasons: readonly string[];
+  /** 卡片按 code 查本地文案；英文散文只在对外证据边界渲染。 */
+  reasons: readonly RiskReason[];
   kind?: ExternalTransactionKind | 'free_input' | undefined;
   inputGrantMode?: InputGrantMode | undefined;
   inputLimits?: InputGrantLimits | undefined;
@@ -425,7 +427,7 @@ export class ExternalToolPipeline {
         riskEvidence: {
           risk: decision.risk,
           confidence: decision.confidence,
-          reasons: decision.reasons,
+          reasons: decision.reasons.map(renderRiskReasonEn),
           requiresConfirmation: decision.requiresConfirmation,
         },
         ...(input.observationWindowMs === undefined
@@ -530,7 +532,7 @@ export class ExternalToolPipeline {
         riskEvidence: {
           risk: decision.risk,
           confidence: decision.confidence,
-          reasons: decision.reasons,
+          reasons: decision.reasons.map(renderRiskReasonEn),
           requiresConfirmation: decision.requiresConfirmation,
         },
         lease,
@@ -968,7 +970,7 @@ export class ExternalToolPipeline {
       sessionId: this.#actor.snapshot.id,
       command: '[free_input]',
       risk: 'mutating',
-      reasons: ['free input writes directly to the current PTY'],
+      reasons: [{ code: 'free-input-writes-to-pty' }],
       kind: 'free_input',
       text: payload.normalizedText,
       keys: payload.keys,

@@ -158,7 +158,9 @@ export function createMockDesktopApi(): DesktopApi {
           sessionId,
           command,
           risk: 'unknown',
-          reasons: ['unknown executable'],
+          reasons: [
+            { code: 'unknown-executable', subject: command.trim().split(/\s+/)[0] ?? command },
+          ],
         };
         emitApproval(activeApproval);
         return activeApproval.id;

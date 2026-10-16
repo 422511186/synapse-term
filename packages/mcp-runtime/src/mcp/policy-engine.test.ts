@@ -9,7 +9,7 @@ describe('PolicyEngine', () => {
     expect(decision.risk).toBe('read_only');
     expect(decision.confidence).toBe('high');
     expect(decision.requiresConfirmation).toBe(false);
-    expect(decision.reasons.join(' ')).toMatch(/read-only/i);
+    expect(decision.reasons).toEqual([{ code: 'read-only-rules-matched' }]);
   });
 
   it('classifies standard read-only filters and shell builtins as lowest risk', async () => {
@@ -120,7 +120,7 @@ describe('PolicyEngine', () => {
   it('classifies package commands as low-risk writes', async () => {
     const decision = await new PolicyEngine().classify('npm test');
     expect(decision.level).toBe('mutating');
-    expect(decision.reasons[0]).toContain('npm');
+    expect(decision.reasons).toEqual([{ code: 'state-changing-command', subject: 'npm' }]);
   });
 
   it('recognizes privilege escalation, destruction, and unknown executables', async () => {
@@ -149,7 +149,10 @@ describe('PolicyEngine', () => {
     expect(decision.risk).toBe('unknown');
     expect(decision.confidence).toBe('low');
     expect(decision.requiresConfirmation).toBe(true);
-    expect(decision.reasons.join(' ')).toMatch(/cannot be fully|unknown executable/i);
+    expect(decision.reasons).toEqual([
+      { code: 'unknown-executable', subject: './deploy.sh' },
+      { code: 'unknown-executable', subject: 'tee' },
+    ]);
   });
 
   it('keeps a known write conservative when another pipeline segment is unknown', async () => {
@@ -158,6 +161,9 @@ describe('PolicyEngine', () => {
     expect(decision.risk).toBe('unknown');
     expect(decision.confidence).toBe('low');
     expect(decision.requiresConfirmation).toBe(true);
-    expect(decision.reasons.join(' ')).toContain('unknown executable');
+    expect(decision.reasons).toEqual([
+      { code: 'state-changing-command', subject: 'npm' },
+      { code: 'unknown-executable', subject: 'curl' },
+    ]);
   });
 });
