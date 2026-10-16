@@ -30,3 +30,13 @@ export {
   sanitizeMcpSettings,
 } from './mcp/mcp-settings.js';
 export type { McpApprovalMode, McpSettings, McpSettingsStore } from './mcp/mcp-settings.js';
+
+export { renderRiskReasonEn, RISK_REASON_CODES } from './mcp/risk-reasons.js';
+export type {
+  RiskReason,
+  RiskReasonCode,
+  SubjectlessRiskReason,
+  SubjectlessRiskReasonCode,
+  SubjectRiskReason,
+  SubjectRiskReasonCode,
+} from './mcp/risk-reasons.js';

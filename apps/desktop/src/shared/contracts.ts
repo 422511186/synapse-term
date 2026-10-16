@@ -27,7 +27,11 @@ export type {
   McpExecutionEvent,
   McpRuntimeStatus,
   McpSettings,
+  RiskReason,
+  RiskReasonCode,
   SharedMcpSession,
+  SubjectlessRiskReasonCode,
+  SubjectRiskReasonCode,
 } from '@synapse-term/mcp-runtime';
 
 export type ThemeMode = 'light' | 'dark' | 'system';

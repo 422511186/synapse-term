@@ -1,14 +1,13 @@
-import { createHash } from 'node:crypto';
-
 import type { CommandRisk } from '@synapse-term/domain';
+
+import type { RiskReason } from './risk-reasons.js';
 
 export interface PolicyDecision {
   level: CommandRisk;
   risk: CommandRisk;
   confidence: 'high' | 'medium' | 'low';
-  reasons: string[];
+  reasons: readonly RiskReason[];
   requiresConfirmation: boolean;
-  commandHash: string;
 }
 
 export interface PolicyHints {
@@ -87,10 +86,6 @@ const POWERSHELL_MUTATING = new Set([
 
 const POSIX_CONTROL_KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi']);
 
-function hash(value: string): string {
-  return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
-}
-
 function higherRisk(left: CommandRisk, right: CommandRisk): CommandRisk {
   const order: CommandRisk[] = ['read_only', 'unknown', 'mutating', 'privileged', 'destructive'];
   return order.indexOf(right) > order.indexOf(left) ? right : left;
@@ -98,9 +93,8 @@ function higherRisk(left: CommandRisk, right: CommandRisk): CommandRisk {
 
 export class PolicyEngine {
   classify(command: string, hints: PolicyHints = {}): Promise<PolicyDecision> {
-    const commandHash = hash(command);
     if (command.trim().length === 0) {
-      return Promise.resolve(decision('unknown', 'low', ['empty command'], commandHash));
+      return Promise.resolve(decision('unknown', 'low', [{ code: 'empty-command' }]));
     }
     if (/[$(`]|\b(?:sudo|doas)\b/.test(command)) {
       const dynamic = /\$|`/.test(command);
@@ -109,14 +103,13 @@ export class PolicyEngine {
           dynamic ? 'unknown' : 'privileged',
           'low',
           dynamic
-            ? ['command substitution is not proven safe']
-            : ['command requests privilege escalation'],
-          commandHash,
+            ? [{ code: 'command-substitution-unproven' }]
+            : [{ code: 'privilege-escalation' }],
         ),
       );
     }
 
-    const reasons: string[] = [];
+    const reasons: RiskReason[] = [];
     let level: CommandRisk = 'read_only';
     let confidence: PolicyDecision['confidence'] = 'high';
     let hasUnknownSegment = false;
@@ -138,23 +131,23 @@ export class PolicyEngine {
     }
     if (/[<>]/.test(command)) {
       level = higherRisk(level, 'mutating');
-      reasons.push('redirection can change filesystem state');
+      reasons.push({ code: 'redirection-changes-filesystem' });
       confidence = 'low';
     }
-    if (level === 'read_only') reasons.push('all commands match read-only rules');
+    if (level === 'read_only') reasons.push({ code: 'read-only-rules-matched' });
     if (hasUnresolvedShellStructure(command)) {
       confidence = 'low';
-      reasons.push('scripts, aliases, or dynamic shell structure cannot be fully expanded safely');
+      reasons.push({ code: 'dynamic-shell-structure' });
       level = higherRisk(level, 'unknown');
     }
     if (hasUnknownSegment && level !== 'destructive') level = 'unknown';
-    return Promise.resolve(decision(level, confidence, unique(reasons), commandHash));
+    return Promise.resolve(decision(level, confidence, unique(reasons)));
   }
 
   #classifySegment(
     segment: string,
     terminalType: string | undefined,
-    reasons: string[],
+    reasons: RiskReason[],
   ): CommandRisk {
     const tokens = tokenize(segment);
     const commandToken = tokens.find((token) => !POSIX_CONTROL_KEYWORDS.has(token.toLowerCase()));
@@ -165,15 +158,15 @@ export class PolicyEngine {
     if (name === undefined) return 'unknown';
     if (/powershell|pwsh/i.test(terminalType ?? '')) {
       if (name.startsWith('remove-')) {
-        reasons.push(`${name} has destructive semantics`);
+        reasons.push({ code: 'destructive-command', subject: name });
         return 'destructive';
       }
       if (POWERSHELL_READ_ONLY.has(name)) return 'read_only';
       if (POWERSHELL_MUTATING.has(name)) {
-        reasons.push(`${name} can change system state`);
+        reasons.push({ code: 'state-changing-command', subject: name });
         return 'mutating';
       }
-      reasons.push(`unknown PowerShell executable: ${name}`);
+      reasons.push({ code: 'unknown-powershell-executable', subject: name });
       return 'unknown';
     }
 
@@ -185,32 +178,32 @@ export class PolicyEngine {
     }
     if (name === 'sysctl') {
       if (hasSysctlWriteOption(tokens)) {
-        reasons.push('sysctl write options can change kernel state');
+        reasons.push({ code: 'sysctl-kernel-state' });
         return 'privileged';
       }
       return 'read_only';
     }
     if (name === 'sort' && hasSortOutputOption(tokens)) {
-      reasons.push('sort can change filesystem state with -o/--output');
+      reasons.push({ code: 'sort-output-file' });
       return 'mutating';
     }
     if (
       name === 'rm' &&
       tokens.slice(1).some((argument) => argument.startsWith('-') && /r/i.test(argument))
     ) {
-      reasons.push('rm has irreversible destructive semantics');
+      reasons.push({ code: 'irreversible-destructive-command', subject: 'rm' });
       return 'destructive';
     }
     if (['dd', 'mkfs', 'reboot', 'shutdown'].includes(name)) {
-      reasons.push(`${name} has destructive system semantics`);
+      reasons.push({ code: 'destructive-system-command', subject: name });
       return 'destructive';
     }
     if (POSIX_MUTATING.has(name) || name === 'rm') {
-      reasons.push(`${name} can change system state`);
+      reasons.push({ code: 'state-changing-command', subject: name });
       return 'mutating';
     }
     if (POSIX_READ_ONLY.has(name)) return 'read_only';
-    reasons.push(`unknown executable: ${name}`);
+    reasons.push({ code: 'unknown-executable', subject: name });
     return 'unknown';
   }
 }
@@ -258,8 +251,7 @@ function stripSimpleShellQuotes(token: string): string {
 function decision(
   level: CommandRisk,
   confidence: PolicyDecision['confidence'],
-  reasons: string[],
-  commandHash: string,
+  reasons: readonly RiskReason[],
 ): PolicyDecision {
   return {
     level,
@@ -267,7 +259,6 @@ function decision(
     confidence,
     reasons,
     requiresConfirmation: !['read_only', 'mutating'].includes(level),
-    commandHash,
   };
 }
 
@@ -325,8 +316,15 @@ function splitCommandSegments(command: string): string[] {
   return segments;
 }
 
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
+/** 按 code 与 subject 去重；同一 code 指名不同可执行文件时是两条不同的理由。 */
+function unique(reasons: readonly RiskReason[]): RiskReason[] {
+  const seen = new Set<string>();
+  return reasons.filter((reason) => {
+    const key = 'subject' in reason ? `${reason.code}\u0000${reason.subject}` : reason.code;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function hasUnresolvedShellStructure(command: string): boolean {

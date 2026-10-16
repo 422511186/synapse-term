@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import type { McpApprovalRequest } from '../../shared/contracts.js';
 import { ApprovalCard } from './approval-card.js';
 
-const request = {
+/** 夹具用真实引擎对这条命令会产生的理由，而不是随手编一个字符串。 */
+const request: McpApprovalRequest = {
   id: 'approval-1',
   sessionId: 'session-1',
   command:
     'rm -rf build && npm run deploy -- --environment production --region ap-southeast-1 --confirm',
-  risk: 'destructive' as const,
-  reasons: ['irreversible'],
+  risk: 'destructive',
+  reasons: [
+    { code: 'irreversible-destructive-command', subject: 'rm' },
+    { code: 'state-changing-command', subject: 'npm' },
+  ],
 };
 
 describe('ApprovalCard', () => {
@@ -27,6 +32,24 @@ describe('ApprovalCard', () => {
     expect(markup).toContain('允许一次');
     expect(markup).toContain('本会话内放行该命令');
     expect(markup).toContain('拒绝');
+    expect(markup).toContain('rm 具有破坏性语义；npm 可能更改系统状态');
+  });
+
+  it('renders the reasons that used to leak English onto the card', () => {
+    const markup = renderToStaticMarkup(
+      <ApprovalCard
+        onDecide={() => undefined}
+        request={{
+          ...request,
+          reasons: [{ code: 'sort-output-file' }, { code: 'sysctl-kernel-state' }],
+        }}
+      />,
+    );
+
+    expect(markup).toContain('sort 的 -o/--output 可能修改文件系统');
+    expect(markup).toContain('sysctl 写选项可能更改内核状态');
+    expect(markup).not.toContain('can change filesystem state');
+    expect(markup).not.toContain('kernel state');
   });
 
   it('keeps the three decision values attached to their visible actions', () => {
@@ -68,6 +91,7 @@ describe('ApprovalCard', () => {
           ...request,
           command: '[free_input]',
           kind: 'free_input',
+          reasons: [{ code: 'free-input-writes-to-pty' }],
           text: 'menu choice',
           keys: ['down', 'enter'],
         }}

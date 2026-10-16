@@ -1,5 +1,7 @@
 import type { CommandRisk, InputGrantMode, InputKey } from '@synapse-term/domain';
 
+import type { RiskReason } from './risk-reasons.js';
+
 export interface ApprovalInputLimits {
   maxCalls: number;
   maxBytes: number;
@@ -10,7 +12,8 @@ export interface ApprovalRequest {
   sessionId: string;
   command: string;
   risk: CommandRisk;
-  reasons: readonly string[];
+  /** 卡片按 code 查本地文案；英文散文只在对外证据边界渲染。 */
+  reasons: readonly RiskReason[];
   kind?: 'structured' | 'interactive' | 'free_input' | undefined;
   inputGrantMode?: InputGrantMode | undefined;
   inputLimits?: ApprovalInputLimits | undefined;

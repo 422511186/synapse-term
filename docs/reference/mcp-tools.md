@@ -56,6 +56,8 @@
 
 明确会读取 stdin 的命令必须使用 `synapse_start_interactive`。若上下文在 Probe 或审批等待期间变化，command 在写入前失效。
 
+命令写入已发起但 PTY 后端抛错或无法确认交付时返回 `EXECUTION_WRITE_UNKNOWN`，不返回可操作的事务 ID；当前 PTY environment 与 `executionContextId` 立即失效，command 可能已经部分写入或执行，不得自动重试。写入发起之前的失败仍是写入前失败，使用 `EXECUTION_CONTEXT_REQUIRED`、`EXECUTION_CONTEXT_STALE`、`SESSION_NOT_READY` 或 `SESSION_EXPIRED`。
+
 ## `synapse_start_interactive`
 
 输入：`sessionId`、完整原文 `command`、`expectedContextId`、`inputGrantMode`（`one_shot` 或 `bounded`）。
@@ -126,7 +128,8 @@
 | `APPROVAL_TIMEOUT` | 审批卡片超时，视为拒绝。 |
 | `APPROVAL_DENIED` | 用户拒绝调用。 |
 | `INPUT_GRANT_EXHAUSTED` | 输入授权已耗尽或结构化事务没有输入授权。 |
-| `INPUT_WRITE_UNKNOWN` | 自由输入交付结果不确定；不要自动重放。 |
+| `INPUT_WRITE_UNKNOWN` | 自由输入或事务内输入交付结果不确定；不要自动重放。 |
 | `INTERACTIVE_START_WRITE_UNKNOWN` | 交互启动写入交付结果不确定；不要自动重试，先重新观察。 |
+| `EXECUTION_WRITE_UNKNOWN` | 结构化命令的写入交付结果不确定；命令可能已经执行，不要自动重试，先重新观察并由用户判断。 |
 
 安全语义、Sharing 输出边界和审批原因见[安全模型](../concepts/security-model.md)及对应 ADR。

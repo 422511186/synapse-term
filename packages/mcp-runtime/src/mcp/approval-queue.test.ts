@@ -6,8 +6,8 @@ const request = {
   sessionId: 'session',
   command: 'rm -rf build',
   risk: 'destructive' as const,
-  reasons: ['irreversible'],
-};
+  reasons: [{ code: 'irreversible-destructive-command', subject: 'rm' }],
+} as const;
 
 describe('ApprovalQueue', () => {
   it('emits structured-cloneable requests for IPC', async () => {

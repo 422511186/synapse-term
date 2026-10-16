@@ -5,10 +5,13 @@ import type {
   CommandRiskEvidence,
   CompletionMetadata,
   ExecutionContextId,
+  ExternalCaller,
   ExternalTransactionStatus,
   OutputCursor,
   TransactionOutputRange,
 } from '@synapse-term/domain';
+
+import { ExternalTransactionLedger } from './external-transaction-ledger.js';
 
 import {
   resolveShellDriver,
@@ -16,8 +19,9 @@ import {
   type ShellDispatch,
   type ShellDriver,
 } from '../shell/shell-driver.js';
-import type { SessionActor, SessionActorEvent } from './session-actor.js';
+import type { SessionActor, SessionActorEvent, WriteError } from './session-actor.js';
 import { OutputBuffer, type OutputSnapshot } from './output-buffer.js';
+import { describeStructuredWriteError } from './write-error-mapping.js';
 
 export type CommandExecutionStatus = ExternalTransactionStatus;
 
@@ -58,6 +62,8 @@ export interface ExecuteCommandInput {
   riskEvidence?: CommandRiskEvidence | undefined;
   observationWindowMs?: number | undefined;
   expectedContextId?: ExecutionContextId | undefined;
+  /** 发起该事务的调用方身份，登记到活动事务账本。 */
+  caller?: ExternalCaller | undefined;
 }
 
 export interface WaitCommandInput {
@@ -85,6 +91,7 @@ interface ActiveRun {
   driver: ShellDriver;
   environmentEpoch: number;
   executionContextId: ExecutionContextId;
+  caller: ExternalCaller | undefined;
   buffer: OutputBuffer;
   listener: () => void;
   initialTimer: NodeJS.Timeout;
@@ -117,6 +124,8 @@ export interface CommandExecutorOptions {
   completionEchoGraceMs?: number;
   outputMaxBytes?: number;
   outputCursor?: (() => OutputCursor) | undefined;
+  /** 与本 Session 其它调用方共享的活动事务账本；缺省时自建一份。 */
+  ledger?: ExternalTransactionLedger | undefined;
 }
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -135,6 +144,7 @@ export class CommandExecutor {
   };
   readonly #listeners = new Set<(event: CommandExecutorEvent) => void>();
   readonly #history = new Map<string, CommandExecutionResult>();
+  readonly #ledger: ExternalTransactionLedger;
   #active: ActiveRun | undefined;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
@@ -150,6 +160,7 @@ export class CommandExecutor {
       outputMaxBytes: options.outputMaxBytes ?? 64 * 1024,
       outputCursor: options.outputCursor,
     };
+    this.#ledger = options.ledger ?? new ExternalTransactionLedger();
     if (
       !Number.isFinite(this.#options.observationWindowMs) ||
       this.#options.observationWindowMs < 0
@@ -172,6 +183,11 @@ export class CommandExecutor {
 
   get activeTransactionId(): string | undefined {
     return this.#active?.transaction.id;
+  }
+
+  /** 本执行器登记活动事务的账本；同一个 Session 的所有调用方共享同一实例。 */
+  get transactionLedger(): ExternalTransactionLedger {
+    return this.#ledger;
   }
 
   onEvent(listener: (event: CommandExecutorEvent) => void): () => void {
@@ -295,6 +311,7 @@ export class CommandExecutor {
     run.driver = driver;
     run.environmentEpoch = snapshot.environment.capabilityEpoch;
     run.executionContextId = snapshot.executionContextId;
+    run.caller = input.caller;
     run.buffer = new OutputBuffer({ maxBytes: this.#options.outputMaxBytes });
     run.listener = this.#actor.onEvent((event) => this.#handleEvent(run, event));
     run.initialTimer = setTimeout(() => {
@@ -416,12 +433,15 @@ export class CommandExecutor {
     try {
       this.#actor.suppressInputEcho(run.dispatch.echoPattern);
       if (run.settled) return;
-      const write = await this.#actor.writeExternal(
-        run.dispatch.payload,
-        run.environmentEpoch,
-        run.executionContextId,
-        { isCancelled: () => run.settled },
-      );
+      const write = await this.#actor.writeExternal({
+        data: run.dispatch.payload,
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: run.environmentEpoch,
+          executionContextId: run.executionContextId,
+        },
+        cancelled: () => run.settled,
+      });
       if (run.settled) return;
       if (!write.ok) {
         this.#rejectBeforeSend(run, writeError(write.error));
@@ -433,6 +453,12 @@ export class CommandExecutor {
         outputRange: { startCursor, endCursor: startCursor },
       };
       run.sent = true;
+      this.#ledger.open({
+        kind: 'structured',
+        transactionId: run.transaction.id,
+        caller: run.caller,
+        status: () => run.transaction.status,
+      });
       this.#emit({ type: 'started', transaction: structuredClone(run.transaction) });
       if (run.initialTimerElapsed && !run.settled) {
         this.#resolveInitial(run, this.#result(run));
@@ -552,6 +578,7 @@ export class CommandExecutor {
     };
     run.transaction = finished;
     this.#active = undefined;
+    this.#ledger.close(finished.id);
     const result = this.#snapshotResult(run, finished);
     this.#history.set(finished.id, result);
     this.#emit({ type: 'finished', transaction: structuredClone(finished) });
@@ -573,6 +600,8 @@ export class CommandExecutor {
     clearTimeout(run.completionDrainTimer);
     run.listener();
     if (this.#active === run) this.#active = undefined;
+    // 写入前失败不会登记账本，close 在这里是幂等的。
+    this.#ledger.close(run.transaction.id);
     void this.#actor.releaseInputEcho(run.dispatch.echoPattern).finally(() => {
       for (const resolve of run.settledWaiters) resolve();
       run.settledWaiters.clear();
@@ -639,44 +668,7 @@ function normalizeWaitTimeout(timeoutMs: number | undefined): number {
   return value;
 }
 
-function writeError(
-  error:
-    | 'stale-environment-epoch'
-    | 'stale-execution-context'
-    | 'environment-unverified'
-    | 'session-not-running'
-    | 'external-write-cancelled',
-): CommandExecutorError {
-  switch (error) {
-    case 'stale-execution-context':
-      return new CommandExecutorError(
-        'EXECUTION_CONTEXT_STALE',
-        'the execution context changed before the command was written',
-        '请先调用 synapse_observe（必要时使用 tail）获取当前终端内容和新的 executionContextId。',
-      );
-    case 'stale-environment-epoch':
-      return new CommandExecutorError(
-        'SESSION_NOT_READY',
-        'the verified PTY environment changed before the command was written',
-        '请重新观察当前 Session，等待 environment 验证后再执行。',
-      );
-    case 'environment-unverified':
-      return new CommandExecutorError(
-        'SESSION_NOT_READY',
-        'current PTY environment is not verified',
-        '请等待当前 PTY environment 验证完成后重试。',
-      );
-    case 'session-not-running':
-      return new CommandExecutorError(
-        'SESSION_EXPIRED',
-        'terminal session is no longer running',
-        '请重新共享该 Session。',
-      );
-    case 'external-write-cancelled':
-      return new CommandExecutorError(
-        'SESSION_EXPIRED',
-        'external command dispatch was cancelled before the PTY write',
-        '请重新共享 Session 后先观察再执行。',
-      );
-  }
+function writeError(error: WriteError): CommandExecutorError {
+  const description = describeStructuredWriteError(error);
+  return new CommandExecutorError(description.code, description.reason, description.guidance);
 }

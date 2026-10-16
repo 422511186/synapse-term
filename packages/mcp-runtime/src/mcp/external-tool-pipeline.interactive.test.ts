@@ -5,6 +5,7 @@ import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 import {
   CommandExecutor,
   ExternalLeaseRegistry,
+  ExternalTransactionLedger,
   InteractiveCommandExecutor,
   SessionActor,
 } from '@synapse-term/terminal-service';
@@ -48,8 +49,10 @@ async function createPipelineWithInteractiveOptions(
   });
   await actor.markPtyRunning();
   await actor.verifyEnvironment('posix', 'unix');
-  const executor = new CommandExecutor(actor, { completionDrainMs: 0 });
-  const interactiveExecutor = new InteractiveCommandExecutor(actor, options);
+  // 两个执行器与 pipeline 必须共享同一份活动事务账本，否则注入的交互执行器会被 pipeline 拒绝。
+  const ledger = new ExternalTransactionLedger();
+  const executor = new CommandExecutor(actor, { completionDrainMs: 0, ledger });
+  const interactiveExecutor = new InteractiveCommandExecutor(actor, { ...options, ledger });
   const pipeline = new ExternalToolPipeline({ actor, executor, interactiveExecutor });
   return { backend, actor, executor, interactiveExecutor, pipeline };
 }
@@ -179,10 +182,41 @@ describe('ExternalToolPipeline interactive input', () => {
     expect(approvalRequest).toMatchObject({
       kind: 'interactive',
       inputGrantMode: 'one_shot',
-      inputLimits: { maxCalls: 1 },
+      inputLimits: { maxCalls: 1, maxBytes: 16 * 1024, idleTimeoutMs: 10 * 60_000 },
     });
     expect(JSON.stringify(approvalRequest)).not.toContain('password');
     expect(backend.writes).toEqual(['sudo su -\r']);
+    await approved.clear();
+    actor.dispose();
+  });
+
+  it('publishes the bounded grant limits on the approval card', async () => {
+    const { actor } = await createHarness();
+    let approvalRequest: unknown;
+    const approved = new ExternalToolPipeline({
+      actor,
+      executor: new CommandExecutor(actor, { completionDrainMs: 0 }),
+      requestApproval: async (request) => {
+        approvalRequest = request;
+        return 'allow_once';
+      },
+    });
+
+    const result = await approved.startInteractive(
+      {
+        command: 'sudo su -',
+        expectedContextId: actor.snapshot.executionContextId,
+        inputGrantMode: 'bounded',
+      },
+      { caller, mode: 'managed' },
+    );
+
+    expect(result).toMatchObject({ ok: true, result: { inputGrantMode: 'bounded' } });
+    expect(approvalRequest).toMatchObject({
+      kind: 'interactive',
+      inputGrantMode: 'bounded',
+      inputLimits: { maxCalls: 256, maxBytes: 256 * 1024, idleTimeoutMs: 10 * 60_000 },
+    });
     await approved.clear();
     actor.dispose();
   });

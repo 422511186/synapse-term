@@ -44,6 +44,7 @@ Session 的 PTY 可以被用户和外部客户端共同操作，单纯依赖上�
 
 ## 影响
 
+- 本文的「`not_sent` 是写入前错误，不创建事务 ID」由 [ADR-0023](0023-write-attempt-failure-is-uncertain.md) 细化：它只覆盖写入尝试发起**之前**的失败；写入尝试发起之后（`write()` 抛错或交付无法确认）的失败一律按不确定态处理，不再算「未写入」。
 - Share Text 和外部工具调用顺序需要包含“先观察、取得执行上下文 ID、再执行”。
 - Main 需要维护独立于 `capability epoch` 的执行上下文标记；前者用于命令顺序防护，后者用于当前 PTY 环境验证失效。
 - 旧的只传 `sessionId` 和命令文本的 `synapse_execute` 调用将收到稳定错误，不能静默兼容为无校验执行。

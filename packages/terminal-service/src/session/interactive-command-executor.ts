@@ -5,6 +5,7 @@ import type {
   CommandRiskEvidence,
   CompletionMetadata,
   ExecutionContextId,
+  ExternalCaller,
   ExternalTransactionStatus,
   InputGrantId,
   InputGrantMode,
@@ -13,6 +14,14 @@ import type {
   OutputCursor,
   TransactionId,
   TransactionOutputRange,
+  WritePremiseError,
+} from '@synapse-term/domain';
+import {
+  EXTERNAL_INPUT_GRANT_LIMITS,
+  EXTERNAL_INPUT_IDLE_TIMEOUT_MS,
+  MAX_INPUT_KEYS,
+  MAX_INPUT_PAYLOAD_BYTES,
+  MAX_INPUT_TEXT_BYTES,
 } from '@synapse-term/domain';
 
 import {
@@ -23,12 +32,18 @@ import {
   type ShellDriver,
 } from '../shell/shell-driver.js';
 import type { ExternalLeaseHandle } from './external-lease.js';
+import { ExternalTransactionLedger } from './external-transaction-ledger.js';
+import {
+  InputRequestLedger,
+  matchesInputRequestFingerprint,
+  type InputRequestRecord,
+} from './input-request-ledger.js';
 import { OutputBuffer, type OutputSnapshot } from './output-buffer.js';
-import type {
-  InteractiveInputWriteResult,
-  SessionActor,
-  SessionActorEvent,
-} from './session-actor.js';
+import type { SessionActor, SessionActorEvent, WriteError } from './session-actor.js';
+import {
+  describeInteractiveStartWriteError,
+  describeTransactionalInputWriteError,
+} from './write-error-mapping.js';
 
 export interface InteractiveInputPayload {
   /** 已规范化、按“先文本后按键”合并的 PTY payload。 */
@@ -47,7 +62,8 @@ export interface StartInteractiveInput {
   expectedContextId: ExecutionContextId;
   expectedEnvironmentEpoch?: number | undefined;
   inputGrantMode: InputGrantMode;
-  callerId?: string | undefined;
+  /** 调用方身份；事务归属与输入请求的键都由它决定。 */
+  caller?: ExternalCaller | undefined;
   risk?: CommandRisk | undefined;
   riskEvidence?: CommandRiskEvidence | undefined;
   lease?: ExternalLeaseHandle | undefined;
@@ -58,13 +74,14 @@ export interface InteractiveInputRequest {
   inputGrantId: InputGrantId;
   inputRequestId: InputRequestId;
   payload: InteractiveInputPayload;
-  callerId?: string | undefined;
+  /** 省略时沿用事务启动时的调用方身份。 */
+  caller?: ExternalCaller | undefined;
 }
 
 export interface FinishInteractiveInput {
   transactionId: TransactionId;
   observedCursor: OutputCursor;
-  callerId?: string | undefined;
+  caller?: ExternalCaller | undefined;
 }
 
 export interface InteractiveWaitInput {
@@ -141,6 +158,10 @@ export interface InteractiveCommandExecutorOptions {
   outputCursor?: (() => OutputCursor) | undefined;
   validateObservedCursor?:
     ((cursor: OutputCursor, minimumCursor: OutputCursor | undefined) => void) | undefined;
+  /** 与本 Session 其它调用方共享的活动事务账本；缺省时自建一份。 */
+  ledger?: ExternalTransactionLedger | undefined;
+  /** 与本 Session 其它调用方共享的输入请求账本；缺省时自建一份。 */
+  inputLedger?: InputRequestLedger | undefined;
 }
 
 interface InputGrantState {
@@ -152,18 +173,6 @@ interface InputGrantState {
   revoked: boolean;
 }
 
-interface InputRecord {
-  mode: 'transactional';
-  transactionId: TransactionId;
-  grantId: InputGrantId;
-  payloadHash: string;
-  promise: Promise<InteractiveExecutionResult>;
-  resolve: (result: InteractiveExecutionResult) => void;
-  reject: (error: unknown) => void;
-  outcome?: InteractiveExecutionResult | undefined;
-  error?: InteractiveCommandExecutorError | undefined;
-}
-
 interface ActiveRun {
   transaction: InteractiveTransaction;
   startDispatch: ShellCommandDispatch;
@@ -172,10 +181,9 @@ interface ActiveRun {
   executionContextIdBeforeStart: ExecutionContextId;
   buffer: OutputBuffer;
   listener: () => void;
-  callerId: string | undefined;
+  caller: ExternalCaller | undefined;
   lease: ExternalLeaseHandle | undefined;
   grant: InputGrantState;
-  inputRecords: Map<string, InputRecord>;
   initialResolved: boolean;
   sent: boolean;
   phase: 'starting' | 'running' | 'finishing' | 'interrupting' | 'settling' | 'settled';
@@ -209,13 +217,12 @@ interface Deferred<T> {
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_FINISH_TIMEOUT_MS = 30_000;
-const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
+// 空闲上限与输入授权上限取自 domain 的唯一来源：审批卡片展示的数值与这里执行的上限必须一致。
+const DEFAULT_IDLE_TIMEOUT_MS = EXTERNAL_INPUT_IDLE_TIMEOUT_MS;
 const DEFAULT_OBSERVATION_WINDOW_MS = 300;
-const MAX_INPUT_TEXT_BYTES = 8 * 1024;
-const MAX_INPUT_PAYLOAD_BYTES = 16 * 1024;
-const MAX_INPUT_KEYS = 128;
-const BOUNDED_MAX_CALLS = 256;
-const BOUNDED_MAX_BYTES = 256 * 1024;
+const ONE_SHOT_MAX_CALLS = EXTERNAL_INPUT_GRANT_LIMITS.one_shot.maxCalls;
+const BOUNDED_MAX_CALLS = EXTERNAL_INPUT_GRANT_LIMITS.bounded.maxCalls;
+const BOUNDED_MAX_BYTES = EXTERNAL_INPUT_GRANT_LIMITS.bounded.maxBytes;
 
 export class InteractiveCommandExecutor {
   readonly #actor: SessionActor;
@@ -236,7 +243,8 @@ export class InteractiveCommandExecutor {
     Pick<InteractiveCommandExecutorOptions, 'outputCursor' | 'validateObservedCursor'>;
   readonly #listeners = new Set<(event: InteractiveCommandExecutorEvent) => void>();
   readonly #history = new Map<string, InteractiveExecutionResult>();
-  readonly #inputHistory = new Map<string, InputRecord>();
+  readonly #ledger: ExternalTransactionLedger;
+  readonly #inputLedger: InputRequestLedger;
   #active: ActiveRun | undefined;
   #disposed = false;
   #queue: Promise<void> = Promise.resolve();
@@ -257,6 +265,8 @@ export class InteractiveCommandExecutor {
       outputCursor: options.outputCursor,
       validateObservedCursor: options.validateObservedCursor,
     };
+    this.#ledger = options.ledger ?? new ExternalTransactionLedger();
+    this.#inputLedger = options.inputLedger ?? new InputRequestLedger();
     assertNonNegativeFinite(this.#options.observationWindowMs, 'observationWindowMs');
     assertPositiveFinite(this.#options.finishTimeoutMs, 'finishTimeoutMs');
     assertNonNegativeFinite(this.#options.completionDrainMs, 'completionDrainMs');
@@ -269,6 +279,16 @@ export class InteractiveCommandExecutor {
 
   get activeTransactionId(): TransactionId | undefined {
     return this.#active?.transaction.id;
+  }
+
+  /** 本执行器登记活动事务的账本；同一个 Session 的所有调用方共享同一实例。 */
+  get transactionLedger(): ExternalTransactionLedger {
+    return this.#ledger;
+  }
+
+  /** 本执行器登记输入请求的账本；同一个 Session 的所有调用方共享同一实例。 */
+  get inputRequestLedger(): InputRequestLedger {
+    return this.#inputLedger;
   }
 
   get activeTransactionKind(): 'interactive' | undefined {
@@ -295,7 +315,7 @@ export class InteractiveCommandExecutor {
   finish(input: FinishInteractiveInput): Promise<InteractiveExecutionResult> {
     return this.#enqueue(async () => {
       const run = this.#findActive(input.transactionId);
-      this.#assertCaller(run, input.callerId);
+      this.#assertCaller(run, input.caller);
       if (run.phase === 'finishing') {
         return { pending: run.finishPromise! };
       }
@@ -369,11 +389,11 @@ export class InteractiveCommandExecutor {
     return structuredClone(this.#history.get(transactionId));
   }
 
-  async interrupt(transactionId: TransactionId, callerId?: string): Promise<boolean> {
+  async interrupt(transactionId: TransactionId, caller?: ExternalCaller): Promise<boolean> {
     return this.#enqueue(async () => {
       const run = this.#active;
       if (run === undefined || run.transaction.id !== transactionId) return false;
-      this.#assertCaller(run, callerId);
+      this.#assertCaller(run, caller);
       if (run.phase === 'finishing' || run.phase === 'interrupting' || run.phase === 'settling') {
         throw new InteractiveCommandExecutorError(
           'SESSION_BUSY',
@@ -423,7 +443,7 @@ export class InteractiveCommandExecutor {
   clear(): Promise<void> {
     if (this.#disposePromise !== undefined) return this.#disposePromise;
     this.#disposed = true;
-    this.#inputHistory.clear();
+    this.#inputLedger.clear();
     this.#disposePromise = this.#enqueue(async () => {
       const active = this.#active;
       if (active !== undefined && active.phase !== 'settled') {
@@ -536,7 +556,7 @@ export class InteractiveCommandExecutor {
       executionContextIdBeforeStart: input.expectedContextId,
       buffer: new OutputBuffer({ maxBytes: this.#options.outputMaxBytes }),
       listener: () => undefined,
-      callerId: input.callerId,
+      caller: input.caller,
       lease: input.lease,
       grant: {
         id: transaction.inputGrantId,
@@ -546,7 +566,6 @@ export class InteractiveCommandExecutor {
         lastInputAt: Date.now(),
         revoked: false,
       },
-      inputRecords: new Map(),
       initialResolved: false,
       sent: false,
       phase: 'starting',
@@ -558,12 +577,15 @@ export class InteractiveCommandExecutor {
     run.listener = this.#actor.onEvent((event) => this.#handleEvent(run, event));
     this.#active = run;
 
-    const write = await this.#actor.writeInteractiveStart(
-      dispatch.payload,
-      run.environmentEpoch,
-      run.executionContextIdBeforeStart,
-      { isCancelled: () => this.#disposed || run.phase === 'settled' },
-    );
+    const write = await this.#actor.writeExternal({
+      data: dispatch.payload,
+      premise: {
+        precondition: 'environment-and-context',
+        environmentEpoch: run.environmentEpoch,
+        executionContextId: run.executionContextIdBeforeStart,
+      },
+      cancelled: () => this.#disposed || run.phase === 'settled',
+    });
     if (!write.ok) {
       if (write.error === 'write-unknown') {
         run.environmentInvalidated = true;
@@ -574,14 +596,19 @@ export class InteractiveCommandExecutor {
         );
         this.#rejectStart(run, error);
         throw error;
-      } else {
-        const error = startWriteError(write.error);
-        this.#rejectStart(run, error);
-        throw error;
       }
+      const error = startWriteError(write.error);
+      this.#rejectStart(run, error);
+      throw error;
     }
 
     run.sent = true;
+    this.#ledger.open({
+      kind: 'interactive',
+      transactionId: run.transaction.id,
+      caller: run.caller,
+      status: () => run.transaction.status,
+    });
     run.phase = 'running';
     run.transaction = {
       ...run.transaction,
@@ -611,15 +638,17 @@ export class InteractiveCommandExecutor {
   async #input(request: InteractiveInputRequest): Promise<InteractiveExecutionResult> {
     if (this.#disposed) throw this.#expiredError();
     const run = this.#active;
-    const callerId = request.callerId ?? run?.callerId;
-    const key = this.#inputKey(callerId, request.inputRequestId);
+    const caller = request.caller ?? run?.caller;
     const payloadHash = request.payload.payloadHash ?? hashInputPayload(request.payload);
-    const existing = this.#inputHistory.get(key);
+    const existing = this.#inputLedger.locate(caller, request.inputRequestId);
     if (existing !== undefined) {
       if (
-        existing.transactionId !== request.transactionId ||
-        existing.grantId !== request.inputGrantId ||
-        existing.payloadHash !== payloadHash
+        !matchesInputRequestFingerprint(existing, {
+          mode: 'transactional',
+          transactionId: request.transactionId,
+          grantId: request.inputGrantId,
+          payloadHash,
+        })
       ) {
         throw new InteractiveCommandExecutorError(
           'POLICY_DENIED',
@@ -630,12 +659,12 @@ export class InteractiveCommandExecutor {
       if (existing.outcome !== undefined || existing.error !== undefined) {
         return this.#cachedInputResult(existing);
       }
-      return existing.promise;
+      return existing.promise as Promise<InteractiveExecutionResult>;
     }
     if (run === undefined || run.transaction.id !== request.transactionId) {
       throw this.#transactionNotFound(request.transactionId);
     }
-    this.#assertCaller(run, request.callerId);
+    this.#assertCaller(run, request.caller);
     if (
       run.environmentInvalidated ||
       this.#actor.snapshot.environment.verificationStatus !== 'verified'
@@ -667,7 +696,7 @@ export class InteractiveCommandExecutor {
         '请调整 text 或 keys 后重试；本次未写入且未消耗授权。',
       );
     }
-    if (run.grant.mode === 'one_shot' && run.grant.callsUsed >= 1) {
+    if (run.grant.mode === 'one_shot' && run.grant.callsUsed >= ONE_SHOT_MAX_CALLS) {
       throw new InteractiveCommandExecutorError(
         'INPUT_GRANT_EXHAUSTED',
         'one_shot input grant has already been consumed',
@@ -687,36 +716,29 @@ export class InteractiveCommandExecutor {
     }
 
     const deferred = createDeferred<InteractiveExecutionResult>();
-    const record: InputRecord = {
+    const record: InputRequestRecord = {
       mode: 'transactional',
       transactionId: request.transactionId,
       grantId: request.inputGrantId,
       payloadHash,
       promise: deferred.promise,
-      resolve: deferred.resolve,
-      reject: deferred.reject,
     };
-    this.#inputHistory.set(key, record);
-    run.inputRecords.set(key, record);
+    this.#inputLedger.register(caller, request.inputRequestId, record);
     void record.promise.catch(() => undefined);
     run.grant.callsUsed += 1;
     run.grant.bytesUsed += request.payload.payloadBytes;
     run.grant.lastInputAt = Date.now();
     this.#armIdleTimer(run);
 
-    const write = await this.#actor.writeTransactionalInput(request.payload.data, {
-      isCancelled: () => this.#disposed || run.phase !== 'running' || run.environmentInvalidated,
+    const write = await this.#actor.writeExternal({
+      data: request.payload.data,
+      premise: { precondition: 'environment' },
+      cancelled: () => this.#disposed || run.phase !== 'running' || run.environmentInvalidated,
     });
     if (!write.ok) {
-      const error = inputWriteError(
-        write.error,
-        run.environmentInvalidated ||
-          this.#actor.snapshot.environment.verificationStatus !== 'verified',
-      );
+      const error = inputWriteError(write.error, run.environmentInvalidated);
       record.error = error;
-      record.reject(error);
-      record.resolve = () => undefined;
-      record.reject = () => undefined;
+      deferred.reject(error);
       if (write.error === 'write-unknown') run.environmentInvalidated = true;
       await this.#settle(run, { status: 'unknown', reason: error.message });
       throw error;
@@ -728,9 +750,7 @@ export class InteractiveCommandExecutor {
     ) {
       const error = inputWriteError('external-write-cancelled', true);
       record.error = error;
-      record.reject(error);
-      record.resolve = () => undefined;
-      record.reject = () => undefined;
+      deferred.reject(error);
       await this.#settle(run, { status: 'unknown', reason: error.message });
       throw error;
     }
@@ -744,9 +764,7 @@ export class InteractiveCommandExecutor {
     });
     record.outcome = createInputReplaySummary(result);
     record.promise = Promise.resolve(record.outcome);
-    record.resolve(result);
-    record.resolve = () => undefined;
-    record.reject = () => undefined;
+    deferred.resolve(result);
     return result;
   }
 
@@ -755,16 +773,15 @@ export class InteractiveCommandExecutor {
     run.finishNonce = nonce;
     run.finishEchoPattern = run.driver.buildCompletionEchoPattern(nonce);
     this.#actor.suppressInputEcho(run.finishEchoPattern);
-    const write = await this.#actor.writeInteractiveFinishProbe(
-      `${run.driver.buildCompletionProbe(nonce)}\r`,
-      {
-        isCancelled: () =>
-          this.#disposed ||
-          run.phase !== 'finishing' ||
-          run.environmentInvalidated ||
-          this.#actor.snapshot.environment.verificationStatus !== 'verified',
-      },
-    );
+    const write = await this.#actor.writeExternal({
+      data: `${run.driver.buildCompletionProbe(nonce)}\r`,
+      premise: { precondition: 'environment' },
+      cancelled: () =>
+        this.#disposed ||
+        run.phase !== 'finishing' ||
+        run.environmentInvalidated ||
+        this.#actor.snapshot.environment.verificationStatus !== 'verified',
+    });
     if (!write.ok) {
       if (write.error === 'write-unknown') run.environmentInvalidated = true;
       await this.#settle(run, {
@@ -881,6 +898,7 @@ export class InteractiveCommandExecutor {
       safeToResubmit: false,
     };
     this.#active = undefined;
+    this.#ledger.close(run.transaction.id);
     const result = this.#snapshotResult(run);
     this.#history.set(run.transaction.id, result);
     this.#emit({ type: 'finished', transaction: structuredClone(run.transaction) });
@@ -906,6 +924,8 @@ export class InteractiveCommandExecutor {
     run.grant.revoked = true;
     run.listener();
     if (this.#active === run) this.#active = undefined;
+    // 启动写入失败不会登记账本，close 在这里是幂等的。
+    this.#ledger.close(run.transaction.id);
     run.lease?.release();
     run.finishReject?.(error);
     run.resolveSettled();
@@ -919,8 +939,8 @@ export class InteractiveCommandExecutor {
     return run;
   }
 
-  #assertCaller(run: ActiveRun, callerId: string | undefined): void {
-    if (run.callerId !== undefined && callerId !== undefined && run.callerId !== callerId) {
+  #assertCaller(run: ActiveRun, caller: ExternalCaller | undefined): void {
+    if (run.caller !== undefined && caller !== undefined && run.caller.id !== caller.id) {
       throw new InteractiveCommandExecutorError(
         'TRANSACTION_NOT_FOUND',
         'transaction is not owned by this external caller',
@@ -960,14 +980,13 @@ export class InteractiveCommandExecutor {
     };
   }
 
-  async #cachedInputResult(record: InputRecord): Promise<InteractiveExecutionResult> {
+  async #cachedInputResult(record: InputRequestRecord): Promise<InteractiveExecutionResult> {
     if (record.error !== undefined) throw record.error;
-    if (record.outcome !== undefined) return structuredClone(record.outcome);
-    return record.promise;
-  }
-
-  #inputKey(callerId: string | undefined, requestId: InputRequestId): string {
-    return `${callerId ?? ''}\u0000${requestId}`;
+    // 账本按设计不解释归属方的结果类型；这里是本执行器唯一的收窄点。
+    if (record.outcome !== undefined) {
+      return structuredClone(record.outcome) as InteractiveExecutionResult;
+    }
+    return record.promise as Promise<InteractiveExecutionResult>;
   }
 
   #readOutputCursor(fallback: OutputCursor | number): OutputCursor {
@@ -1141,80 +1160,23 @@ function hashInputPayload(payload: InteractiveInputPayload): string {
     .digest('hex');
 }
 
-function startWriteError(
-  error:
-    | 'stale-environment-epoch'
-    | 'stale-execution-context'
-    | 'environment-unverified'
-    | 'session-not-running'
-    | 'external-write-cancelled',
-): InteractiveCommandExecutorError {
-  switch (error) {
-    case 'stale-execution-context':
-      return new InteractiveCommandExecutorError(
-        'EXECUTION_CONTEXT_STALE',
-        'the execution context changed before the interactive command was written',
-        '请先调用 synapse_observe 获取当前内容和新的 executionContextId。',
-      );
-    case 'stale-environment-epoch':
-      return new InteractiveCommandExecutorError(
-        'SESSION_NOT_READY',
-        'the verified PTY environment changed before the interactive command was written',
-        '请重新观察当前 Session 后再启动交互事务。',
-      );
-    case 'environment-unverified':
-      return new InteractiveCommandExecutorError(
-        'SESSION_NOT_READY',
-        'current PTY environment is not verified',
-        '请先验证当前 PTY environment。',
-      );
-    case 'external-write-cancelled':
-      return new InteractiveCommandExecutorError(
-        'SESSION_EXPIRED',
-        'interactive command dispatch was cancelled before the PTY write',
-        '请重新共享 Session 后再试。',
-      );
-    case 'session-not-running':
-      return new InteractiveCommandExecutorError(
-        'SESSION_EXPIRED',
-        'terminal session is no longer running',
-        '请重新共享 Session。',
-      );
-  }
+function startWriteError(error: WritePremiseError): InteractiveCommandExecutorError {
+  const description = describeInteractiveStartWriteError(error);
+  return new InteractiveCommandExecutorError(
+    description.code,
+    description.reason,
+    description.guidance,
+  );
 }
 
 function inputWriteError(
-  error: InteractiveInputWriteResult extends infer Result
-    ? Result extends { ok: false; error: infer Code }
-      ? Code
-      : never
-    : never,
+  error: WriteError,
   environmentInvalidated = false,
 ): InteractiveCommandExecutorError {
-  if (error === 'write-unknown') {
-    return new InteractiveCommandExecutorError(
-      'INPUT_WRITE_UNKNOWN',
-      'the PTY backend did not confirm delivery of the input payload',
-      '所属交互事务已进入 unknown；不要使用新的 inputRequestId 自动重放。',
-    );
-  }
-  if (error === 'external-write-cancelled') {
-    if (environmentInvalidated) {
-      return new InteractiveCommandExecutorError(
-        'INPUT_WRITE_UNKNOWN',
-        'the PTY environment was invalidated before input delivery was confirmed',
-        '所属交互事务已进入 unknown；不要使用新的 inputRequestId 自动重放。',
-      );
-    }
-    return new InteractiveCommandExecutorError(
-      'SESSION_EXPIRED',
-      'input dispatch was cancelled before the PTY write',
-      '请重新共享 Session。',
-    );
-  }
+  const description = describeTransactionalInputWriteError(error, environmentInvalidated);
   return new InteractiveCommandExecutorError(
-    'INPUT_WRITE_UNKNOWN',
-    'the terminal session stopped before input delivery was confirmed',
-    '所属交互事务已进入 unknown；不要自动重放输入。',
+    description.code,
+    description.reason,
+    description.guidance,
   );
 }

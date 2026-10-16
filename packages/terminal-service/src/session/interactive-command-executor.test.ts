@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ExternalCaller } from '@synapse-term/domain';
 import { createFakeTerminalBackend } from '@synapse-term/test-kit';
 
 import { InteractiveCommandExecutor } from './interactive-command-executor.js';
 import { SessionActor } from './session-actor.js';
+
+const caller: ExternalCaller = { kind: 'mcp', id: 'caller' };
 
 function frame(nonce: string, exitCode = 0): string {
   return `\x1b]777;TA;${nonce};${exitCode}\x07`;
@@ -51,7 +54,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'vim notes.txt',
       expectedContextId: context,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
 
     expect(started).toMatchObject({
@@ -73,7 +76,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'sudo su -',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'one_shot',
-      callerId: 'caller',
+      caller,
     });
 
     const request = {
@@ -81,7 +84,7 @@ describe('InteractiveCommandExecutor', () => {
       inputGrantId: 'input-grant',
       inputRequestId: 'request-1',
       payload: payload('password\r'),
-      callerId: 'caller',
+      caller,
     } as const;
     const first = await executor.input(request);
     const retry = await executor.input(request);
@@ -103,7 +106,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'vim notes.txt',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
     const wait = executor.wait({ transactionId: started.transaction.id, timeoutMs: 0 });
     await expect(wait).resolves.toMatchObject({ status: 'running' });
@@ -112,7 +115,7 @@ describe('InteractiveCommandExecutor', () => {
     const finishing = executor.finish({
       transactionId: started.transaction.id,
       observedCursor: started.nextCursor,
-      callerId: 'caller',
+      caller,
     });
     await vi.waitFor(() => expect(backend.writes.join('')).toContain('777;TA;'), {
       timeout: 1_000,
@@ -137,12 +140,12 @@ describe('InteractiveCommandExecutor', () => {
       command: 'vim notes.txt',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
     const finishing = executor.finish({
       transactionId: started.transaction.id,
       observedCursor: started.nextCursor,
-      callerId: 'caller',
+      caller,
     });
 
     await expect(finishing).resolves.toMatchObject({
@@ -160,7 +163,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'bash -i',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
 
     await actor.writeUser('local input\r');
@@ -171,7 +174,7 @@ describe('InteractiveCommandExecutor', () => {
         inputGrantId: 'input-grant',
         inputRequestId: 'after-user-input',
         payload: payload('must-not-write\r'),
-        callerId: 'caller',
+        caller,
       }),
     ).rejects.toThrow(/TRANSACTION_NOT_FOUND|SESSION_BUSY|INPUT_GRANT_EXHAUSTED/);
     expect(backend.writes).toEqual(['bash -i\r', 'local input\r']);
@@ -190,7 +193,7 @@ describe('InteractiveCommandExecutor', () => {
         command: 'sudo su -',
         expectedContextId: context,
         inputGrantMode: 'bounded',
-        callerId: 'caller',
+        caller,
       }),
     ).rejects.toThrow(/^INTERACTIVE_START_WRITE_UNKNOWN:/);
     expect(executor.activeTransactionId).toBeUndefined();
@@ -206,12 +209,12 @@ describe('InteractiveCommandExecutor', () => {
       command: 'vim notes.txt',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
     const finishing = executor.finish({
       transactionId: started.transaction.id,
       observedCursor: started.nextCursor,
-      callerId: 'caller',
+      caller,
     });
 
     await expect(
@@ -220,10 +223,10 @@ describe('InteractiveCommandExecutor', () => {
         inputGrantId: 'input-grant',
         inputRequestId: 'during-finish',
         payload: payload('must-not-land\r'),
-        callerId: 'caller',
+        caller,
       }),
     ).rejects.toThrow(/^SESSION_BUSY:/);
-    await expect(executor.interrupt(started.transaction.id, 'caller')).rejects.toThrow(
+    await expect(executor.interrupt(started.transaction.id, caller)).rejects.toThrow(
       /^SESSION_BUSY:/,
     );
     expect(backend.writes).toHaveLength(2);
@@ -242,7 +245,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'bash -i',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
 
     backend.emitExit(1);
@@ -262,11 +265,11 @@ describe('InteractiveCommandExecutor', () => {
       command: 'bash -i',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
 
     const localInput = actor.writeUser('local input\r');
-    const interrupt = executor.interrupt(started.transaction.id, 'caller');
+    const interrupt = executor.interrupt(started.transaction.id, caller);
     await localInput;
 
     await expect(interrupt).resolves.toBe(true);
@@ -284,7 +287,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'sudo su -',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
     let inputAttempts = 0;
     backend.write = (data: string) => {
@@ -300,7 +303,7 @@ describe('InteractiveCommandExecutor', () => {
       inputGrantId: 'input-grant',
       inputRequestId: 'uncertain-input',
       payload: payload('secret\r'),
-      callerId: 'caller',
+      caller,
     } as const;
     await expect(executor.input(request)).rejects.toThrow(/^INPUT_WRITE_UNKNOWN:/);
     await expect(executor.input(request)).rejects.toThrow(/^INPUT_WRITE_UNKNOWN:/);
@@ -318,20 +321,20 @@ describe('InteractiveCommandExecutor', () => {
       command: 'vim notes.txt',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'one_shot',
-      callerId: 'caller',
+      caller,
     });
     const request = {
       transactionId: started.transaction.id,
       inputGrantId: 'input-grant',
       inputRequestId: 'replay-after-finish',
       payload: payload(':wq\r'),
-      callerId: 'caller',
+      caller,
     } as const;
     const first = await executor.input(request);
     const finishing = executor.finish({
       transactionId: started.transaction.id,
       observedCursor: first.nextCursor,
-      callerId: 'caller',
+      caller,
     });
     const finishProbe = await vi.waitFor(() => {
       const write = backend.writes.at(-1);
@@ -357,7 +360,7 @@ describe('InteractiveCommandExecutor', () => {
         command: 'bash -i',
         expectedContextId: actor.snapshot.executionContextId,
         inputGrantMode: 'bounded',
-        callerId: 'caller',
+        caller,
       });
 
       await vi.advanceTimersByTimeAsync(1_000);
@@ -373,7 +376,7 @@ describe('InteractiveCommandExecutor', () => {
           inputGrantId: 'input-grant',
           inputRequestId: 'after-idle',
           payload: payload('late\r'),
-          callerId: 'caller',
+          caller,
         }),
       ).rejects.toThrow(/TRANSACTION_NOT_FOUND|INPUT_GRANT_EXHAUSTED/);
       expect(backend.writes).toEqual(['bash -i\r']);
@@ -389,7 +392,7 @@ describe('InteractiveCommandExecutor', () => {
       command: 'bash -i',
       expectedContextId: actor.snapshot.executionContextId,
       inputGrantMode: 'bounded',
-      callerId: 'caller',
+      caller,
     });
     const small = payload('x\r');
     for (let index = 0; index < 256; index += 1) {
@@ -398,7 +401,7 @@ describe('InteractiveCommandExecutor', () => {
         inputGrantId: 'input-grant',
         inputRequestId: `quota-${index}`,
         payload: small,
-        callerId: 'caller',
+        caller,
       });
     }
     await expect(
@@ -407,7 +410,7 @@ describe('InteractiveCommandExecutor', () => {
         inputGrantId: 'input-grant',
         inputRequestId: 'quota-overflow',
         payload: small,
-        callerId: 'caller',
+        caller,
       }),
     ).rejects.toThrow(/^INPUT_GRANT_EXHAUSTED:/);
     expect(backend.writes).toHaveLength(257);

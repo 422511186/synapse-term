@@ -735,16 +735,26 @@ describe('SessionActor', () => {
     const snapshot = actor.snapshot;
 
     await expect(
-      actor.writeExternal('printf ok\r', snapshot.environment.capabilityEpoch, 'stale-context'),
+      actor.writeExternal({
+        data: 'printf ok\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: snapshot.environment.capabilityEpoch,
+          executionContextId: 'stale-context',
+        },
+      }),
     ).resolves.toMatchObject({ ok: false, error: 'stale-execution-context' });
     expect(backend.writes).toEqual([]);
 
     await expect(
-      actor.writeExternal(
-        'printf ok\r',
-        snapshot.environment.capabilityEpoch,
-        snapshot.executionContextId,
-      ),
+      actor.writeExternal({
+        data: 'printf ok\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: snapshot.environment.capabilityEpoch,
+          executionContextId: snapshot.executionContextId,
+        },
+      }),
     ).resolves.toMatchObject({ ok: true });
     expect(actor.snapshot.executionContextId).not.toBe(snapshot.executionContextId);
     expect(backend.writes).toEqual(['printf ok\r']);
@@ -759,17 +769,25 @@ describe('SessionActor', () => {
     const before = actor.snapshot;
 
     await expect(
-      actor.writeInteractiveStart(
-        'vim notes.txt\r',
-        before.environment.capabilityEpoch,
-        before.executionContextId,
-      ),
+      actor.writeExternal({
+        data: 'vim notes.txt\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: before.environment.capabilityEpoch,
+          executionContextId: before.executionContextId,
+        },
+      }),
     ).resolves.toMatchObject({ ok: true });
     expect(backend.writes).toEqual(['vim notes.txt\r']);
     expect(actor.snapshot.environment.capabilityEpoch).toBe(before.environment.capabilityEpoch);
     expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
 
-    await expect(actor.writeTransactionalInput(':q\r')).resolves.toMatchObject({ ok: true });
+    await expect(
+      actor.writeExternal({
+        data: ':q\r',
+        premise: { precondition: 'environment' },
+      }),
+    ).resolves.toMatchObject({ ok: true });
     expect(backend.writes).toEqual(['vim notes.txt\r', ':q\r']);
     actor.dispose();
   });
@@ -782,7 +800,10 @@ describe('SessionActor', () => {
     const before = actor.snapshot;
 
     await expect(
-      actor.writeFreeInput('\u001b[B\r', before.executionContextId),
+      actor.writeExternal({
+        data: '\u001b[B\r',
+        premise: { precondition: 'context', executionContextId: before.executionContextId },
+      }),
     ).resolves.toMatchObject({
       ok: true,
     });
@@ -790,9 +811,15 @@ describe('SessionActor', () => {
     expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
     expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
 
-    await expect(actor.writeFreeInput('stale\r', before.executionContextId)).resolves.toEqual({
+    await expect(
+      actor.writeExternal({
+        data: 'stale\r',
+        premise: { precondition: 'context', executionContextId: before.executionContextId },
+      }),
+    ).resolves.toEqual({
       ok: false,
       error: 'stale-execution-context',
+      environmentInvalidated: false,
     });
     expect(backend.writes).toHaveLength(1);
     actor.dispose();
@@ -809,12 +836,19 @@ describe('SessionActor', () => {
     };
 
     await expect(
-      actor.writeInteractiveStart(
-        'sudo su -\r',
-        before.environment.capabilityEpoch,
-        before.executionContextId,
-      ),
-    ).resolves.toEqual({ ok: false, error: 'write-unknown' });
+      actor.writeExternal({
+        data: 'sudo su -\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: before.environment.capabilityEpoch,
+          executionContextId: before.executionContextId,
+        },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'write-unknown',
+      environmentInvalidated: true,
+    });
     expect(actor.snapshot.executionContextId).not.toBe(before.executionContextId);
     expect(actor.snapshot.environment.verificationStatus).toBe('unverified');
     actor.dispose();
@@ -844,8 +878,18 @@ describe('SessionActor', () => {
 
     const epoch = actor.snapshot.environment.capabilityEpoch;
     const contextId = actor.snapshot.executionContextId;
-    await expect(actor.writeExternal('Write-Output ok\r', epoch, contextId)).resolves.toEqual({
+    await expect(
+      actor.writeExternal({
+        data: 'Write-Output ok\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: epoch,
+          executionContextId: contextId,
+        },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
+      environmentInvalidated: false,
     });
     expect(actor.snapshot.environment).toMatchObject({
       dialect: 'powershell',
@@ -855,10 +899,18 @@ describe('SessionActor', () => {
     });
 
     await expect(
-      actor.writeExternal('stale\r', epoch - 1, actor.snapshot.executionContextId),
+      actor.writeExternal({
+        data: 'stale\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: epoch - 1,
+          executionContextId: actor.snapshot.executionContextId,
+        },
+      }),
     ).resolves.toEqual({
       ok: false,
       error: 'stale-environment-epoch',
+      environmentInvalidated: false,
     });
     expect(backend.writes).toEqual(['Write-Output ok\r']);
 
@@ -900,12 +952,19 @@ describe('SessionActor', () => {
       error: 'session-not-running',
     });
     await expect(
-      actor.writeExternal(
-        'external\r',
-        snapshot.environment.capabilityEpoch,
-        snapshot.executionContextId,
-      ),
-    ).resolves.toEqual({ ok: false, error: 'session-not-running' });
+      actor.writeExternal({
+        data: 'external\r',
+        premise: {
+          precondition: 'environment-and-context',
+          environmentEpoch: snapshot.environment.capabilityEpoch,
+          executionContextId: snapshot.executionContextId,
+        },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'session-not-running',
+      environmentInvalidated: false,
+    });
     await actor.interrupt();
 
     expect(backend.writes).toEqual([]);

@@ -2,9 +2,13 @@ import process from 'node:process';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ExternalCaller } from '@synapse-term/domain';
+
 import { InteractiveCommandExecutor } from './interactive-command-executor.js';
 import { SessionActor } from './session-actor.js';
 import { NodePtySpawner } from '../shell/pty-adapter.js';
+
+const integrationCaller: ExternalCaller = { kind: 'mcp', id: 'integration-client' };
 import { ShellLocator } from '../shell/shell-locator.js';
 import { ShellProbe } from '../shell/shell-probe.js';
 
@@ -65,7 +69,7 @@ describe('InteractiveCommandExecutor with a real Bash PTY', () => {
           command,
           expectedContextId,
           inputGrantMode: 'one_shot',
-          callerId: 'integration-client',
+          caller: integrationCaller,
         });
         const startupWrite = writes.find((write) => write.includes(command));
         expect(startupWrite).toBe(`${command}\r`);
@@ -85,7 +89,7 @@ describe('InteractiveCommandExecutor with a real Bash PTY', () => {
             keys: [],
             payloadBytes: 6,
           },
-          callerId: 'integration-client',
+          caller: integrationCaller,
         });
         expect(inputResult.sent).toEqual({ textLength: 6, keys: [], payloadBytes: 6 });
         await vi.waitFor(() => expect(outputs.join('')).toContain('value=hello'), {
@@ -95,7 +99,7 @@ describe('InteractiveCommandExecutor with a real Bash PTY', () => {
         const finishing = executor.finish({
           transactionId: started.transaction.id,
           observedCursor: '0',
-          callerId: 'integration-client',
+          caller: integrationCaller,
         });
         await vi.waitFor(() =>
           expect(writes.some((write) => write.includes('777;TA;'))).toBe(true),

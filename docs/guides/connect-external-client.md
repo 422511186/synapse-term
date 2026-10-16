@@ -62,7 +62,7 @@ Authorization: Bearer <Token>
 - `SESSION_EXPIRED`：重新在桌面端 Sharing，不要重放旧事务。
 - `SESSION_BUSY`：等待、终结或中断当前外部事务。
 - `APPROVAL_DENIED` / `APPROVAL_TIMEOUT`：尊重用户裁决或超时，不自动重复高风险调用。
-- `INPUT_WRITE_UNKNOWN` / `INTERACTIVE_START_WRITE_UNKNOWN`：不要自动重放输入或启动命令，先重新观察并让用户判断。
+- `INPUT_WRITE_UNKNOWN` / `INTERACTIVE_START_WRITE_UNKNOWN` / `EXECUTION_WRITE_UNKNOWN`：不要自动重放输入、启动命令或结构化命令，先重新观察并让用户判断。
 - `unknown`：命令可能已经执行但结果不可确认，不要自动重新提交。
 
 工具的完整 Reference 和稳定错误码见 [MCP 工具参考](../reference/mcp-tools.md)。

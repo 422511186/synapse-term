@@ -5,14 +5,19 @@ import {
   invalidateSessionEnvironment,
   replaceSessionExecutionContext,
   resizeSession,
+  selectWritePremise,
   transitionSessionPty,
   verifySessionEnvironment,
+  WRITE_EFFECTS,
   type EnvironmentPlatform,
   type ExecutionDialect,
   type SessionState,
   type TerminalBackend,
   type TerminalExitEvent,
   type TerminalSubscription,
+  type WriteEffects,
+  type WritePremise,
+  type WritePremiseError,
 } from '@synapse-term/domain';
 
 import { splitTerminalOutput, TERMINAL_OUTPUT_FRAME_BYTES } from './output-frame.js';
@@ -26,24 +31,31 @@ export interface SessionActorOptions {
   hideCompletionProbeEcho?: boolean;
 }
 
-export interface ExternalWriteGuard {
-  isCancelled(): boolean;
+/**
+ * 写入尝试发起后 PTY 后端抛错时的处理方式。
+ *
+ * 外部写入一律为 `uncertain`：抛错不构成「未写入」的证据，因此失效 environment 并返回
+ * `write-unknown`，由调用方按不确定态处理。本地通道没有事务可以承载不确定态，异常原样抛出。
+ */
+type WriteFailureHandling = 'propagate' | 'uncertain';
+
+export interface WriteRequest {
+  data: string;
+  premise: WritePremise;
+  /** 覆盖前提对应的写入后果；本地通道用它表达「本地用户输入会失效 environment」。 */
+  effects?: WriteEffects | undefined;
+  /** 取消回调在串行队列内求值，纯函数只接收求值后的布尔事实。 */
+  cancelled?: (() => boolean) | undefined;
 }
 
-export type GuardedExternalWriteError =
-  | 'stale-environment-epoch'
-  | 'stale-execution-context'
-  | 'environment-unverified'
-  | 'session-not-running'
-  | 'external-write-cancelled';
+export type WriteError = WritePremiseError | 'write-unknown';
 
-export type GuardedExternalWriteResult =
-  | { ok: true; executionContextId: string }
-  | { ok: false; error: GuardedExternalWriteError | 'write-unknown' };
+export type WriteResult =
+  | { ok: true; executionContextId: string; environmentInvalidated: boolean }
+  | { ok: false; error: WriteError; environmentInvalidated: boolean };
 
-export type InteractiveInputWriteResult =
-  | { ok: true; executionContextId: string }
-  | { ok: false; error: 'session-not-running' | 'external-write-cancelled' | 'write-unknown' };
+/** 本地通道的失败模式是真子集，因此保留更窄的结果类型。 */
+export type LocalWriteResult = { ok: true } | { ok: false; error: 'session-not-running' };
 
 export type SessionActorEvent =
   | { type: 'pty_output'; sequence: number; data: string; historyData?: string }
@@ -181,14 +193,23 @@ export class SessionActor {
     });
   }
 
-  writeUser(data: string): Promise<{ ok: true } | { ok: false; error: 'session-not-running' }> {
-    return this.#enqueue(() => {
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      this.#invalidateEnvironment();
-      this.#backend.write(data);
-      return { ok: true as const };
+  writeUser(data: string): Promise<LocalWriteResult> {
+    return this.#enqueue((): LocalWriteResult => {
+      const result = this.#writeGuarded(
+        {
+          data,
+          premise: { precondition: 'session' },
+          effects: {
+            invalidatesEnvironmentBeforeWrite: true,
+            rotatesExecutionContextAfterWrite: false,
+          },
+        },
+        // 本地通道没有事务承载不确定态，写入抛错照旧抛给调用方。
+        'propagate',
+      );
+      if (result.ok) return { ok: true };
+      // `session` 前提没有取消来源，因此唯一可达的前提失败就是 Session 不可用。
+      return { ok: false, error: 'session-not-running' };
     });
   }
 
@@ -238,13 +259,14 @@ export class SessionActor {
     });
   }
 
-  writeProbe(data: string): Promise<{ ok: true } | { ok: false; error: 'session-not-running' }> {
-    return this.#enqueue(() => {
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      this.#backend.write(data);
-      return { ok: true as const };
+  writeProbe(data: string): Promise<LocalWriteResult> {
+    return this.#enqueue((): LocalWriteResult => {
+      const result = this.#writeGuarded(
+        { data, premise: { precondition: 'session' } },
+        'propagate',
+      );
+      if (result.ok) return { ok: true };
+      return { ok: false, error: 'session-not-running' };
     });
   }
 
@@ -255,149 +277,15 @@ export class SessionActor {
     });
   }
 
-  writeExternal(
-    data: string,
-    expectedEnvironmentEpoch: number,
-    expectedContextId: string,
-    guard?: ExternalWriteGuard,
-  ): Promise<
-    | { ok: true }
-    | {
-        ok: false;
-        error:
-          | 'stale-environment-epoch'
-          | 'stale-execution-context'
-          | 'environment-unverified'
-          | 'session-not-running'
-          | 'external-write-cancelled';
-      }
-  > {
-    return this.#enqueue(() => {
-      if (guard?.isCancelled() === true) {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      if (this.#state.environment.verificationStatus !== 'verified') {
-        return { ok: false as const, error: 'environment-unverified' as const };
-      }
-      if (this.#state.environment.capabilityEpoch !== expectedEnvironmentEpoch) {
-        return { ok: false as const, error: 'stale-environment-epoch' as const };
-      }
-      if (this.#state.executionContextId !== expectedContextId) {
-        return { ok: false as const, error: 'stale-execution-context' as const };
-      }
-      this.#backend.write(data);
-      this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
-      return { ok: true as const };
-    });
-  }
-
   /**
-   * 原子校验环境和执行上下文后，只写入交互启动 command。
-   * 后端 write 抛错表示交付结果不确定，此时立即失效 environment/context。
+   * 外部写入的统一入口。
+   *
+   * 前提由 `premise` 描述（结构化执行与交互启动用 `environment-and-context`，事务内输入与终结
+   * Probe 用 `environment`，自由输入用 `context`）；后果取自 domain 的策略表；前提失败的错误码
+   * 由调用方映射为对外稳定错误码。
    */
-  writeInteractiveStart(
-    data: string,
-    expectedEnvironmentEpoch: number,
-    expectedContextId: string,
-    guard?: ExternalWriteGuard,
-  ): Promise<GuardedExternalWriteResult> {
-    return this.#enqueue(() => {
-      const preflight = this.#validateGuardedExternalWrite(
-        expectedEnvironmentEpoch,
-        expectedContextId,
-        guard,
-      );
-      if (preflight !== undefined) return { ok: false as const, error: preflight };
-      try {
-        this.#backend.write(data);
-      } catch {
-        this.#invalidateEnvironment();
-        return { ok: false as const, error: 'write-unknown' as const };
-      }
-      this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
-      return { ok: true as const, executionContextId: this.#state.executionContextId };
-    });
-  }
-
-  /** 交互事务内输入由 transaction/input grant 保护，不轮换 context 或 capability epoch。 */
-  writeTransactionalInput(
-    data: string,
-    guard?: ExternalWriteGuard,
-  ): Promise<InteractiveInputWriteResult> {
-    return this.#enqueue(() => {
-      if (guard?.isCancelled() === true) {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      if (this.#state.environment.verificationStatus !== 'verified') {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      try {
-        this.#backend.write(data);
-      } catch {
-        this.#invalidateEnvironment();
-        return { ok: false as const, error: 'write-unknown' as const };
-      }
-      return { ok: true as const, executionContextId: this.#state.executionContextId };
-    });
-  }
-
-  /**
-   * 自由输入在开始后端写入尝试前失效 environment 并轮换 context；写入不确定也不恢复旧值。
-   */
-  writeFreeInput(
-    data: string,
-    expectedContextId: string,
-    guard?: ExternalWriteGuard,
-  ): Promise<InteractiveInputWriteResult | { ok: false; error: 'stale-execution-context' }> {
-    return this.#enqueue(() => {
-      if (guard?.isCancelled() === true) {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      if (this.#state.executionContextId !== expectedContextId) {
-        return { ok: false as const, error: 'stale-execution-context' as const };
-      }
-      this.#invalidateEnvironment();
-      try {
-        this.#backend.write(data);
-      } catch {
-        return { ok: false as const, error: 'write-unknown' as const };
-      }
-      return { ok: true as const, executionContextId: this.#state.executionContextId };
-    });
-  }
-
-  /** finish 阶段单独发送完成 Probe，不附加或重放交互启动 command。 */
-  writeInteractiveFinishProbe(
-    data: string,
-    guard?: ExternalWriteGuard,
-  ): Promise<InteractiveInputWriteResult> {
-    return this.#enqueue(() => {
-      if (guard?.isCancelled() === true) {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      if (this.#disposed || this.#state.pty !== 'running') {
-        return { ok: false as const, error: 'session-not-running' as const };
-      }
-      if (this.#state.environment.verificationStatus !== 'verified') {
-        return { ok: false as const, error: 'external-write-cancelled' as const };
-      }
-      try {
-        this.#backend.write(data);
-      } catch {
-        this.#invalidateEnvironment();
-        return { ok: false as const, error: 'write-unknown' as const };
-      }
-      return { ok: true as const, executionContextId: this.#state.executionContextId };
-    });
+  writeExternal(request: WriteRequest): Promise<WriteResult> {
+    return this.#enqueue(() => this.#writeGuarded(request, 'uncertain'));
   }
 
   resize(columns: number, rows: number): Promise<void> {
@@ -689,23 +577,41 @@ export class SessionActor {
     });
   }
 
-  #validateGuardedExternalWrite(
-    expectedEnvironmentEpoch: number,
-    expectedContextId: string,
-    guard?: ExternalWriteGuard,
-  ): GuardedExternalWriteError | undefined {
-    if (guard?.isCancelled() === true) return 'external-write-cancelled';
-    if (this.#disposed || this.#state.pty !== 'running') return 'session-not-running';
-    if (this.#state.environment.verificationStatus !== 'verified') {
-      return 'environment-unverified';
+  /**
+   * 所有写入共用的前提判定与写入后果，必须在串行队列内调用。
+   *
+   * 前提不成立时不写入任何字节；`invalidatesEnvironmentBeforeWrite` 的写入在发起写入尝试前失效
+   * environment；写入尝试发起后后端抛错，`uncertain` 会失效 environment 并报告 `write-unknown`。
+   */
+  #writeGuarded(request: WriteRequest, writeFailure: WriteFailureHandling): WriteResult {
+    const premiseError = selectWritePremise(this.#state, request.premise, {
+      disposed: this.#disposed,
+      cancelled: request.cancelled?.() === true,
+    });
+    if (premiseError !== undefined) {
+      return { ok: false, error: premiseError, environmentInvalidated: false };
     }
-    if (this.#state.environment.capabilityEpoch !== expectedEnvironmentEpoch) {
-      return 'stale-environment-epoch';
+    const effects = request.effects ?? WRITE_EFFECTS[request.premise.precondition];
+    let environmentInvalidated = effects.invalidatesEnvironmentBeforeWrite;
+    if (environmentInvalidated) this.#invalidateEnvironment();
+    try {
+      this.#backend.write(request.data);
+    } catch (error) {
+      if (writeFailure === 'propagate') throw error;
+      if (!environmentInvalidated) {
+        this.#invalidateEnvironment();
+        environmentInvalidated = true;
+      }
+      return { ok: false, error: 'write-unknown', environmentInvalidated };
     }
-    if (this.#state.executionContextId !== expectedContextId) {
-      return 'stale-execution-context';
+    if (effects.rotatesExecutionContextAfterWrite) {
+      this.#state = replaceSessionExecutionContext(this.#state, randomUUID());
     }
-    return undefined;
+    return {
+      ok: true,
+      executionContextId: this.#state.executionContextId,
+      environmentInvalidated,
+    };
   }
 
   #enqueue<T>(task: () => T): Promise<T> {

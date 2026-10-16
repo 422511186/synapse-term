@@ -2,6 +2,7 @@ import { ShieldAlert } from 'lucide-react';
 import type { JSX } from 'react';
 
 import type { McpApprovalDecision, McpApprovalRequest } from '../../shared/contracts.js';
+import { riskReasonZh } from '../i18n/zh-cn.js';
 
 const RISK_LABELS = {
   read_only: '只读',
@@ -10,27 +11,6 @@ const RISK_LABELS = {
   privileged: '特权',
   destructive: '破坏性',
 } as const;
-
-function formatReason(reason: string): string {
-  const unknown = /^unknown (?:PowerShell )?executable: (.+)$/.exec(reason);
-  if (unknown) return `未知可执行文件：${unknown[1]}`;
-
-  const stateChange = /^(.+?) can change system state$/.exec(reason);
-  if (stateChange) return `${stateChange[1]} 可能更改系统状态`;
-
-  const destructive = /^(.+?) has (?:irreversible )?destructive semantics$/.exec(reason);
-  if (destructive) return `${destructive[1]} 具有破坏性语义`;
-
-  const explanations = new Map([
-    ['command substitution is not proven safe', '命令替换存在不确定性'],
-    ['command requests privilege escalation', '命令请求提升权限'],
-    ['empty command', '命令为空'],
-    ['redirection can change filesystem state', '重定向可能修改文件系统'],
-    ['all commands match read-only rules', '所有命令均匹配只读规则'],
-    ['irreversible', '命令具有不可逆的破坏性影响'],
-  ]);
-  return explanations.get(reason) ?? reason;
-}
 
 function formatBytes(value: number): string {
   return `${value.toLocaleString('en-US')} bytes`;
@@ -142,7 +122,7 @@ export function ApprovalCard({
           <section className="approval-section approval-reason-section">
             <h3>风险理由</h3>
             <p className="approval-reason">
-              {request.reasons.map(formatReason).join('；') || '策略引擎未提供理由'}
+              {request.reasons.map(riskReasonZh).join('；') || '策略引擎未提供理由'}
             </p>
           </section>
         </div>

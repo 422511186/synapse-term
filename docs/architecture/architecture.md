@@ -34,7 +34,7 @@ Renderer 崩溃或窗口关闭不会直接终止活动 Session；显式退出应
 | Package | 职责 |
 | --- | --- |
 | `@synapse-term/domain` | Session、PTY/终端抽象、外部调用和事务领域模型 |
-| `@synapse-term/terminal-service` | PTY 适配、SessionActor/Manager、实时输出、Shell 发现与执行 |
+| `@synapse-term/terminal-service` | PTY 适配、SessionActor/Manager、实时输出、外部调用账本、Shell 发现与执行 |
 | `@synapse-term/session-runtime` | Session 生命周期、环境发现、启动默认值、摘要和输出事件映射 |
 | `@synapse-term/mcp-runtime` | Sharing、外部事务、风险/审批、输入授权、工具和内嵌 MCP Server |
 | `@synapse-term/test-kit` | Fake PTY 和测试替身 |
